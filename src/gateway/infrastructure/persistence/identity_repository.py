@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.gateway.domain.identity import normalize_username
+from src.gateway.domain.identity import SystemRole, normalize_username
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, PasswordCredentialModel
 
 
@@ -16,6 +16,16 @@ class IdentityRepository:
 
     async def member_count(self) -> int:
         return int(await self._session.scalar(select(func.count()).select_from(MemberModel)) or 0)
+
+    async def super_admin_count(self) -> int:
+        return int(
+            await self._session.scalar(
+                select(func.count()).select_from(MemberModel).where(
+                    MemberModel.system_role == SystemRole.SUPER_ADMIN.value
+                )
+            )
+            or 0
+        )
 
     async def get_member_by_username(self, username: str, *, for_update: bool = False) -> MemberModel | None:
         query = select(MemberModel).where(MemberModel.username_normalized == normalize_username(username))

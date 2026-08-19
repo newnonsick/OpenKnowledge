@@ -8,7 +8,7 @@ async def test_configured_postgres_has_identity_invariants() -> None:
     await run_migrations_async()
     status = await get_schema_status_async(expected_embedding_dimension=1024)
     assert status.compatible is True
-    assert status.current_revision == "003"
+    assert status.current_revision == "005"
 
     engine = get_engine()
     async with engine.connect() as connection:

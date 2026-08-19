@@ -58,3 +58,5 @@ def test_identity_schema_never_declares_plaintext_secret_columns() -> None:
     assert "password_hash" in sql.lower()
     assert "token_digest" in sql.lower()
     assert "secret_ciphertext" in sql.lower()
+    assert "encryption_key_version" in sql.lower()
+    assert "status in ('pending','active','disabled')" in sql.lower()

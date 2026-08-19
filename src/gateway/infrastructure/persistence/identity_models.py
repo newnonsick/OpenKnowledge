@@ -26,7 +26,7 @@ class MemberModel(Base):
 
     __table_args__ = (
         UniqueConstraint("username_normalized", name="uq_members_username_normalized"),
-        CheckConstraint("status IN ('invited','active','disabled')", name="ck_members_status"),
+        CheckConstraint("status IN ('pending','active','disabled')", name="ck_members_status"),
         CheckConstraint("system_role IN ('super_admin','member')", name="ck_members_system_role"),
     )
 
@@ -54,6 +54,7 @@ class MFAFactorModel(Base):
     member_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False)
     factor_type: Mapped[str] = mapped_column(String(16), nullable=False)
     secret_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    encryption_key_version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"), nullable=False)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -84,8 +85,13 @@ class SessionFamilyModel(Base):
     absolute_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoke_reason: Mapped[str | None] = mapped_column(String(64))
+    csrf_token_digest: Mapped[str | None] = mapped_column(String(64))
+    last_step_up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    __table_args__ = (CheckConstraint("idle_expires_at <= absolute_expires_at", name="ck_session_families_expiry_order"),)
+    __table_args__ = (
+        CheckConstraint("idle_expires_at <= absolute_expires_at", name="ck_session_families_expiry_order"),
+        CheckConstraint("csrf_token_digest IS NOT NULL OR revoked_at IS NOT NULL", name="ck_session_families_csrf_or_revoked"),
+    )
 
 
 class SessionCredentialModel(Base):
@@ -99,6 +105,7 @@ class SessionCredentialModel(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     replaced_by_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("session_credentials.id", ondelete="SET NULL"))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (CheckConstraint("credential_type IN ('access','refresh')", name="ck_session_credentials_type"),)
 
@@ -192,3 +199,21 @@ class CompatibilityPrincipalModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class LoginThrottleBucketModel(Base):
+    __tablename__ = "login_throttle_buckets"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    bucket_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    bucket_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), nullable=False)
+    window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    blocked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("bucket_type", "bucket_key", name="uq_login_throttle_bucket"),
+        CheckConstraint("bucket_type IN ('account','ip','global')", name="ck_login_throttle_bucket_type"),
+        CheckConstraint("failure_count >= 0", name="ck_login_throttle_failure_count"),
+    )

@@ -54,7 +54,7 @@ class APIKeyCodec:
         self._pepper = pepper.reveal().encode("utf-8")
 
     def issue(self) -> IssuedAPIKey:
-        public_id = secrets.token_urlsafe(12)
+        public_id = secrets.token_hex(8)
         secret_part = secrets.token_urlsafe(32)
         raw = f"aigw_v1_{public_id}_{secret_part}"
         return IssuedAPIKey(public_id, SecretValue(raw), self._digest_parts(public_id, secret_part))

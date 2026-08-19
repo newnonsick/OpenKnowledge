@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from importlib.resources import files
+import unicodedata
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
@@ -13,19 +14,31 @@ def _default_common_passwords() -> frozenset[str]:
     return frozenset(line.strip().casefold() for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
 
 
+def normalize_password(password: str) -> str:
+    return unicodedata.normalize("NFC", password)
+
+
 @dataclass(frozen=True, slots=True)
 class PasswordPolicy:
     min_length: int = 15
-    max_length: int = 256
+    max_length: int = 128
     common_passwords: frozenset[str] | set[str] = field(default_factory=_default_common_passwords)
 
-    def validate(self, password: str) -> None:
-        if len(password) < self.min_length:
+    def validate(self, password: str, *, username: str | None = None) -> None:
+        normalized = normalize_password(password)
+        folded = normalized.casefold()
+        if len(normalized) < self.min_length:
             raise ValueError(f"Password must contain at least {self.min_length} characters")
-        if len(password) > self.max_length:
+        if len(normalized) > self.max_length:
             raise ValueError(f"Password must contain at most {self.max_length} characters")
-        if password.casefold() in self.common_passwords:
+        if folded in self.common_passwords:
             raise ValueError("Password is commonly used")
+        if username:
+            username_folded = unicodedata.normalize("NFC", username.strip()).casefold()
+            if len(username_folded) >= 3 and username_folded in folded:
+                raise ValueError("Password must not contain the username")
+        if "ai knowledge gateway" in folded or "knowledgegateway" in folded:
+            raise ValueError("Password must not contain the product name")
 
 
 class PasswordService:
@@ -47,13 +60,14 @@ class PasswordService:
         )
         self._policy = policy or PasswordPolicy()
 
-    def hash(self, password: str) -> str:
-        self._policy.validate(password)
-        return self._hasher.hash(password)
+    def hash(self, password: str, *, username: str | None = None) -> str:
+        normalized = normalize_password(password)
+        self._policy.validate(normalized, username=username)
+        return self._hasher.hash(normalized)
 
     def verify(self, encoded: str, password: str) -> bool:
         try:
-            return self._hasher.verify(encoded, password)
+            return self._hasher.verify(encoded, normalize_password(password))
         except (InvalidHashError, VerificationError, VerifyMismatchError):
             return False
 

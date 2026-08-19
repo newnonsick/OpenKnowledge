@@ -24,7 +24,7 @@ class SpaceRole(StrEnum):
 
 
 class MemberStatus(StrEnum):
-    INVITED = "invited"
+    PENDING = "pending"
     ACTIVE = "active"
     DISABLED = "disabled"
 

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from src.gateway.application.security.passwords import PasswordPolicy, PasswordService
+from src.gateway.application.security.passwords import PasswordPolicy, PasswordService, normalize_password
 from src.gateway.application.security.tokens import APIKeyCodec, OpaqueTokenCodec, SecretValue
 from src.gateway.application.security.totp import MFASecretService
 from src.gateway.domain.identity import Principal, PrincipalKind, SystemRole, normalize_username
@@ -18,6 +18,25 @@ def test_password_policy_rejects_short_and_common_passwords() -> None:
         policy.validate("short password")
     with pytest.raises(ValueError, match="commonly used"):
         policy.validate("Correct Horse Battery Staple")
+
+
+def test_password_policy_enforces_spec_maximum_and_identity_terms() -> None:
+    policy = PasswordPolicy(common_passwords=set())
+    with pytest.raises(ValueError, match="at most 128"):
+        policy.validate("x" * 129)
+    with pytest.raises(ValueError, match="username"):
+        policy.validate("alice-is-my-password", username="Alice")
+    with pytest.raises(ValueError, match="product"):
+        policy.validate("ai knowledge gateway forever")
+
+
+def test_passwords_are_normalized_with_nfc_before_hash_and_verify() -> None:
+    composed = "pässword with enough length"
+    decomposed = "pa\u0308ssword with enough length"
+    assert normalize_password(decomposed) == composed
+    service = PasswordService(memory_cost=8192, time_cost=2, parallelism=1)
+    encoded = service.hash(decomposed)
+    assert service.verify(encoded, composed) is True
 
 
 def test_argon2id_hashes_verify_and_detect_rehash() -> None:
@@ -56,6 +75,28 @@ def test_totp_secrets_encrypt_and_recovery_codes_are_one_way() -> None:
     digest = service.hash_recovery_code(recovery.reveal())
     assert recovery.reveal() not in digest
     assert service.verify_recovery_code(recovery.reveal(), digest) is True
+
+
+def test_totp_keyring_preserves_old_factors_during_rotation() -> None:
+    first_key = MFASecretService.generate_encryption_key()
+    second_key = MFASecretService.generate_encryption_key()
+    first = MFASecretService({1: first_key}, active_key_version=1)
+    secret = first.new_totp_secret()
+    encrypted = first.encrypt_secret(secret)
+    recovery = first.new_recovery_code()
+    recovery_digest = first.hash_recovery_code(recovery.reveal(), key_version=1)
+
+    rotated = MFASecretService(
+        {1: first_key, 2: second_key},
+        active_key_version=2,
+    )
+    assert rotated.active_key_version == 2
+    assert rotated.decrypt_secret(encrypted, key_version=1).reveal() == secret.reveal()
+    assert rotated.verify_recovery_code(
+        recovery.reveal(),
+        recovery_digest,
+        key_version=1,
+    ) is True
 
 
 def test_secret_values_and_principals_are_redacted_and_non_serializable() -> None:
