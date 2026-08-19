@@ -77,7 +77,10 @@ class IngestionService:
                 raw_vectors = await self.embedding_client.embed_texts(chunks_text)
                 embeddings = [list(v) for v in raw_vectors]
             except Exception as exc:
-                logger.warning(f"Failed to generate embeddings during ingestion of '{filename}': {exc}")
+                logger.warning(
+                    "Ingestion embedding generation failed",
+                    extra={"exception_class": type(exc).__name__},
+                )
 
         doc_chunks: List[DocumentChunk] = []
         for idx, chunk_text in enumerate(chunks_text):

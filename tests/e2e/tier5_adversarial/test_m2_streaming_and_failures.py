@@ -396,14 +396,14 @@ async def test_adv_http_client_connection_refused_error():
     # 1. Non-streaming generate
     with pytest.raises(LLMProviderException) as exc_info:
         await client.generate(messages=[{"role": "user", "content": "test"}])
-    assert "Cannot connect to LLM backend" in exc_info.value.message
+    assert exc_info.value.message == "LLM provider connection failed."
     assert exc_info.value.status_code == 502
 
     # 2. Streaming generate_stream
     with pytest.raises(LLMProviderException) as exc_info_stream:
         async for _ in client.generate_stream(messages=[{"role": "user", "content": "test"}]):
             pass
-    assert "Cannot stream from LLM backend" in exc_info_stream.value.message
+    assert exc_info_stream.value.message == "LLM provider stream connection failed."
     assert exc_info_stream.value.status_code == 502
 
 
@@ -434,7 +434,8 @@ async def test_adv_openai_non_streaming_upstream_502_error_envelope():
         assert "error" in data
         assert data["error"]["type"] == "llm_provider_error"
         assert data["error"]["code"] == "llm_service_failed"
-        assert "LLM backend connection timeout" in data["error"]["message"]
+        assert data["error"]["message"] == "A gateway dependency failed."
+        assert "connection timeout" not in data["error"]["message"]
 
 
 @pytest.mark.tier5
@@ -464,7 +465,8 @@ async def test_adv_anthropic_non_streaming_upstream_502_error_envelope():
         data = resp.json()
         assert data["type"] == "error"
         assert data["error"]["type"] == "llm_provider_error"
-        assert "Upstream vLLM crashed" in data["error"]["message"]
+        assert data["error"]["message"] == "A gateway dependency failed."
+        assert "vLLM" not in data["error"]["message"]
 
 
 @pytest.mark.tier5
@@ -542,13 +544,14 @@ async def test_adv_anthropic_streaming_midstream_error_recovery():
 
 @pytest.mark.tier5
 @pytest.mark.asyncio
-async def test_adv_http_client_malformed_sse_stream_resilience():
+async def test_adv_http_client_malformed_sse_stream_resilience(caplog):
     """Verify HttpLLMClient skips comment lines, blank lines, invalid JSON without crashing."""
+    caplog.set_level("DEBUG")
     raw_sse_lines = [
         b": ping\n\n",
         b"\n\n",
         b": keep-alive\n\n",
-        b"data: {\"invalid json content\n\n",
+        b"data: {\"sentinel-provider-secret-body\n\n",
         b"data: {}\n\n",
         b"data: {\"id\": \"c1\", \"choices\": [{\"delta\": {\"content\": \"Resilient \"}}]}\n\n",
         b"data:{\"choices\": [{\"delta\": {\"content\": \"Parser!\"}}]}\n\n",
@@ -578,6 +581,7 @@ async def test_adv_http_client_malformed_sse_stream_resilience():
 
     contents = [c.delta_content for c in chunks if c.delta_content]
     assert "".join(contents) == "Resilient Parser!"
+    assert "sentinel-provider-secret-body" not in caplog.text
 
     await custom_http_client.aclose()
 
@@ -606,14 +610,14 @@ async def test_adv_http_client_upstream_html_500_error_body():
     # 1. generate()
     with pytest.raises(LLMProviderException) as exc_info:
         await llm_client.generate(messages=[{"role": "user", "content": "hi"}])
-    assert "502" in exc_info.value.message
-    assert "502 Bad Gateway" in exc_info.value.message
+    assert exc_info.value.message == "LLM provider request failed."
+    assert "502 Bad Gateway" not in exc_info.value.message
 
     # 2. generate_stream()
     with pytest.raises(LLMProviderException) as exc_info_stream:
         async for _ in llm_client.generate_stream(messages=[{"role": "user", "content": "hi"}]):
             pass
-    assert "502" in exc_info_stream.value.message
+    assert exc_info_stream.value.message == "LLM provider stream connection failed."
 
     await custom_http_client.aclose()
 

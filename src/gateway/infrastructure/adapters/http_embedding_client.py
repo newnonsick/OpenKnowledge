@@ -125,18 +125,19 @@ class HTTPEmbeddingClient(IEmbeddingClient):
                 )
             except Exception as exc:
                 raise EmbeddingException(
-                    message=f"Failed to connect to embedding service at {endpoint}: {exc}",
-                    details={"error": str(exc), "endpoint": endpoint},
+                    message="Embedding provider connection failed.",
+                    details={"error_type": type(exc).__name__},
                 ) from exc
 
-            if resp.status_code != 200:
-                try:
-                    err_json = resp.json()
-                except Exception:
-                    err_json = {"raw": resp.text}
+            if 400 <= resp.status_code < 500:
                 raise EmbeddingException(
-                    message=f"Embedding provider returned HTTP {resp.status_code}: {resp.text}",
-                    details={"status_code": resp.status_code, "response": err_json},
+                    message="Embedding provider rejected the request.",
+                    details={"status_code": resp.status_code},
+                )
+            if resp.status_code >= 500:
+                raise EmbeddingException(
+                    message="Embedding provider request failed.",
+                    details={"status_code": resp.status_code},
                 )
 
             data = resp.json()

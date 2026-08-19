@@ -45,4 +45,4 @@ class JSONParser(BaseParser):
                     return json.dumps(parsed_records, indent=2, ensure_ascii=False)
                 except Exception:
                     pass
-            raise ValidationException(f"Malformed JSON document: {exc}") from exc
+            raise ValidationException("Malformed JSON document.") from exc

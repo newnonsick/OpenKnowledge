@@ -137,8 +137,7 @@ async def test_f07_openai_multi_turn_conversation_context():
 async def test_f07_openai_error_response_structure():
     """Verify the gateway error envelope when the upstream LLM fails (e.g. 429).
 
-    Upstream failures surface as a 502 llm_provider_error envelope carrying the
-    upstream error message (established gateway contract, see tier 5 tests).
+    Upstream failures surface as a safe 502 llm_provider_error envelope.
     """
     async with GatewayMockUpstream() as gw:
         gw.llm.queue_error(status_code=429, message="Rate limit exceeded. Please back off.")
@@ -151,4 +150,5 @@ async def test_f07_openai_error_response_structure():
         data = resp.json()
         assert "error" in data
         assert data["error"]["type"] == "llm_provider_error"
-        assert "Rate limit" in data["error"]["message"]
+        assert data["error"]["message"] == "A gateway dependency failed."
+        assert "Rate limit" not in resp.text

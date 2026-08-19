@@ -180,21 +180,23 @@ class HttpLLMClient(ILLMClient):
                 timeout=req_timeout,
             )
 
-            if resp.status_code >= 400:
-                error_msg = f"LLM backend error (status {resp.status_code}): {resp.text}"
-                logger.error(error_msg)
-                try:
-                    err_json = resp.json()
-                    if "error" in err_json:
-                        if isinstance(err_json["error"], dict):
-                            error_msg = err_json["error"].get("message", error_msg)
-                        else:
-                            error_msg = str(err_json["error"])
-                except Exception:
-                    pass
+            if 400 <= resp.status_code < 500:
+                logger.error(
+                    "LLM provider rejected request",
+                    extra={"status_code": resp.status_code},
+                )
                 raise LLMProviderException(
-                    message=error_msg,
-                    details={"status_code": resp.status_code, "raw_response": resp.text},
+                    message="LLM provider rejected the request.",
+                    details={"status_code": resp.status_code},
+                )
+            if resp.status_code >= 500:
+                logger.error(
+                    "LLM provider request failed",
+                    extra={"status_code": resp.status_code},
+                )
+                raise LLMProviderException(
+                    message="LLM provider request failed.",
+                    details={"status_code": resp.status_code},
                 )
 
             data = resp.json()
@@ -249,11 +251,13 @@ class HttpLLMClient(ILLMClient):
             )
 
         except httpx.RequestError as exc:
-            err_detail = f"{type(exc).__name__}: {exc}" if str(exc) else f"{type(exc).__name__}"
-            logger.error(f"Network error connecting to LLM backend {self.endpoint}: {err_detail}")
+            logger.error(
+                "LLM provider connection failed",
+                extra={"exception_class": type(exc).__name__},
+            )
             raise LLMProviderException(
-                message=f"Cannot connect to LLM backend ({err_detail})",
-                details={"endpoint": self.endpoint, "error_type": type(exc).__name__},
+                message="LLM provider connection failed.",
+                details={"error_type": type(exc).__name__},
             )
 
     async def generate_stream(
@@ -318,22 +322,17 @@ class HttpLLMClient(ILLMClient):
                 headers=headers,
                 timeout=req_timeout,
             ) as response:
-                if response.status_code >= 400:
-                    resp_body = await response.aread()
-                    error_text = resp_body.decode("utf-8", errors="replace")
-                    error_msg = f"LLM backend stream error ({response.status_code}): {error_text}"
-                    try:
-                        err_json = json.loads(error_text)
-                        if "error" in err_json:
-                            if isinstance(err_json["error"], dict):
-                                error_msg = err_json["error"].get("message", error_msg)
-                            else:
-                                error_msg = str(err_json["error"])
-                    except Exception:
-                        pass
+                if 400 <= response.status_code < 500:
+                    await response.aread()
                     raise LLMProviderException(
-                        message=error_msg,
-                        details={"status_code": response.status_code, "raw_response": error_text},
+                        message="LLM provider rejected the streaming request.",
+                        details={"status_code": response.status_code},
+                    )
+                if response.status_code >= 500:
+                    await response.aread()
+                    raise LLMProviderException(
+                        message="LLM provider stream connection failed.",
+                        details={"status_code": response.status_code},
                     )
 
                 async for line in response.aiter_lines():
@@ -354,7 +353,7 @@ class HttpLLMClient(ILLMClient):
                     try:
                         chunk_dict = json.loads(data_content)
                     except json.JSONDecodeError:
-                        logger.debug(f"Skipping non-JSON SSE chunk: {data_content}")
+                        logger.debug("Skipping malformed SSE chunk")
                         continue
 
                     choices = chunk_dict.get("choices", [])
@@ -408,9 +407,11 @@ class HttpLLMClient(ILLMClient):
                     )
 
         except httpx.RequestError as exc:
-            err_detail = f"{type(exc).__name__}: {exc}" if str(exc) else f"{type(exc).__name__}"
-            logger.error(f"Network error in LLM backend stream {self.endpoint}: {err_detail}")
+            logger.error(
+                "LLM provider stream connection failed",
+                extra={"exception_class": type(exc).__name__},
+            )
             raise LLMProviderException(
-                message=f"Cannot stream from LLM backend ({err_detail})",
-                details={"endpoint": self.endpoint, "error_type": type(exc).__name__},
+                message="LLM provider stream connection failed.",
+                details={"error_type": type(exc).__name__},
             )

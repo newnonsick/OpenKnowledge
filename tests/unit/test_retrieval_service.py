@@ -294,14 +294,15 @@ async def test_hybrid_search_end_to_end_fusion():
 
 
 @pytest.mark.asyncio
-async def test_hybrid_search_partial_failure_graceful_degradation():
+async def test_hybrid_search_partial_failure_graceful_degradation(caplog):
     """Verify that if vector search fails, hybrid search still succeeds using FTS candidates."""
     knowledge_repo = MagicMock(spec=IKnowledgeRepository)
     document_repo = MagicMock(spec=IDocumentRepository)
     embedding_client = MagicMock(spec=IEmbeddingClient)
 
     # Embedding client fails
-    embedding_client.embed_query = AsyncMock(side_effect=Exception("Embedding endpoint timeout"))
+    sentinel = "sentinel-provider-secret-body"
+    embedding_client.embed_query = AsyncMock(side_effect=Exception(sentinel))
 
     # FTS succeeds
     item_fts = _create_ranked_result("fts_only", "FTS Doc", "FTS Content", raw_score=2.5)
@@ -313,6 +314,7 @@ async def test_hybrid_search_partial_failure_graceful_degradation():
         document_repo=document_repo,
         embedding_client=embedding_client,
     )
+    service.search_vector = AsyncMock(side_effect=Exception(sentinel))
 
     blended = await service.hybrid_search(query="resilience test", limit=5)
     assert len(blended) == 1
@@ -320,6 +322,7 @@ async def test_hybrid_search_partial_failure_graceful_degradation():
     assert blended[0].fts_rank == 1
     assert blended[0].vector_rank is None
     assert blended[0].normalized_score == 1.0
+    assert sentinel not in caplog.text
 
 
 # ---------------------------------------------------------------------------

@@ -223,11 +223,11 @@ class ChatOrchestratorService(IChatOrchestrator):
             if isinstance(raw_args, str):
                 try:
                     args = json.loads(raw_args) if raw_args.strip() else {}
-                except Exception as parse_err:
+                except Exception:
                     return CanonicalToolResultBlock(
                         tool_use_id=call_id,
                         content=json.dumps(
-                            {"error": f"Invalid JSON arguments: {parse_err}", "type": "validation_error"}
+                            {"error": "Invalid JSON arguments.", "type": "validation_error"}
                         ),
                         is_error=True,
                     )
@@ -281,7 +281,10 @@ class ChatOrchestratorService(IChatOrchestrator):
                         is_error=False,
                     )
                 except Exception as exc:
-                    logger.warning(f"Hybrid retrieval error in tool execution: {exc}")
+                    logger.warning(
+                        "Hybrid retrieval tool failed",
+                        extra={"exception_class": type(exc).__name__},
+                    )
 
             if self.knowledge_service is not None:
                 tool_result: ToolResult = await self.knowledge_service.execute_tool(
@@ -309,10 +312,18 @@ class ChatOrchestratorService(IChatOrchestrator):
                 is_error=True,
             )
         except Exception as exc:
-            logger.error(f"Error executing internal tool {name}: {exc}", exc_info=True)
+            logger.error(
+                "Internal tool execution failed",
+                extra={"tool_name": name, "exception_class": type(exc).__name__},
+            )
             return CanonicalToolResultBlock(
                 tool_use_id=call_id,
-                content=json.dumps({"error": str(exc), "type": "tool_execution_error"}),
+                content=json.dumps(
+                    {
+                        "error": "The tool could not complete the request.",
+                        "type": "tool_execution_error",
+                    }
+                ),
                 is_error=True,
             )
 

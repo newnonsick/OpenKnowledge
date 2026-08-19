@@ -15,8 +15,6 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-from src.gateway.config import settings
-
 revision: str = '002'
 down_revision: Union[str, None] = '001'
 branch_labels: Union[str, Sequence[str], None] = None
@@ -24,8 +22,6 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    default_ws = getattr(settings.gateway, "default_workspace_id", "global")
-
     op.add_column(
         'document_files',
         sa.Column('is_global', sa.Boolean(), server_default=sa.text('false'), nullable=False),
@@ -37,12 +33,8 @@ def upgrade() -> None:
 
     # Rows previously stored in the default workspace behaved as globally
     # shared in search; keep that behavior after the flag exists.
-    op.execute(
-        sa.text("UPDATE document_files SET is_global = true WHERE workspace_id = :ws").bindparams(ws=default_ws)
-    )
-    op.execute(
-        sa.text("UPDATE document_chunks SET is_global = true WHERE workspace_id = :ws").bindparams(ws=default_ws)
-    )
+    op.execute("UPDATE document_files SET is_global = true WHERE workspace_id = 'global'")
+    op.execute("UPDATE document_chunks SET is_global = true WHERE workspace_id = 'global'")
 
 
 def downgrade() -> None:

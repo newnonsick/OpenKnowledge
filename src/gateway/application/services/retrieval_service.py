@@ -72,7 +72,7 @@ class RetrievalService(IRetrievalService):
                     limit=search_limit,
                 )
             except Exception as exc:
-                logger.warning(f"Knowledge FTS search error: {exc}")
+                logger.warning("Knowledge FTS failed", extra={"exception_class": type(exc).__name__})
                 return []
 
         async def _search_documents() -> List[RankedSearchResult]:
@@ -91,7 +91,7 @@ class RetrievalService(IRetrievalService):
                     )
                 return []
             except Exception as exc:
-                logger.warning(f"Document chunk FTS search error: {exc}")
+                logger.warning("Document FTS failed", extra={"exception_class": type(exc).__name__})
                 return []
 
         k_results, d_results = await asyncio.gather(_search_knowledge(), _search_documents())
@@ -145,7 +145,7 @@ class RetrievalService(IRetrievalService):
         try:
             query_vector = await self.embedding_client.embed_query(query)
         except Exception as exc:
-            logger.warning(f"Failed to generate query embedding vector: {exc}")
+            logger.warning("Query embedding failed", extra={"exception_class": type(exc).__name__})
             return []
 
         if not query_vector:
@@ -162,7 +162,7 @@ class RetrievalService(IRetrievalService):
                     limit=search_limit,
                 )
             except Exception as exc:
-                logger.warning(f"Knowledge vector search error: {exc}")
+                logger.warning("Knowledge vector search failed", extra={"exception_class": type(exc).__name__})
                 return []
 
         async def _search_documents() -> List[RankedSearchResult]:
@@ -181,7 +181,7 @@ class RetrievalService(IRetrievalService):
                     )
                 return []
             except Exception as exc:
-                logger.warning(f"Document chunk vector search error: {exc}")
+                logger.warning("Document vector search failed", extra={"exception_class": type(exc).__name__})
                 return []
 
         k_results, d_results = await asyncio.gather(_search_knowledge(), _search_documents())
@@ -246,9 +246,15 @@ class RetrievalService(IRetrievalService):
         vec_list: List[RankedSearchResult] = vec_res if isinstance(vec_res, list) else []
 
         if isinstance(fts_res, Exception):
-            logger.error(f"FTS search failed in hybrid pipeline: {fts_res}")
+            logger.error(
+                "FTS search failed in hybrid pipeline",
+                extra={"exception_class": type(fts_res).__name__},
+            )
         if isinstance(vec_res, Exception):
-            logger.error(f"Vector search failed in hybrid pipeline: {vec_res}")
+            logger.error(
+                "Vector search failed in hybrid pipeline",
+                extra={"exception_class": type(vec_res).__name__},
+            )
 
         return compute_rrf(
             ranked_lists=[fts_list, vec_list],

@@ -7,6 +7,8 @@ Exports core test infrastructure components:
 - Standalone E2E Test Runner & Pytest Result Collector
 """
 
+from importlib import import_module
+
 from tests.e2e.harness.mock_server import (
     DeterministicEmbeddingEngine,
     MockEmbeddingController,
@@ -23,18 +25,25 @@ from tests.e2e.harness.test_env import (
     detect_database_configuration,
     parse_sse_stream,
 )
-from tests.e2e.harness.runner import (
-    FEATURES,
-    TIER_DIRS,
-    TIER_NAMES,
-    TIER_THRESHOLDS,
-    E2ETestRunner,
-    PytestResultCollector,
-    ReportFormatter,
-    SuiteSummary,
-    TestResultItem,
-    TierStatistics,
-)
+
+_RUNNER_EXPORTS = {
+    "FEATURES",
+    "TIER_DIRS",
+    "TIER_NAMES",
+    "TIER_THRESHOLDS",
+    "E2ETestRunner",
+    "PytestResultCollector",
+    "ReportFormatter",
+    "SuiteSummary",
+    "TestResultItem",
+    "TierStatistics",
+}
+
+
+def __getattr__(name: str):
+    if name in _RUNNER_EXPORTS:
+        return getattr(import_module("tests.e2e.harness.runner"), name)
+    raise AttributeError(name)
 
 __all__ = [
     # Mock Server

@@ -31,7 +31,7 @@ def test_default_settings(tmp_path, monkeypatch):
 
     assert settings.embedding.url == "http://localhost:7997"
     assert settings.embedding.model_id == "default"
-    assert settings.embedding.dimension == 768
+    assert settings.embedding.dimension == 1024
 
     assert "postgresql+asyncpg" in settings.database.url
     assert settings.gateway.storage_dir == "./data/storage"

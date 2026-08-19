@@ -21,6 +21,7 @@ from src.gateway.domain.entities import KnowledgeItem, KnowledgeRevision
 from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.persistence.knowledge_repository import KnowledgeRepository
 from tests.e2e.harness.test_env import TestEnvironment
+from src.gateway.infrastructure.persistence.models import EMBED_DIM
 
 
 async def _sqlite_fk_enforced(engine) -> bool:
@@ -88,10 +89,10 @@ async def test_knowledge_save_tool_end_to_end():
             """Embedding stub so the test does not depend on an embedding backend."""
 
             async def embed_texts(self, texts):
-                return [[0.0] * 384 for _ in texts]
+                return [[0.0] * EMBED_DIM for _ in texts]
 
             async def embed_query(self, query):
-                return [0.0] * 384
+                return [0.0] * EMBED_DIM
 
         service = KnowledgeService(repository=repo, embedding_client=NullEmbeddingClient())
 

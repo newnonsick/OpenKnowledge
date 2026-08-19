@@ -153,4 +153,4 @@ async def test_pairwise_f11_auth_health_and_service_discovery():
         assert resp_health.status_code == 200
         health_data = resp_health.json()
         assert health_data["status"] == "healthy"
-        assert health_data["database"] == "connected"
+        assert "database" not in health_data

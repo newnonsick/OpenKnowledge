@@ -22,9 +22,8 @@ from tests.e2e.harness.runner import (
 def test_f28_boundary_runner_non_existent_tier_execution():
     """Test boundary: runner handling unknown tier IDs ('99', 'invalid_tier')."""
     runner = E2ETestRunner(tiers=["99", "invalid"], dry_run=True)
-    summary = runner.run()
-    assert summary.total_tests == 0
-    assert summary.verdict in ("PASSED", "FAILED")
+    with pytest.raises(ValueError, match="Unknown test tiers"):
+        runner.run()
 
 
 @pytest.mark.tier2
@@ -32,8 +31,8 @@ def test_f28_boundary_runner_non_existent_tier_execution():
 def test_f28_boundary_runner_feature_filter_unmatched_returns_empty():
     """Test boundary: filtering runner by non-existent feature ('F999') yields 0 collected tests."""
     runner = E2ETestRunner(tiers=["2"], feature_filter="F999", dry_run=True)
-    summary = runner.run()
-    assert summary.total_tests == 0
+    with pytest.raises(ValueError, match="No tests matched"):
+        runner.run()
 
 
 @pytest.mark.tier2

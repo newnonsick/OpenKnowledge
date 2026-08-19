@@ -1,9 +1,14 @@
 
 
+from contextvars import ContextVar, Token
 from functools import lru_cache
+from enum import Enum
+from ipaddress import ip_network
 import json
 from typing import Any, List, Optional, Union
-from pydantic import AliasChoices, Field, field_validator
+from urllib.parse import urlparse
+
+from pydantic import AliasChoices, Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 def _env_aware_config() -> SettingsConfigDict:
@@ -14,6 +19,12 @@ def _env_aware_config() -> SettingsConfigDict:
         extra="ignore",
         populate_by_name=True,
     )
+
+
+class RuntimeEnvironment(str, Enum):
+    DEVELOPMENT = "development"
+    TEST = "test"
+    PRODUCTION = "production"
 
 class LLMSettings(BaseSettings):
 
@@ -31,6 +42,7 @@ class LLMSettings(BaseSettings):
     )
     api_key: str = Field(
         default="EMPTY",
+        repr=False,
         validation_alias=AliasChoices("LLM_API_KEY", "llm_api_key", "api_key"),
         description="API key for backend LLM endpoint",
     )
@@ -75,11 +87,12 @@ class EmbeddingSettings(BaseSettings):
     )
     api_key: str = Field(
         default="EMPTY",
+        repr=False,
         validation_alias=AliasChoices("EMBEDDING_API_KEY", "embedding_api_key", "api_key"),
         description="API key for embedding endpoint",
     )
     dimension: int = Field(
-        default=768,
+        default=1024,
         gt=0,
         validation_alias=AliasChoices("EMBEDDING_DIMENSION", "embedding_dimension", "dimension"),
         description="Vector dimension size for pgvector columns",
@@ -103,6 +116,7 @@ class DatabaseSettings(BaseSettings):
 
     url: str = Field(
         default="postgresql+asyncpg://postgres:postgres@localhost:5432/gateway_db",
+        repr=False,
         validation_alias=AliasChoices("DATABASE_URL", "DB_URL", "database_url", "db_url", "url"),
         description="SQLAlchemy async database connection URL",
     )
@@ -141,7 +155,7 @@ class GatewaySettings(BaseSettings):
     model_config = _env_aware_config()
 
     host: str = Field(
-        default="0.0.0.0",
+        default="127.0.0.1",
         validation_alias=AliasChoices("HOST", "host"),
         description="Gateway bind host",
     )
@@ -163,14 +177,74 @@ class GatewaySettings(BaseSettings):
         description="Local disk storage directory for uploaded files",
     )
     api_keys: Union[List[str], str] = Field(
-        default_factory=lambda: ["sk-gateway-default-key"],
+        default_factory=list,
+        repr=False,
         validation_alias=AliasChoices("GATEWAY_API_KEYS", "gateway_api_keys", "api_keys"),
         description="Allowed API keys for client authentication",
     )
     cors_origins: Union[List[str], str] = Field(
-        default_factory=lambda: ["*"],
+        default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"],
         validation_alias=AliasChoices("CORS_ORIGINS", "cors_origins"),
         description="Allowed CORS origins",
+    )
+    environment: RuntimeEnvironment = Field(
+        default=RuntimeEnvironment.DEVELOPMENT,
+        validation_alias=AliasChoices("ENVIRONMENT", "environment"),
+    )
+    public_base_url: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("PUBLIC_BASE_URL", "public_base_url"),
+    )
+    trusted_hosts: Union[List[str], str] = Field(
+        default_factory=lambda: [
+            "localhost",
+            "127.0.0.1",
+            "[::1]",
+            "testserver",
+            "test",
+            "gateway-test",
+        ],
+        validation_alias=AliasChoices("TRUSTED_HOSTS", "trusted_hosts"),
+    )
+    trusted_proxy_cidrs: Union[List[str], str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("TRUSTED_PROXY_CIDRS", "trusted_proxy_cidrs"),
+    )
+    legacy_api_keys_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "LEGACY_API_KEYS_ENABLED",
+            "legacy_api_keys_enabled",
+        ),
+    )
+    max_request_body_bytes: int = Field(
+        default=16 * 1024 * 1024,
+        gt=0,
+        validation_alias=AliasChoices(
+            "MAX_REQUEST_BODY_BYTES",
+            "max_request_body_bytes",
+        ),
+    )
+    max_upload_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        gt=0,
+        validation_alias=AliasChoices("MAX_UPLOAD_BYTES", "max_upload_bytes"),
+    )
+    parser_memory_limit_bytes: int = Field(
+        default=128 * 1024 * 1024,
+        gt=0,
+        validation_alias=AliasChoices(
+            "PARSER_MEMORY_LIMIT_BYTES",
+            "parser_memory_limit_bytes",
+        ),
+    )
+    parser_timeout_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        validation_alias=AliasChoices(
+            "PARSER_TIMEOUT_SECONDS",
+            "parser_timeout_seconds",
+        ),
     )
     default_workspace_id: str = Field(
         default="global",
@@ -238,12 +312,72 @@ class GatewaySettings(BaseSettings):
             return [str(o).strip() for o in v if str(o).strip()]
         return v
 
+    @field_validator("trusted_hosts", "trusted_proxy_cidrs", mode="before")
+    @classmethod
+    def parse_string_list(cls, value: Any) -> List[str]:
+        if isinstance(value, str):
+            if value.startswith("[") and value.endswith("]"):
+                try:
+                    parsed = json.loads(value)
+                    if isinstance(parsed, list):
+                        return [str(item).strip() for item in parsed if str(item).strip()]
+                except Exception:
+                    pass
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, (list, tuple, set)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return value
+
+    @field_validator("trusted_proxy_cidrs")
+    @classmethod
+    def validate_proxy_cidrs(cls, values: List[str]) -> List[str]:
+        for value in values:
+            ip_network(value, strict=False)
+        return values
+
     @property
     def gateway_api_keys(self) -> List[str]:
 
         if isinstance(self.api_keys, list):
             return self.api_keys
         return [self.api_keys]
+
+    def validate_runtime_safety(
+        self,
+        database: Optional[DatabaseSettings] = None,
+    ) -> None:
+        if self.environment is not RuntimeEnvironment.PRODUCTION:
+            return
+
+        errors = []
+
+        def add_error(location: tuple[str, ...], message: str) -> None:
+            errors.append(
+                {
+                    "type": "value_error",
+                    "loc": location,
+                    "input": "<redacted>",
+                    "ctx": {"error": ValueError(message)},
+                }
+            )
+
+        if "*" in self.cors_origins:
+            add_error(("gateway", "cors_origins"), "wildcard CORS is forbidden in production")
+        if not self.public_base_url or urlparse(self.public_base_url).scheme != "https":
+            add_error(("gateway", "public_base_url"), "an HTTPS public base URL is required in production")
+        if not self.trusted_hosts or "*" in self.trusted_hosts:
+            add_error(("gateway", "trusted_hosts"), "explicit trusted hosts are required in production")
+        if self.log_level.upper() == "DEBUG":
+            add_error(("gateway", "log_level"), "debug logging is forbidden in production")
+        if self.gateway_api_keys:
+            add_error(("gateway", "api_keys"), "legacy static API keys are forbidden in production")
+        if self.legacy_api_keys_enabled:
+            add_error(("gateway", "legacy_api_keys_enabled"), "legacy API key compatibility is forbidden in production")
+        if database and database.echo:
+            add_error(("database", "echo"), "database echo is forbidden in production")
+
+        if errors:
+            raise ValidationError.from_exception_data("RuntimeSafety", errors)
 
 class AppSettings(BaseSettings):
 
@@ -282,11 +416,34 @@ class AppSettings(BaseSettings):
         elif isinstance(gw_val, GatewaySettings):
             object.__setattr__(self, "gateway", gw_val)
 
+    def validate_runtime_safety(self) -> None:
+        self.gateway.validate_runtime_safety(self.database)
+
 Settings = AppSettings
 
 @lru_cache()
-def get_settings() -> AppSettings:
+def _get_cached_settings() -> AppSettings:
 
     return AppSettings()
+
+_runtime_settings: ContextVar[Optional[AppSettings]] = ContextVar(
+    "gateway_runtime_settings",
+    default=None,
+)
+
+def get_settings() -> AppSettings:
+
+    return _runtime_settings.get() or _get_cached_settings()
+
+def set_runtime_settings(value: AppSettings) -> Token:
+
+    return _runtime_settings.set(value)
+
+def reset_runtime_settings(token: Token) -> None:
+
+    _runtime_settings.reset(token)
+
+get_settings.cache_clear = _get_cached_settings.cache_clear
+get_settings.cache_info = _get_cached_settings.cache_info
 
 settings: AppSettings = get_settings()

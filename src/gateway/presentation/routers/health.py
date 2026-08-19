@@ -1,34 +1,52 @@
 
 
-import logging
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.gateway.infrastructure.database import get_db_session
-
-logger = logging.getLogger(__name__)
+from src.gateway.presentation.request_context import get_request_id
 
 router = APIRouter(tags=["Health"])
 
-@router.get("/health")
-@router.get("/v1/health")
-async def health_check(session: AsyncSession = Depends(get_db_session)):
+@router.get("/healthz/live")
+async def liveness_check(request: Request):
+    return {"status": "live", "request_id": get_request_id(request)}
 
-    try:
-        await session.execute(text("SELECT 1"))
-        return {
-            "status": "healthy",
-            "database": "connected",
-        }
-    except Exception as exc:
-        logger.warning(f"Database health check failed: {exc}")
+
+@router.get("/healthz/ready")
+async def readiness_check(
+    request: Request,
+):
+
+    if getattr(request.app.state, "schema_compatible", None) is False:
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={
-                "status": "unhealthy",
-                "database": "disconnected",
-                "error": str(exc),
+                "status": "not_ready",
+                "code": "schema_incompatible",
+                "request_id": get_request_id(request),
             },
         )
+
+    if await request.app.state.readiness_probe.check():
+        return {
+            "status": "ready",
+            "request_id": get_request_id(request),
+        }
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "status": "not_ready",
+            "request_id": get_request_id(request),
+        },
+    )
+
+
+@router.get("/health")
+@router.get("/v1/health")
+async def compatibility_health_check(
+    request: Request,
+):
+    return {
+        "status": "healthy",
+        "request_id": get_request_id(request),
+    }

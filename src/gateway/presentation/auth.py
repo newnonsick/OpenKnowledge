@@ -9,13 +9,16 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
-from src.gateway.config import get_settings, settings
+from src.gateway.config import get_settings
 from src.gateway.domain.exceptions import AuthenticationException
+from src.gateway.presentation.request_context import get_request_id
 
 logger = logging.getLogger(__name__)
 
 PUBLIC_PATHS: Set[str] = {
     "/health",
+    "/healthz/live",
+    "/healthz/ready",
     "/v1/health",
     "/docs",
     "/openapi.json",
@@ -146,12 +149,15 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
 
             request.state.api_key = matched_key
         except AuthenticationException as exc:
-            logger.warning(f"Unauthorized access attempt to {path}: {exc.message}")
-            return self._build_401_response(path, exc)
+            logger.warning("Unauthorized request", extra={"path": path})
+            return self._build_401_response(request, exc)
 
         return await call_next(request)
 
-    def _build_401_response(self, path: str, exc: AuthenticationException) -> JSONResponse:
+    def _build_401_response(self, request: Request, exc: AuthenticationException) -> JSONResponse:
+
+        path = request.url.path
+        request_id = get_request_id(request)
 
         if path.startswith("/v1/messages"):
 
@@ -163,6 +169,7 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
                         "type": "authentication_error",
                         "message": exc.message,
                     },
+                    "request_id": request_id,
                 },
             )
         else:
@@ -174,6 +181,7 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
                         "message": exc.message,
                         "type": exc.error_type,
                         "code": exc.code,
-                    }
+                    },
+                    "request_id": request_id,
                 },
             )

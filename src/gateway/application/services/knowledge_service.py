@@ -74,7 +74,10 @@ class KnowledgeService:
                 if embeddings:
                     embedding = embeddings[0]
             except Exception as exc:
-                logger.warning(f"Failed to generate embedding for knowledge item: {exc}")
+                logger.warning(
+                    "Knowledge embedding generation failed",
+                    extra={"exception_class": type(exc).__name__},
+                )
 
         rev_id = uuid4()
         initial_revision = KnowledgeRevision(
@@ -142,7 +145,10 @@ class KnowledgeService:
                 if embeddings:
                     embedding = embeddings[0]
             except Exception as exc:
-                logger.warning(f"Failed to generate embedding for knowledge update: {exc}")
+                logger.warning(
+                    "Knowledge update embedding generation failed",
+                    extra={"exception_class": type(exc).__name__},
+                )
 
         new_revision = KnowledgeRevision(
             id=uuid4(),
@@ -358,10 +364,18 @@ class KnowledgeService:
                 is_error=True,
             )
         except Exception as exc:
-            logger.error(f"Error executing tool '{name}': {exc}", exc_info=True)
+            logger.error(
+                "Knowledge tool execution failed",
+                extra={"tool_name": name, "exception_class": type(exc).__name__},
+            )
             return ToolResult(
                 tool_call_id=tool_call_id,
                 name=name,
-                content=json.dumps({"error": str(exc), "type": "tool_execution_error"}),
+                content=json.dumps(
+                    {
+                        "error": "The tool could not complete the request.",
+                        "type": "tool_execution_error",
+                    }
+                ),
                 is_error=True,
             )

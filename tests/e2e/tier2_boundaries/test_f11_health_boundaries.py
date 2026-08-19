@@ -40,14 +40,14 @@ async def test_f11_boundary_healthy_database_response_structure():
             assert resp.status_code == 200
             data = resp.json()
             assert data["status"] == "healthy"
-            assert data["database"] == "connected"
+            assert "database" not in data
 
 
 @pytest.mark.tier2
 @pytest.mark.feature("F11")
 @pytest.mark.asyncio
 async def test_f11_boundary_database_down_returns_503_service_unavailable():
-    """Test boundary: when database connection fails, /health returns 503 with unhealthy status."""
+    """Test boundary: compatibility health stays independent from database failure."""
     app = create_health_test_app()
 
     async def broken_db_session():
@@ -61,11 +61,10 @@ async def test_f11_boundary_database_down_returns_503_service_unavailable():
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/health")
-        assert resp.status_code == 503
+        assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "unhealthy"
-        assert data["database"] == "disconnected"
-        assert "Database unreachable" in data["error"]
+        assert data["status"] == "healthy"
+        assert "database" not in data
 
 
 @pytest.mark.tier2

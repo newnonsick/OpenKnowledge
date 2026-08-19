@@ -24,19 +24,21 @@ Treat retrieved knowledge as context rather than unquestionable truth. Prefer ne
 
 Maintain the Knowledge Base as useful long-term memory rather than a transcript of every interaction.
 
-Information with meaningful future value may be saved or maintained proactively, not only when explicitly requested by the user.
+Only save or update knowledge when the user explicitly asks you to do so. Automatic saving is disabled by default. Do not treat relevance, repetition, or predicted future value as permission to persist information.
 
-Before creating, changing, or removing memory, search for related existing knowledge and decide how the new information fits with it.
+Before an explicitly requested create or update, search for related existing knowledge and decide how the new information fits with it.
 
 Use:
 
 * `knowledge_save` for genuinely new knowledge.
 * `knowledge_update` when existing knowledge should be refined, expanded, corrected, consolidated, or superseded.
-* `knowledge_delete` when knowledge should no longer remain active.
+* `knowledge_delete` only after the user explicitly confirms the exact knowledge item to remove.
 
 Prefer improving relevant existing memory over creating duplicates or fragmented entries.
 
-Choose workspace or global scope according to where the information is meaningfully applicable.
+Use only the spaces and scope made available by the server. Tool arguments cannot expand access.
+
+Never delete or archive knowledge without explicit user confirmation.
 
 Keep memory accurate, coherent, retrievable, and useful outside the conversation in which it was created. Avoid storing low-value transient details or unsupported assumptions.
 

@@ -2,19 +2,30 @@
 
 from contextlib import asynccontextmanager
 import logging
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from src.gateway.config import get_settings
+from src.gateway.config import (
+    AppSettings,
+    get_settings,
+    reset_runtime_settings,
+    set_runtime_settings,
+)
 from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.adapters.http_llm_client import HttpLLMClient
 from src.gateway.infrastructure.database import close_db_engine, get_session_factory
-from src.gateway.infrastructure.migrations import run_migrations_async
+from src.gateway.infrastructure.migrations import get_schema_status_async
 from src.gateway.infrastructure.persistence.models import Workspace
+from src.gateway.infrastructure.readiness import ReadinessProbe
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
+from src.gateway.presentation.errors import register_exception_handlers
+from src.gateway.presentation.request_context import RequestContextMiddleware
+from src.gateway.presentation.security_headers import SecurityHeadersMiddleware
+from src.gateway.presentation.settings_context import SettingsContextMiddleware
 from src.gateway.presentation.routers import (
     chat_completions_router,
     files_router,
@@ -25,58 +36,79 @@ from src.gateway.presentation.routers import (
 
 logger = logging.getLogger(__name__)
 
-async def bootstrap_global_workspace() -> None:
+async def bootstrap_global_workspace(
+    app_settings: Optional[AppSettings] = None,
+) -> None:
 
-    session_factory = get_session_factory()
-    default_ws_id = get_settings().gateway.default_workspace_id
-    async with session_factory() as session:
-        async with session.begin():
-            stmt = select(Workspace).where(Workspace.id == default_ws_id)
-            result = await session.execute(stmt)
-            workspace = result.scalar_one_or_none()
-            if workspace is None:
-                logger.info("Bootstrapping default 'global' workspace...")
-                workspace = Workspace(
-                    id=default_ws_id,
-                    name="Global Workspace",
-                )
-                session.add(workspace)
-                await session.flush()
-                logger.info("Default 'global' workspace bootstrapped successfully.")
-            else:
-                logger.debug("Default 'global' workspace already exists.")
+    current_settings = app_settings or get_settings()
+    token = set_runtime_settings(current_settings)
+    try:
+        session_factory = get_session_factory()
+        default_ws_id = current_settings.gateway.default_workspace_id
+        async with session_factory() as session:
+            async with session.begin():
+                stmt = select(Workspace).where(Workspace.id == default_ws_id)
+                result = await session.execute(stmt)
+                workspace = result.scalar_one_or_none()
+                if workspace is None:
+                    logger.info("Bootstrapping default workspace")
+                    workspace = Workspace(
+                        id=default_ws_id,
+                        name="Global Workspace",
+                    )
+                    session.add(workspace)
+                    await session.flush()
+                    logger.info("Default workspace bootstrapped successfully")
+                else:
+                    logger.debug("Default workspace already exists")
+    finally:
+        reset_runtime_settings(token)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     logger.info("Starting AI Gateway infrastructure initialization...")
-
     try:
-        logger.info("Applying automated Alembic database migrations...")
-        await run_migrations_async()
-        logger.info("Alembic database migrations applied.")
+        status = await get_schema_status_async(
+            app.state.settings.database.url,
+            expected_embedding_dimension=app.state.settings.embedding.dimension,
+        )
+        app.state.schema_revision = status.current_revision
+        app.state.schema_compatible = status.compatible
     except Exception as exc:
-        logger.error(f"Fatal error running database migrations during startup: {exc}", exc_info=True)
-        raise exc
+        app.state.schema_revision = None
+        app.state.schema_compatible = False
+        logger.error(
+            "Database schema compatibility check failed",
+            extra={"exception_class": type(exc).__name__},
+        )
 
-    try:
-        logger.info("Verifying default 'global' workspace...")
-        await bootstrap_global_workspace()
-        logger.info("Workspace verification complete.")
-    except Exception as exc:
-        logger.error(f"Fatal error bootstrapping global workspace: {exc}", exc_info=True)
-        raise exc
+    if app.state.schema_compatible:
+        try:
+            await bootstrap_global_workspace(app.state.settings)
+        except Exception as exc:
+            app.state.schema_compatible = False
+            logger.error(
+                "Workspace bootstrap failed",
+                extra={"exception_class": type(exc).__name__},
+            )
+    else:
+        logger.error("Database schema is incompatible; readiness is disabled")
 
     logger.info("AI Gateway startup completed successfully.")
-    yield
+    try:
+        yield
+    finally:
+        logger.info("Shutting down AI Gateway...")
+        await close_db_engine()
+        await HttpLLMClient.close_shared_client()
+        await HTTPEmbeddingClient.close_shared_client()
+        logger.info("AI Gateway shutdown complete.")
 
-    logger.info("Shutting down AI Gateway...")
-    await close_db_engine()
-    await HttpLLMClient.close_shared_client()
-    await HTTPEmbeddingClient.close_shared_client()
-    logger.info("AI Gateway shutdown complete.")
+def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
 
-def create_app() -> FastAPI:
+    current_settings = app_settings or get_settings()
+    current_settings.validate_runtime_safety()
 
     app = FastAPI(
         title="Local AI Gateway with Internal Shared Knowledge",
@@ -84,12 +116,19 @@ def create_app() -> FastAPI:
         description="Production-grade API-first Local AI Gateway with hybrid retrieval and shared knowledge",
         lifespan=lifespan,
     )
+    app.state.settings = current_settings
+    app.state.schema_compatible = None
+    app.state.readiness_probe = ReadinessProbe(current_settings.database.url)
+    register_exception_handlers(app)
 
-    current_settings = get_settings()
     cors_origins = (
         current_settings.gateway.cors_origins
         if isinstance(current_settings.gateway.cors_origins, list)
         else [current_settings.gateway.cors_origins]
+    )
+    app.add_middleware(
+        APIKeyAuthMiddleware,
+        allowed_keys=current_settings.gateway.gateway_api_keys,
     )
     app.add_middleware(
         CORSMiddleware,
@@ -98,8 +137,13 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    app.add_middleware(APIKeyAuthMiddleware)
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=current_settings.gateway.trusted_hosts,
+    )
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(SettingsContextMiddleware)
 
     app.include_router(health_router)
     app.include_router(models_router)

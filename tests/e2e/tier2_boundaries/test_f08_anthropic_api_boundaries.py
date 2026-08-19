@@ -141,7 +141,7 @@ def test_f08_boundary_canonical_representation_of_anthropic_blocks():
 @pytest.mark.asyncio
 async def test_f08_boundary_anthropic_error_forwarding():
     """Test boundary: upstream backend 502/500 errors surface as the gateway's
-    Anthropic 502 error envelope carrying the upstream message."""
+    Anthropic 502 error envelope without upstream detail."""
     from tests.e2e.harness.test_env import GatewayMockUpstream
 
     async with GatewayMockUpstream() as gw:
@@ -159,4 +159,5 @@ async def test_f08_boundary_anthropic_error_forwarding():
         data = resp.json()
         assert data["type"] == "error"
         assert data["error"]["type"] == "llm_provider_error"
-        assert "timeout" in data["error"]["message"]
+        assert data["error"]["message"] == "A gateway dependency failed."
+        assert "upstream timeout" not in resp.text

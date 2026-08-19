@@ -44,4 +44,4 @@ class PDFParser(BaseParser):
 
             return "\n\n".join(pages_text)
         except Exception as exc:
-            raise ValidationException(f"Corrupted or unreadable PDF document: {exc}") from exc
+            raise ValidationException("Corrupted or unreadable PDF document.") from exc

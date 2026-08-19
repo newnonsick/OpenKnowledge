@@ -214,24 +214,30 @@ async def create_chat_completion(
         return openai_resp
 
     except GatewayException as exc:
-        logger.warning(f"GatewayException in chat completions: {exc}")
+        logger.warning(
+            "Gateway chat completion error",
+            extra={"error_type": exc.error_type},
+        )
         return JSONResponse(
             status_code=exc.status_code,
             content={
                 "error": {
-                    "message": exc.message,
+                    "message": exc.message if exc.status_code < 500 else "A gateway dependency failed.",
                     "type": exc.error_type,
                     "code": exc.code,
                 }
             },
         )
     except Exception as exc:
-        logger.error(f"Unhandled error in chat completions: {exc}", exc_info=True)
+        logger.error(
+            "Unhandled chat completion error",
+            extra={"exception_class": type(exc).__name__},
+        )
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={
                 "error": {
-                    "message": f"An unexpected error occurred: {str(exc)}",
+                    "message": "An internal server error occurred.",
                     "type": "internal_server_error",
                     "code": "internal_error",
                 }
@@ -322,10 +328,13 @@ def _handle_streaming_completion(
                 yield f"data: {json.dumps(chunk_payload)}\n\n"
 
         except Exception as exc:
-            logger.error(f"Error during SSE streaming generation: {exc}")
+            logger.error(
+                "Streaming generation failed",
+                extra={"exception_class": type(exc).__name__},
+            )
             err_chunk = {
                 "error": {
-                    "message": str(exc),
+                    "message": "The response stream ended unexpectedly.",
                     "type": "streaming_error",
                     "code": 500,
                 }

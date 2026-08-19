@@ -223,26 +223,32 @@ async def create_message(
         return anthropic_resp
 
     except GatewayException as exc:
-        logger.warning(f"GatewayException in Anthropic messages: {exc}")
+        logger.warning(
+            "Gateway Anthropic message error",
+            extra={"error_type": exc.error_type},
+        )
         return JSONResponse(
             status_code=exc.status_code,
             content={
                 "type": "error",
                 "error": {
                     "type": exc.error_type,
-                    "message": exc.message,
+                    "message": exc.message if exc.status_code < 500 else "A gateway dependency failed.",
                 },
             },
         )
     except Exception as exc:
-        logger.error(f"Unhandled error in Anthropic messages: {exc}", exc_info=True)
+        logger.error(
+            "Unhandled Anthropic message error",
+            extra={"exception_class": type(exc).__name__},
+        )
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={
                 "type": "error",
                 "error": {
                     "type": "api_error",
-                    "message": f"An unexpected error occurred: {str(exc)}",
+                    "message": "An internal server error occurred.",
                 },
             },
         )
@@ -404,10 +410,16 @@ def _handle_anthropic_streaming(
                             )
 
         except Exception as exc:
-            logger.error(f"Error during Anthropic SSE streaming: {exc}")
+            logger.error(
+                "Anthropic stream generation failed",
+                extra={"exception_class": type(exc).__name__},
+            )
             err_event = {
                 "type": "error",
-                "error": {"type": "api_error", "message": str(exc)},
+                "error": {
+                    "type": "api_error",
+                    "message": "The response stream ended unexpectedly.",
+                },
             }
             yield sse("error", err_event)
 

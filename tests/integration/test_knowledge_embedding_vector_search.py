@@ -14,6 +14,7 @@ from src.gateway.domain.entities import KnowledgeItem, KnowledgeRevision
 from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.persistence.document_repository import DocumentRepository
 from src.gateway.infrastructure.persistence.knowledge_repository import KnowledgeRepository
+from src.gateway.infrastructure.persistence.models import EMBED_DIM
 from src.gateway.infrastructure.storage.local_storage import LocalStorageAdapter
 from tests.e2e.harness.test_env import TestEnvironment
 
@@ -21,7 +22,7 @@ from tests.e2e.harness.test_env import TestEnvironment
 class FakeEmbeddingClient(IEmbeddingClient):
     """Deterministic embedding client for integration tests."""
 
-    def __init__(self, dimension: int = 384) -> None:
+    def __init__(self, dimension: int = EMBED_DIM) -> None:
         self._dimension = dimension
         self.call_history: list[list[str]] = []
 
@@ -53,7 +54,7 @@ class FakeEmbeddingClient(IEmbeddingClient):
 async def test_knowledge_service_embedding_lifecycle_persistence():
     """Verify that KnowledgeService saves, updates, and retrieves embeddings in DB."""
     async with TestEnvironment() as env:
-        emb_client = FakeEmbeddingClient(dimension=384)
+        emb_client = FakeEmbeddingClient(dimension=EMBED_DIM)
         k_repo = KnowledgeRepository(session_factory=env.session_factory)
         service = KnowledgeService(repository=k_repo, embedding_client=emb_client)
 
@@ -67,7 +68,7 @@ async def test_knowledge_service_embedding_lifecycle_persistence():
         assert item.version == 1
         assert item.current_revision is not None
         assert item.current_revision.embedding is not None
-        assert len(item.current_revision.embedding) == 384
+        assert len(item.current_revision.embedding) == EMBED_DIM
         # First element is 0.9 because content contains 'database'/'sql'
         assert item.current_revision.embedding[0] == 0.9
 
@@ -110,7 +111,7 @@ async def test_knowledge_service_embedding_lifecycle_persistence():
 async def test_hybrid_search_blends_knowledge_and_documents():
     """Verify Hybrid Retrieval fuses vector and FTS results from both knowledge items and document chunks."""
     async with TestEnvironment() as env:
-        emb_client = FakeEmbeddingClient(dimension=384)
+        emb_client = FakeEmbeddingClient(dimension=EMBED_DIM)
         k_repo = KnowledgeRepository(session_factory=env.session_factory)
         d_repo = DocumentRepository(session_factory=env.session_factory)
         storage = LocalStorageAdapter(base_dir=env.storage_path)

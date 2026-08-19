@@ -73,7 +73,7 @@ async def test_f07_boundary_malformed_json_body_rejected():
 @pytest.mark.asyncio
 async def test_f07_boundary_upstream_error_propagation():
     """Test boundary: upstream LLM errors (e.g. 503) surface as the gateway's
-    structured 502 llm_provider_error envelope carrying the upstream message."""
+    structured 502 llm_provider_error envelope without upstream detail."""
     async with GatewayMockUpstream() as gw:
         gw.llm.queue_error(status_code=503, message="Upstream LLM engine overloaded")
 
@@ -88,7 +88,8 @@ async def test_f07_boundary_upstream_error_propagation():
         data = resp.json()
         assert "error" in data
         assert data["error"]["type"] == "llm_provider_error"
-        assert "overloaded" in data["error"]["message"]
+        assert data["error"]["message"] == "A gateway dependency failed."
+        assert "overloaded" not in resp.text
 
 
 @pytest.mark.tier2

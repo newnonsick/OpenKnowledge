@@ -29,9 +29,9 @@ from tests.e2e.harness.runner import (
 
 
 def test_feature_registry_completeness():
-    """Verify all 28 features (F1 to F28) are registered with non-empty descriptions."""
-    assert len(FEATURES) == 28
-    for i in range(1, 29):
+    """Verify all 29 features (F1 to F29) are registered with non-empty descriptions."""
+    assert len(FEATURES) == 29
+    for i in range(1, 30):
         assert i in FEATURES
         code, name = FEATURES[i]
         assert code == f"F{i}"
@@ -46,7 +46,59 @@ def test_feature_id_extraction():
     assert collector._extract_feature_id("test_f7_openai.py::test_case", "tests/e2e/tier1_features/test_f7_openai.py") == "F7"
     assert collector._extract_feature_id("test_f24_orchestration_bounds.py::test_case", "tests/e2e/tier2_boundaries/test_f24_orchestration_bounds.py") == "F24"
     assert collector._extract_feature_id("test_feature_28_suite.py::test_case", "tests/e2e/tier1_features/test_feature_28_suite.py") == "F28"
+    assert collector._extract_feature_id("test_f29_thinking.py::test_case", "tests/e2e/tier1_features/test_f29_thinking.py") == "F29"
     assert collector._extract_feature_id("test_other.py::test_case", "tests/e2e/tier4_scenarios/test_s01_onboarding.py") is None
+
+
+def test_unknown_feature_identifier_is_rejected(tmp_path: Path):
+    test_file = tmp_path / "test_f30_unknown.py"
+    test_file.write_text("def test_unknown():\n    assert True\n", encoding="utf-8")
+    runner = E2ETestRunner(tiers=["1"], custom_paths=[str(test_file)], dry_run=True)
+
+    with pytest.raises(ValueError, match="F30"):
+        runner.run()
+
+
+def test_unknown_feature_marker_is_rejected(tmp_path: Path):
+    test_file = tmp_path / "test_f01_marker.py"
+    test_file.write_text(
+        "import pytest\n@pytest.mark.feature('F30')\ndef test_unknown_marker():\n    assert True\n",
+        encoding="utf-8",
+    )
+    runner = E2ETestRunner(tiers=["1"], custom_paths=[str(test_file)], dry_run=True)
+
+    with pytest.raises(ValueError, match="F30"):
+        runner.run()
+
+
+def test_collection_error_is_rejected(tmp_path: Path):
+    test_file = tmp_path / "test_f01_broken.py"
+    test_file.write_text("def test_broken(:\n    pass\n", encoding="utf-8")
+    runner = E2ETestRunner(tiers=["1"], custom_paths=[str(test_file)], dry_run=True)
+
+    with pytest.raises(RuntimeError, match="collection failed"):
+        runner.run()
+
+
+def test_dry_run_reports_collected_nodes_without_claiming_execution(capsys):
+    runner = E2ETestRunner(
+        tiers=["1"],
+        custom_paths=["tests/e2e/tier1_features/test_f29_thinking_passthrough.py"],
+        dry_run=True,
+    )
+
+    summary = runner.run()
+
+    assert summary.total_tests == 4
+    assert summary.passed == 0
+    assert summary.failed == 0
+    assert summary.errors == 0
+    assert summary.feature_matrix["F29"]["1"] == 4
+    assert summary.verdict == "COLLECTED"
+    assert summary.thresholds_passed is True
+    ReportFormatter.print_terminal_report(summary)
+    output = capsys.readouterr().out
+    assert "UNMET" not in output
 
 
 def test_suite_summary_aggregation():

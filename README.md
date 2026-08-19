@@ -130,10 +130,10 @@ cd knowledge-gateway
 python -m venv .venv
 source .venv/bin/activate        # Windows PowerShell: .venv\Scripts\Activate.ps1
 
-pip install -r requirements.txt
+pip install --require-hashes -r requirements/runtime.lock
 ```
 
-`requirements.txt` includes the development dependencies. For a minimal runtime install use `pip install -e .` instead, and add `.[dev]` when working on the project.
+For development, install `requirements/dev.lock`. The compatibility `requirements.txt` points to that development lock. Dependency ranges remain in `pyproject.toml`; reviewed Python 3.12 resolutions with hashes are kept under `requirements/`.
 
 ## Configuration
 
@@ -147,13 +147,22 @@ cp .env.example .env
 
 | Variable | Default | Description |
 |---|---|---|
-| `HOST` | `0.0.0.0` | Bind address |
+| `ENVIRONMENT` | `development` | Runtime profile: `development`, `test`, or `production` |
+| `HOST` | `127.0.0.1` | Bind address |
 | `PORT` | `8000` | HTTP port |
 | `LOG_LEVEL` | `DEBUG` | `DEBUG`, `INFO`, `WARNING`, or `ERROR` |
 | `STORAGE_DIR` | `./data/storage` | Directory for uploaded files |
 | `DEFAULT_WORKSPACE_ID` | `global` | Workspace used when a request does not specify one |
-| `GATEWAY_API_KEYS` | `sk-gateway-default-key` | Accepted client keys, comma-separated or a JSON array |
-| `CORS_ORIGINS` | `*` | Allowed CORS origins |
+| `PUBLIC_BASE_URL` | unset | Public HTTPS URL; required in production |
+| `TRUSTED_HOSTS` | local hosts | HTTP host allowlist; explicit non-wildcard values are required in production |
+| `TRUSTED_PROXY_CIDRS` | unset | Proxy networks trusted by an explicitly configured edge path |
+| `GATEWAY_API_KEYS` | unset | Temporary development-only legacy keys |
+| `LEGACY_API_KEYS_ENABLED` | `false` | Temporary compatibility switch; forbidden in production |
+| `CORS_ORIGINS` | local console origins | Explicit browser origins; wildcard is forbidden in production |
+| `MAX_REQUEST_BODY_BYTES` | `16777216` | Maximum request body size |
+| `MAX_UPLOAD_BYTES` | `10485760` | Maximum uploaded file size |
+| `PARSER_MEMORY_LIMIT_BYTES` | `134217728` | Parser memory budget |
+| `PARSER_TIMEOUT_SECONDS` | `60` | Parser timeout |
 | `MAX_TOOL_ITERATIONS` | `10` | Tool loop cap per request |
 | `TOOL_TIMEOUT_SECONDS` | `15.0` | Timeout for internal tool execution |
 | `KNOWLEDGE_SYSTEM_PROMPT_ENABLED` | `true` | Append the knowledge directive to the system prompt |
@@ -189,11 +198,11 @@ cp .env.example .env
 | `EMBEDDING_URL` | `http://localhost:7997` | Base URL of the embeddings endpoint |
 | `EMBEDDING_MODEL_ID` | `default` | Embedding model identifier |
 | `EMBEDDING_API_KEY` | `EMPTY` | Backend API key |
-| `EMBEDDING_DIMENSION` | `768` | Vector dimension, must match the schema |
+| `EMBEDDING_DIMENSION` | `1024` | Vector dimension, must match the schema |
 | `EMBEDDING_BATCH_SIZE` | `32` | Batch size for embedding requests |
 | `EMBEDDING_TIMEOUT_SECONDS` | `30.0` | HTTP timeout for embedding calls |
 
-`EMBEDDING_DIMENSION` must match the dimension the database schema was created with. Common values: 768 for nomic-embed, 1024 for bge-large, 1536 for text-embedding-3-small.
+The current schema is `vector(1024)`. `EMBEDDING_DIMENSION` must remain `1024` until a reviewed embedding-generation migration introduces another dimension; readiness fails closed when runtime configuration and schema differ.
 
 ## Database setup
 
@@ -203,13 +212,14 @@ Create an empty database:
 CREATE DATABASE gateway_db;
 ```
 
-Migrations run automatically during application startup. To apply them manually:
+Migrations are a deployment step and never run during web startup. Apply and verify them explicitly:
 
 ```bash
-alembic upgrade head
+python -m src.gateway.cli migrate
+python -m src.gateway.cli check
 ```
 
-On first startup the gateway also creates the default workspace configured in `DEFAULT_WORKSPACE_ID`.
+Web startup performs a read-only revision check. An incompatible schema keeps liveness available but makes readiness fail with `schema_incompatible`.
 
 ## Running
 
@@ -221,7 +231,7 @@ Add `--reload` during development. Interactive API documentation is served at `/
 
 ## Authentication
 
-All endpoints except `/health`, `/v1/health`, `/docs`, `/openapi.json`, and `/redoc` require a key. Send it as either header:
+All endpoints except `/healthz/live`, `/health`, `/v1/health`, `/docs`, `/openapi.json`, and `/redoc` require a key. Send it as either header:
 
 ```
 Authorization: Bearer <key>
@@ -234,7 +244,9 @@ Keys are compared in constant time. Rejected requests on `/v1/messages` return t
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/health`, `/v1/health` | Service and database health, no authentication |
+| GET | `/healthz/live` | Process liveness without dependency access |
+| GET | `/healthz/ready` | Public single-flight cached readiness using separate database capacity |
+| GET | `/health`, `/v1/health` | Dependency-free compatibility liveness aliases |
 | GET | `/v1/models` | Registered models and aliases |
 | GET | `/v1/models/{model_id}` | Single model details |
 | POST | `/v1/chat/completions` | Chat in OpenAI format, JSON or SSE |
@@ -374,7 +386,7 @@ The gateway appends a usage directive to the system prompt that describes when t
 `knowledge_search` runs two queries in parallel:
 
 1. Lexical: the query is sanitized into AND-connected terms and matched against a generated `to_tsvector('english', content)` column with GIN indexes. Results are ranked with `ts_rank_cd`.
-2. Vector: the query is embedded by the embedding backend and matched against the pgvector column using cosine distance over an ivfflat index.
+2. Vector: the query is embedded by the embedding backend and matched against the pgvector column using cosine distance over an HNSW index.
 
 Both channels search knowledge items and document chunks at once, restricted to the active workspace plus global items. The two ranked lists are then fused with weighted Reciprocal Rank Fusion:
 
@@ -393,11 +405,18 @@ where `w_c` is the channel weight (1.0 by default) and `rank_c(d)` is the positi
 
 ## Testing
 
-Unit and integration tests need no running services. PostgreSQL-specific column types are compiled down to SQLite (aiosqlite), and an in-process mock server stands in for the LLM and embedding backends.
+Most unit and protocol-contract tests need no running services. The SQLite fallback compiles PostgreSQL-specific types for fast checks, but it does not prove PostgreSQL full-text search, pgvector operators, HNSW indexes, transaction behavior, or Alembic release flow. Production capability claims require the real PostgreSQL profile. The LLM and embedding endpoints may remain offline for these database tests.
 
 ```bash
 pytest                                # everything
 pytest tests/unit -m unit             # unit tests
+pytest tests/integration -m integration
+```
+
+To run the integration layer against the PostgreSQL/pgvector URL already configured in `.env`, load it as `TEST_DATABASE_URL` or use the test environment loader. Each test lifecycle creates and drops a guarded unique schema:
+
+```powershell
+$env:TEST_DATABASE_URL = $env:DATABASE_URL
 pytest tests/integration -m integration
 ```
 
@@ -419,7 +438,7 @@ python -m tests.e2e.harness.runner --tier all \
 | 4 | Realistic workflows: RAG question answering, concurrent edits, streaming UI, coding agent sessions |
 | 5 | Adversarial hardening and failure injection |
 
-Every test is mapped to a feature ID such as `F7` (OpenAI endpoint) or `F24` (tool interception). The runner accepts `--feature` to filter, `--dry-run` to list matching cases without executing them, `-k` for pytest keyword expressions, and `--min-tests` and `--max-duration` as pass thresholds.
+Tests may be mapped to feature IDs such as `F7` (OpenAI endpoint), `F24` (tool interception), and `F29` (thinking pass-through). The runner rejects unknown feature identifiers. `--dry-run` reports collected nodes without claiming they executed or applying pass thresholds. Count-based E2E tiers are contract coverage, not evidence that production PostgreSQL, networking, storage, or deployment behavior was exercised.
 
 ## License
 

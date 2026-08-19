@@ -354,8 +354,9 @@ class TestAdversarialHTTPFileUpload:
             )
             assert resp.status_code == 422
             data = resp.json()
-            assert "detail" in data
-            assert "Malformed JSON" in str(data["detail"]) or "JSON" in str(data["detail"])
+            assert data["error"]["type"] == "validation_error"
+            assert data["error"]["code"] == "invalid_payload"
+            assert data["request_id"]
 
     async def test_upload_corrupted_pdf_returns_422_validation_error(self):
         """Verify uploading invalid PDF file returns HTTP 422 Unprocessable Entity."""
@@ -373,5 +374,6 @@ class TestAdversarialHTTPFileUpload:
             )
             assert resp.status_code == 422
             data = resp.json()
-            assert "detail" in data
-            assert "PDF" in str(data["detail"])
+            assert data["error"]["type"] == "validation_error"
+            assert data["error"]["code"] == "invalid_payload"
+            assert data["request_id"]

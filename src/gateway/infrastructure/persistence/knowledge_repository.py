@@ -466,7 +466,10 @@ class KnowledgeRepository(IKnowledgeRepository):
                         )
                     return results
                 except Exception as exc:
-                    logger.debug(f"PostgreSQL native vector pushdown fallback to in-memory: {exc}")
+                    logger.debug(
+                        "Knowledge vector pushdown fallback",
+                        extra={"exception_class": type(exc).__name__},
+                    )
 
             stmt = (
                 select(ORMKnowledgeItem, ORMKnowledgeRevision)

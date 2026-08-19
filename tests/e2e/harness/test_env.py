@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import os
 import re
+import secrets
 import shutil
 import tempfile
 from pathlib import Path
@@ -92,29 +94,53 @@ SQLiteDDLCompiler.render_default_string = _sqlite_render_default_string
 # 2. Database Detection & Lifecycle Utilities
 # -----------------------------------------------------------------------------
 
+def configured_database_url() -> str:
+    return os.environ.get(
+        "TEST_DATABASE_URL",
+        os.environ.get(
+            "DATABASE_URL",
+            os.environ.get(
+                "DB_URL",
+                "postgresql+asyncpg://postgres:postgres@localhost:5432/gateway_test_db",
+            ),
+        ),
+    )
+
+
 async def detect_database_configuration() -> Tuple[str, bool]:
     """
     Detect whether PostgreSQL is available or if SQLite fallback must be used.
     Returns (db_url, is_postgres).
     """
-    pg_url = os.environ.get(
-        "TEST_DATABASE_URL",
-        os.environ.get(
-            "DB_URL",
-            "postgresql+asyncpg://postgres:postgres@localhost:5432/gateway_test_db",
-        ),
+    explicit_url = (
+        os.environ.get("TEST_DATABASE_URL")
+        or os.environ.get("DATABASE_URL")
+        or os.environ.get("DB_URL")
     )
+    pg_url = configured_database_url()
     if pg_url.startswith("postgresql"):
+        test_engine = None
         try:
             test_engine = create_async_engine(pg_url, connect_args={"timeout": 2.0})
             async with test_engine.connect() as conn:
                 await conn.execute(text("SELECT 1;"))
-            await test_engine.dispose()
             return pg_url, True
-        except Exception:
-            pass  # Fall back to SQLite
+        except Exception as exc:
+            if explicit_url:
+                raise RuntimeError("Configured PostgreSQL is unavailable") from exc
+        finally:
+            if test_engine is not None:
+                dispose_result = test_engine.dispose()
+                if inspect.isawaitable(dispose_result):
+                    await dispose_result
 
     return "sqlite+aiosqlite:///:memory:", False
+
+
+def validate_test_schema_name(schema_name: str) -> str:
+    if not re.fullmatch(r"gateway_test_[0-9a-f]{16,32}", schema_name):
+        raise ValueError(f"Unsafe PostgreSQL test schema name: {schema_name}")
+    return schema_name
 
 
 async def clean_database_tables(engine: AsyncEngine, is_postgres: bool) -> None:
@@ -178,6 +204,7 @@ class TestEnvironment:
         self.is_postgres: bool = False
         self.engine: Optional[AsyncEngine] = None
         self.session_factory: Optional[async_sessionmaker[AsyncSession]] = None
+        self.postgres_schema: Optional[str] = None
         self._orig_environ: Dict[str, str] = {}
 
     async def __aenter__(self) -> TestEnvironment:
@@ -204,6 +231,8 @@ class TestEnvironment:
         else:
             self.db_url, self.is_postgres = await detect_database_configuration()
 
+        from src.gateway.infrastructure.persistence.models import EMBED_DIM
+
         # 3. Build test environment variables
         test_env = {
             "HOST": "127.0.0.1",
@@ -213,6 +242,7 @@ class TestEnvironment:
             "DEFAULT_WORKSPACE_ID": "global",
             "GATEWAY_API_KEYS": "sk-test-admin,sk-test-user-1,sk-test-user-2",
             "CORS_ORIGINS": "*",
+            "TRUSTED_HOSTS": "localhost,127.0.0.1,[::1],testserver,test,gateway-test",
             "MAX_TOOL_ITERATIONS": "5",
             "TOOL_TIMEOUT_SECONDS": "5.0",
             "LLM_URL": "http://mock-llm.test/v1",
@@ -224,7 +254,7 @@ class TestEnvironment:
             "EMBEDDING_URL": "http://mock-embedding.test/v1",
             "EMBEDDING_MODEL_ID": "mock-bge-large",
             "EMBEDDING_API_KEY": "mock-embed-key",
-            "EMBEDDING_DIMENSION": "384",
+            "EMBEDDING_DIMENSION": str(EMBED_DIM),
             "EMBEDDING_BATCH_SIZE": "16",
             "EMBEDDING_TIMEOUT_SECONDS": "5.0",
             "DB_URL": self.db_url,
@@ -253,7 +283,26 @@ class TestEnvironment:
 
         # 6. Initialize database engine
         if self.is_postgres:
-            self.engine = create_async_engine(self.db_url, pool_size=5, max_overflow=5)
+            self.postgres_schema = validate_test_schema_name(
+                f"gateway_test_{secrets.token_hex(16)}"
+            )
+            bootstrap_engine = create_async_engine(self.db_url)
+            try:
+                async with bootstrap_engine.begin() as conn:
+                    await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+                    await conn.execute(text(f"CREATE SCHEMA {self.postgres_schema};"))
+            finally:
+                await bootstrap_engine.dispose()
+            self.engine = create_async_engine(
+                self.db_url,
+                pool_size=5,
+                max_overflow=5,
+                connect_args={
+                    "server_settings": {
+                        "search_path": f"{self.postgres_schema},public"
+                    }
+                },
+            )
         else:
             self.engine = create_async_engine(
                 self.db_url,
@@ -281,9 +330,9 @@ class TestEnvironment:
         from src.gateway.infrastructure.persistence.models import Base
 
         async with self.engine.begin() as conn:
-            if self.is_postgres:
-                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
-            await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(
+                lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=False)
+            )
             # Seed global workspace
             await conn.execute(
                 text(
@@ -306,6 +355,16 @@ class TestEnvironment:
         if self.engine:
             await self.engine.dispose()
             self.engine = None
+
+        if self.is_postgres and self.postgres_schema and self.db_url:
+            schema_name = validate_test_schema_name(self.postgres_schema)
+            cleanup_engine = create_async_engine(self.db_url)
+            try:
+                async with cleanup_engine.begin() as conn:
+                    await conn.execute(text(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE;"))
+            finally:
+                await cleanup_engine.dispose()
+            self.postgres_schema = None
 
         if self.temp_dir:
             self.temp_dir.cleanup()

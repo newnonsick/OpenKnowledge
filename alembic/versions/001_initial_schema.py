@@ -11,14 +11,12 @@ import pgvector.sqlalchemy
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-from src.gateway.config import settings
-
 revision: str = '001'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-embed_dim = getattr(settings.embedding, "dimension", 768) if hasattr(settings, "embedding") else 768
+embed_dim = 1024
 
 
 def upgrade() -> None:
@@ -166,4 +164,3 @@ def downgrade() -> None:
     op.drop_table('knowledge_items')
 
     op.drop_table('workspaces')
-    op.execute("DROP EXTENSION IF EXISTS vector;")

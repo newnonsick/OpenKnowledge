@@ -4,32 +4,21 @@ Validates GET /health responsiveness, database connectivity verification,
 error handling on database disconnection, and discovery / docs availability.
 """
 
-from unittest.mock import AsyncMock, patch
 from fastapi import FastAPI, status
 from fastapi.testclient import TestClient
 import httpx
 import pytest
 
 from src.gateway.presentation.routers import health
-from tests.e2e.harness.test_env import TestEnvironment
 
 
 @pytest.mark.tier1
 @pytest.mark.feature("F11")
 @pytest.mark.asyncio
 async def test_f11_health_endpoint_healthy():
-    """Verify GET /health returns 200 OK with healthy status when DB is connected."""
+    """Verify GET /health returns a dependency-free compatibility liveness response."""
     app = FastAPI()
     app.include_router(health.router)
-
-    # Mock DB session returning 1
-    mock_session = AsyncMock()
-    mock_session.execute.return_value = None
-
-    async def override_get_db_session():
-        yield mock_session
-
-    app.dependency_overrides[health.get_db_session] = override_get_db_session
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -37,33 +26,24 @@ async def test_f11_health_endpoint_healthy():
         assert resp.status_code == status.HTTP_200_OK
         data = resp.json()
         assert data["status"] == "healthy"
-        assert data["database"] == "connected"
+        assert "database" not in data
 
 
 @pytest.mark.tier1
 @pytest.mark.feature("F11")
 @pytest.mark.asyncio
 async def test_f11_health_endpoint_unhealthy_on_db_failure():
-    """Verify GET /health returns 503 Service Unavailable when DB connection fails."""
+    """Verify GET /health does not consume the serving database pool."""
     app = FastAPI()
     app.include_router(health.router)
-
-    mock_session = AsyncMock()
-    mock_session.execute.side_effect = ConnectionError("PostgreSQL connection refused")
-
-    async def override_get_db_session():
-        yield mock_session
-
-    app.dependency_overrides[health.get_db_session] = override_get_db_session
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/health")
-        assert resp.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert resp.status_code == status.HTTP_200_OK
         data = resp.json()
-        assert data["status"] == "unhealthy"
-        assert data["database"] == "disconnected"
-        assert "connection refused" in data["error"]
+        assert data["status"] == "healthy"
+        assert "database" not in data
 
 
 @pytest.mark.tier1
@@ -90,11 +70,6 @@ async def test_f11_health_fast_latency():
     app = FastAPI()
     app.include_router(health.router)
 
-    mock_session = AsyncMock()
-    async def override_get_db_session():
-        yield mock_session
-    app.dependency_overrides[health.get_db_session] = override_get_db_session
-
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         start = time.perf_counter()
@@ -111,11 +86,6 @@ async def test_f11_health_response_headers_and_content_type():
     """Verify /health response returns correct Content-Type application/json."""
     app = FastAPI()
     app.include_router(health.router)
-
-    mock_session = AsyncMock()
-    async def override_get_db_session():
-        yield mock_session
-    app.dependency_overrides[health.get_db_session] = override_get_db_session
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

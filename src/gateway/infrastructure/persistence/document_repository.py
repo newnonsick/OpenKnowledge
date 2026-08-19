@@ -330,7 +330,10 @@ class DocumentRepository(IDocumentRepository):
                         )
                     return results
                 except Exception as exc:
-                    logger.debug(f"PostgreSQL native chunk vector pushdown fallback to in-memory: {exc}")
+                    logger.debug(
+                        "Document vector pushdown fallback",
+                        extra={"exception_class": type(exc).__name__},
+                    )
 
             stmt = (
                 select(ORMDocumentChunk, ORMDocumentFile)

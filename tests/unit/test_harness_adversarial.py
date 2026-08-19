@@ -49,6 +49,7 @@ from src.gateway.infrastructure.persistence.models import (
     KnowledgeItem,
     KnowledgeRevision,
     Workspace,
+    EMBED_DIM,
 )
 from tests.e2e.harness.runner import (
     FEATURES,
@@ -64,6 +65,8 @@ from tests.e2e.harness.runner import (
 )
 from tests.e2e.harness.test_env import (
     TestEnvironment,
+    configured_database_url,
+    validate_test_schema_name,
     clean_database_tables,
     detect_database_configuration,
     parse_sse_stream,
@@ -78,9 +81,9 @@ class TestRunnerAdversarial:
     """Adversarial stress-testing of runner.py and PytestResultCollector."""
 
     def test_feature_registry_integrity(self):
-        """Verify all 28 features exist and are monotonically indexed 1..28."""
-        assert len(FEATURES) == 28
-        for idx in range(1, 29):
+        """Verify all 29 features exist and are monotonically indexed 1..29."""
+        assert len(FEATURES) == 29
+        for idx in range(1, 30):
             assert idx in FEATURES
             code, desc = FEATURES[idx]
             assert code == f"F{idx}"
@@ -349,6 +352,36 @@ class TestRunnerAdversarial:
 class TestEnvironmentAdversarial:
     """Adversarial stress-testing of TestEnvironment isolation and lifecycle."""
 
+    def test_postgres_schema_drop_guard(self):
+        assert validate_test_schema_name("gateway_test_0123456789abcdef") == "gateway_test_0123456789abcdef"
+        with pytest.raises(ValueError):
+            validate_test_schema_name("public")
+        with pytest.raises(ValueError):
+            validate_test_schema_name("gateway_test_bad-name")
+
+    def test_database_url_uses_canonical_environment_name(self, monkeypatch):
+        monkeypatch.delenv("TEST_DATABASE_URL", raising=False)
+        monkeypatch.delenv("DB_URL", raising=False)
+        monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://canonical.example/gateway")
+
+        assert configured_database_url() == "postgresql+asyncpg://canonical.example/gateway"
+
+    @pytest.mark.asyncio
+    async def test_explicit_postgres_configuration_never_falls_back_to_sqlite(self, monkeypatch):
+        monkeypatch.setenv(
+            "TEST_DATABASE_URL",
+            "postgresql+asyncpg://unavailable.example/gateway",
+        )
+        broken_engine = MagicMock()
+        broken_engine.connect.side_effect = OSError("connection failed")
+
+        with patch(
+            "tests.e2e.harness.test_env.create_async_engine",
+            return_value=broken_engine,
+        ):
+            with pytest.raises(RuntimeError, match="Configured PostgreSQL"):
+                await detect_database_configuration()
+
     @pytest.mark.asyncio
     async def test_env_var_isolation_and_restoration(self):
         """Verify os.environ is strictly saved and restored without residual leakage."""
@@ -593,6 +626,7 @@ class TestSQLiteTypeCompilationAdversarial:
             assert env.engine is not None
             assert env.session_factory is not None
             assert env.is_postgres is False
+            assert os.environ["EMBEDDING_DIMENSION"] == str(EMBED_DIM)
 
             async with env.engine.begin() as conn:
                 res = await conn.execute(text("SELECT id, name FROM workspaces WHERE id = 'global'"))

@@ -53,7 +53,8 @@ async def test_f19_boundary_embedding_client_upstream_error():
         with pytest.raises(EmbeddingException) as exc_info:
             await client.embed_texts(["sample text"])
         assert exc_info.value.status_code == 502
-        assert "temporarily unavailable" in exc_info.value.message
+        assert exc_info.value.message == "Embedding provider request failed."
+        assert "temporarily unavailable" not in exc_info.value.message
     finally:
         await mock_mgr.stop()
 

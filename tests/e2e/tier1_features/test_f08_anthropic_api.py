@@ -104,10 +104,12 @@ async def test_f08_anthropic_system_prompt_handling():
         upstream_messages = gw.llm.last_request.messages
         assert upstream_messages, "upstream must receive messages"
         assert upstream_messages[0]["role"] == "system"
-        assert (
-            upstream_messages[0]["content"]
-            == "You are a concise engineering assistant. Always respond in bullet points."
+        upstream_system = upstream_messages[0]["content"]
+        assert upstream_system.startswith(
+            "You are a concise engineering assistant. Always respond in bullet points."
         )
+        assert upstream_system.count("# Long-Term Knowledge and Memory") == 1
+        assert "Only save or update knowledge when the user explicitly asks you to do so." in upstream_system
 
 
 @pytest.mark.tier1
@@ -145,8 +147,7 @@ async def test_f08_anthropic_error_envelope_format():
     """Verify the Anthropic error envelope when the upstream backend fails.
 
     Upstream failures surface as a 502 llm_provider_error envelope in the
-    Anthropic {"type": "error", "error": {...}} shape (established gateway
-    contract, see tier 5 tests).
+    Anthropic {"type": "error", "error": {...}} shape without provider detail.
     """
     async with GatewayMockUpstream() as gw:
         gw.llm.queue_error(
@@ -162,7 +163,8 @@ async def test_f08_anthropic_error_envelope_format():
         data = resp.json()
         assert data["type"] == "error"
         assert data["error"]["type"] == "llm_provider_error"
-        assert "max_tokens must be positive" in data["error"]["message"]
+        assert data["error"]["message"] == "A gateway dependency failed."
+        assert "max_tokens must be positive" not in resp.text
 
 
 @pytest.mark.tier1

@@ -29,7 +29,7 @@ def test_f01_boundary_missing_and_empty_env_vars(monkeypatch, tmp_path):
     assert app_settings.llm.url == "http://localhost:8888"
     assert app_settings.embedding.url == "http://localhost:7997"
     assert "postgresql+asyncpg" in app_settings.database.url
-    assert len(app_settings.gateway.api_keys) > 0
+    assert app_settings.gateway.api_keys == []
 
 
 @pytest.mark.tier2

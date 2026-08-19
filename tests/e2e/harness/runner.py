@@ -1,7 +1,7 @@
 """
 Standalone E2E Test Runner for Local AI Gateway.
 
-Executes tests tier-by-tier or in aggregate, maps test cases against all 28 features,
+Executes tests tier-by-tier or in aggregate, maps test cases against all 29 features,
 validates pass/fail thresholds, and produces structured terminal, JSON, and Markdown reports.
 
 Usage:
@@ -26,14 +26,13 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import pytest
 
 # ==============================================================================
-# Feature Registry (F1 - F28)
 # ==============================================================================
 
 FEATURES: Dict[int, Tuple[str, str]] = {
     1: ("F1", "Decoupled Pydantic Settings & .env.example"),
     2: ("F2", "Pragmatic Clean Architecture Core"),
     3: ("F3", "SQLAlchemy 2.0 Async + pgvector Models"),
-    4: ("F4", "Automatic DB Migrations on Startup"),
+    4: ("F4", "Explicit Alembic Migration Release Flow"),
     5: ("F5", "Global Workspace Bootstrapping"),
     6: ("F6", "Local Disk Storage Adapter"),
     7: ("F7", "OpenAI /v1/chat/completions API"),
@@ -49,8 +48,8 @@ FEATURES: Dict[int, Tuple[str, str]] = {
     17: ("F17", "Multi-Format Document Parsers"),
     18: ("F18", "Fixed & Semantic Chunking"),
     19: ("F19", "HTTP Embedding Client & Vector Indexing"),
-    20: ("F20", "PostgreSQL Full-Text Search (tsvector + GIN)"),
-    21: ("F21", "pgvector Semantic Search (Cosine <=>)"),
+    20: ("F20", "Full-Text Search Contract"),
+    21: ("F21", "Semantic Search Contract"),
     22: ("F22", "Reciprocal Rank Fusion (RRF) & Deduplication"),
     23: ("F23", "Structured Context Attribution"),
     24: ("F24", "Chat Orchestration & Tool Interception Loop"),
@@ -58,6 +57,7 @@ FEATURES: Dict[int, Tuple[str, str]] = {
     26: ("F26", "Streaming SSE Tool Interception Engine"),
     27: ("F27", "Max Tool Iteration Guardrail"),
     28: ("F28", "Comprehensive Automated Test Suite"),
+    29: ("F29", "Thinking / Reasoning Pass-Through"),
 }
 
 TIER_DIRS: Dict[str, str] = {
@@ -143,6 +143,38 @@ class PytestResultCollector:
     def __init__(self, target_tier: Optional[str] = None):
         self.target_tier = target_tier
         self.results: List[TestResultItem] = []
+        self.collected_results: List[TestResultItem] = []
+        self.unknown_feature_ids: Set[str] = set()
+
+    def pytest_collection_finish(self, session):
+        for item in session.items:
+            nodeid = item.nodeid
+            file_path = nodeid.split("::")[0]
+            marker_feature_id = self._extract_marker_feature_id(item)
+            raw_feature_id = marker_feature_id or self._extract_raw_feature_id(nodeid, file_path)
+            if raw_feature_id and raw_feature_id not in {value[0] for value in FEATURES.values()}:
+                self.unknown_feature_ids.add(raw_feature_id)
+            tier = "unknown"
+            normalized_file_path = file_path.replace("\\", "/")
+            for tier_id, dir_path in TIER_DIRS.items():
+                if dir_path in normalized_file_path:
+                    tier = tier_id
+                    break
+            self.collected_results.append(
+                TestResultItem(
+                    nodeid=nodeid,
+                    name=nodeid.split("::")[-1],
+                    file_path=file_path,
+                    tier=tier,
+                    feature_id=(
+                        raw_feature_id
+                        if raw_feature_id in {value[0] for value in FEATURES.values()}
+                        else None
+                    ),
+                    outcome="collected",
+                    duration=0.0,
+                )
+            )
 
     def pytest_runtest_logreport(self, report):
         if report.when == "call" or (report.when in ("setup", "teardown") and report.failed):
@@ -181,17 +213,36 @@ class PytestResultCollector:
             self.results.append(item)
 
     def _extract_feature_id(self, nodeid: str, file_path: str) -> Optional[str]:
+        feature_id = self._extract_raw_feature_id(nodeid, file_path)
+        if feature_id in {value[0] for value in FEATURES.values()}:
+            return feature_id
+        return None
+
+    def _extract_raw_feature_id(self, nodeid: str, file_path: str) -> Optional[str]:
         match = re.search(r"f(?:eature)?_?0?(\d{1,2})", file_path, re.IGNORECASE)
         if match:
-            num = int(match.group(1))
-            if 1 <= num <= 28:
-                return f"F{num}"
+            return f"F{int(match.group(1))}"
         match_node = re.search(r"f(?:eature)?_?0?(\d{1,2})", nodeid, re.IGNORECASE)
         if match_node:
-            num = int(match_node.group(1))
-            if 1 <= num <= 28:
-                return f"F{num}"
+            return f"F{int(match_node.group(1))}"
         return None
+
+    def _extract_marker_feature_id(self, item: Any) -> Optional[str]:
+        markers = list(item.iter_markers(name="feature"))
+        if not markers:
+            return None
+        feature_ids = []
+        for marker in markers:
+            for value in marker.args:
+                if not isinstance(value, str):
+                    continue
+                match = re.fullmatch(r"F0?(\d+)", value.strip(), re.IGNORECASE)
+                if match:
+                    feature_ids.append(f"F{int(match.group(1))}")
+        unique_ids = set(feature_ids)
+        if len(unique_ids) > 1:
+            return "INVALID"
+        return next(iter(unique_ids)) if unique_ids else None
 
 
 # ==============================================================================
@@ -226,6 +277,12 @@ class E2ETestRunner:
         timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
         collector = PytestResultCollector()
 
+        unknown_tiers = [
+            tier for tier in self.tiers if tier not in TIER_DIRS and tier != "all"
+        ]
+        if unknown_tiers:
+            raise ValueError(f"Unknown test tiers: {', '.join(unknown_tiers)}")
+
         pytest_args = ["-q", "--tb=short"]
         if self.verbose:
             pytest_args.append("-v")
@@ -246,29 +303,60 @@ class E2ETestRunner:
                     if tier_dir.exists():
                         test_paths.append(str(tier_dir))
 
-            if not test_paths and Path("tests/e2e").exists():
-                test_paths = ["tests/e2e"]
+        registered_features = {value[0] for value in FEATURES.values()}
+        for test_path in test_paths:
+            feature_id = collector._extract_raw_feature_id(test_path, test_path)
+            if feature_id and feature_id not in registered_features:
+                collector.unknown_feature_ids.add(feature_id)
+
+        if collector.unknown_feature_ids:
+            unknown = ", ".join(sorted(collector.unknown_feature_ids))
+            raise ValueError(f"Unregistered feature identifiers collected: {unknown}")
 
         print(f"\n[E2E-RUNNER] Launching E2E Test Suite [Tiers: {', '.join(self.tiers)}]")
         print(f"Target paths: {test_paths}\n")
 
+        pytest_exit_code = pytest.ExitCode.NO_TESTS_COLLECTED
         if test_paths:
             pytest_args.extend(test_paths)
-            pytest.main(pytest_args, plugins=[collector])
+            pytest_exit_code = pytest.main(pytest_args, plugins=[collector])
+
+        if collector.unknown_feature_ids:
+            unknown = ", ".join(sorted(collector.unknown_feature_ids))
+            raise ValueError(f"Unregistered feature identifiers collected: {unknown}")
+
+        if pytest_exit_code not in (pytest.ExitCode.OK, pytest.ExitCode.TESTS_FAILED):
+            raise RuntimeError(
+                f"pytest collection failed with exit code {int(pytest_exit_code)}"
+            )
 
         elapsed_total = time.time() - start_time
 
-        collected_results = collector.results
+        collected_results = collector.collected_results if self.dry_run else collector.results
         if self.feature_filter:
             collected_results = [
                 r for r in collected_results if r.feature_id == self.feature_filter
             ]
+            if not collected_results:
+                raise ValueError(f"No tests matched feature {self.feature_filter}")
 
-        summary = self._aggregate_summary(timestamp, collected_results, elapsed_total)
+        if self.dry_run and not collected_results:
+            raise RuntimeError("pytest collection failed because no tests were collected")
+
+        summary = self._aggregate_summary(
+            timestamp,
+            collected_results,
+            elapsed_total,
+            collection_only=self.dry_run,
+        )
         return summary
 
     def _aggregate_summary(
-        self, timestamp: str, results: List[TestResultItem], total_duration: float
+        self,
+        timestamp: str,
+        results: List[TestResultItem],
+        total_duration: float,
+        collection_only: bool = False,
     ) -> SuiteSummary:
         summary = SuiteSummary(
             timestamp=timestamp,
@@ -295,7 +383,7 @@ class E2ETestRunner:
                 summary.failures.append(item)
             elif item.outcome == "skipped":
                 summary.skipped += 1
-            else:
+            elif item.outcome != "collected":
                 summary.errors += 1
                 summary.failures.append(item)
 
@@ -309,17 +397,18 @@ class E2ETestRunner:
                     ts.failed += 1
                 elif item.outcome == "skipped":
                     ts.skipped += 1
-                else:
+                elif item.outcome != "collected":
                     ts.errors += 1
 
             if item.feature_id and item.feature_id in summary.feature_matrix:
                 if item.tier in ("1", "2", "3", "4", "5"):
-                    summary.feature_matrix[item.feature_id][item.tier] += (
-                        1 if item.outcome == "passed" else 0
-                    )
-                summary.feature_matrix[item.feature_id]["total"] += (
-                    1 if item.outcome == "passed" else 0
-                )
+                    summary.feature_matrix[item.feature_id][item.tier] += 1 if collection_only or item.outcome == "passed" else 0
+                summary.feature_matrix[item.feature_id]["total"] += 1 if collection_only or item.outcome == "passed" else 0
+
+        if collection_only:
+            summary.thresholds_passed = True
+            summary.verdict = "COLLECTED"
+            return summary
 
         all_passed = summary.failed == 0 and summary.errors == 0 and summary.total_tests > 0
         thresholds_ok = True
@@ -357,7 +446,13 @@ class ReportFormatter:
         c_bold = "\033[1m"
         c_reset = "\033[0m"
 
-        verdict_color = c_green if summary.verdict == "PASSED" else c_red
+        verdict_color = (
+            c_green
+            if summary.verdict == "PASSED"
+            else c_cyan
+            if summary.verdict == "COLLECTED"
+            else c_red
+        )
 
         print("\n" + "=" * 80)
         print(f"{c_bold}{c_cyan}LOCAL AI GATEWAY -- E2E TEST EXECUTION REPORT{c_reset}")
@@ -379,19 +474,24 @@ class ReportFormatter:
         )
         print("-" * 75)
         for tier, ts in sorted(summary.tier_stats.items()):
-            status_str = (
-                f"{c_green}MET{c_reset}"
-                if ts.passed_threshold
-                else f"{c_red}UNMET{c_reset}"
-            )
+            if summary.verdict == "COLLECTED":
+                status_str = f"{c_cyan}COLLECTED{c_reset}"
+                threshold = "n/a"
+            else:
+                status_str = (
+                    f"{c_green}MET{c_reset}"
+                    if ts.passed_threshold
+                    else f"{c_red}UNMET{c_reset}"
+                )
+                threshold = f">={ts.threshold_min}"
             print(
                 f"Tier {tier:<3} | {ts.total:<7} | {ts.passed:<7} | {ts.failed:<7} | "
-                f"{ts.duration:<9.2f}s | >={ts.threshold_min:<8} | {status_str}"
+                f"{ts.duration:<9.2f}s | {threshold:<10} | {status_str}"
             )
         print("-" * 75)
 
         # Feature Coverage Matrix
-        print(f"\n{c_bold}=== FEATURE COVERAGE MATRIX (28 Features) ==={c_reset}")
+        print(f"\n{c_bold}=== FEATURE COVERAGE MATRIX (29 Features) ==={c_reset}")
         print(
             f"{'ID':<5} | {'Feature Description':<45} | {'T1':<4} | {'T2':<4} | {'T3':<4} | {'T4':<4} | {'Total'}"
         )
@@ -490,14 +590,20 @@ class ReportFormatter:
             f"|---|---|---|---|---|---|---|---|",
         ]
         for tier, ts in sorted(summary.tier_stats.items()):
-            status = "MET" if ts.passed_threshold else "UNMET"
+            status = (
+                "COLLECTED"
+                if summary.verdict == "COLLECTED"
+                else "MET"
+                if ts.passed_threshold
+                else "UNMET"
+            )
             lines.append(
                 f"| Tier {tier} | {ts.name} | >={ts.threshold_min} | {ts.total} | {ts.passed} | {ts.failed} | {ts.duration:.2f}s | {status} |"
             )
 
         lines.extend([
             f"",
-            f"## Feature Coverage Matrix (28 Features)",
+            f"## Feature Coverage Matrix (29 Features)",
             f"",
             f"| ID | Feature Name | Tier 1 | Tier 2 | Tier 3 | Tier 4 | Tier 5 | Total Passed | Status |",
             f"|---|---|---|---|---|---|---|---|---|",

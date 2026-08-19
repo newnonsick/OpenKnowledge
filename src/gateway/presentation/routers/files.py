@@ -83,13 +83,10 @@ async def upload_file(
             created_at=doc_file.created_at.isoformat(),
         )
 
-    except GatewayException as exc:
-        raise HTTPException(
-            status_code=exc.status_code,
-            detail=exc.to_dict(),
-        ) from exc
+    except GatewayException:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"message": f"File ingestion failed: {str(exc)}", "type": "server_error"},
+            detail={"message": "File ingestion failed.", "type": "server_error"},
         ) from exc

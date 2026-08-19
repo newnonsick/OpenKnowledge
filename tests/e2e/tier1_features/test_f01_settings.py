@@ -44,7 +44,7 @@ def test_f01_default_settings_instantiation(tmp_path, monkeypatch):
     # Embedding Defaults
     assert cfg.embedding.url == "http://localhost:7997"
     assert cfg.embedding.model_id == "default"
-    assert cfg.embedding.dimension == 768
+    assert cfg.embedding.dimension == 1024
     assert cfg.embedding.batch_size == 32
 
     # Database Defaults
@@ -52,7 +52,7 @@ def test_f01_default_settings_instantiation(tmp_path, monkeypatch):
     assert cfg.database.pool_size == 20
 
     # Gateway Defaults
-    assert cfg.gateway.host == "0.0.0.0"
+    assert cfg.gateway.host == "127.0.0.1"
     assert cfg.gateway.port == 8000
     assert cfg.gateway.log_level == "DEBUG"
     assert cfg.gateway.storage_dir == "./data/storage"
