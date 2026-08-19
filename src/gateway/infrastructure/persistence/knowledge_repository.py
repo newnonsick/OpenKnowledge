@@ -7,7 +7,7 @@ import math
 from typing import Any, List, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -20,8 +20,9 @@ from src.gateway.domain.entities import (
     KnowledgeRevision as DomainKnowledgeRevision,
     utc_now,
 )
-from src.gateway.domain.exceptions import ConcurrencyConflictException, ItemNotFoundException
+from src.gateway.domain.exceptions import AuthorizationException, ConcurrencyConflictException, ItemNotFoundException
 from src.gateway.infrastructure.database import get_session_factory
+from src.gateway.infrastructure.persistence.principal_context import get_bound_principal
 from src.gateway.infrastructure.persistence.models import (
     KnowledgeItem as ORMKnowledgeItem,
     KnowledgeRevision as ORMKnowledgeRevision,
@@ -35,6 +36,12 @@ class KnowledgeRepository(IKnowledgeRepository):
         session_factory: Optional[async_sessionmaker[AsyncSession]] = None,
     ) -> None:
         self.session_factory = session_factory or get_session_factory()
+
+    @staticmethod
+    def _require_scope(scope: str) -> None:
+        principal = get_bound_principal()
+        if principal is not None and "*" not in principal.scopes and scope not in principal.scopes:
+            raise AuthorizationException()
 
     def _to_domain_revision(self, orm_rev: ORMKnowledgeRevision) -> DomainKnowledgeRevision:
 
@@ -83,6 +90,7 @@ class KnowledgeRepository(IKnowledgeRepository):
         initial_revision: DomainKnowledgeRevision,
     ) -> DomainKnowledgeItem:
 
+        self._require_scope("knowledge:write")
         now = utc_now()
         async with self.session_factory() as session:
             async with session.begin():
@@ -91,12 +99,9 @@ class KnowledgeRepository(IKnowledgeRepository):
                     select(ORMWorkspace).where(ORMWorkspace.id == item.workspace_id)
                 )
                 if ws_res.scalar_one_or_none() is None:
-                    workspace = ORMWorkspace(
-                        id=item.workspace_id,
-                        name=f"Workspace {item.workspace_id}",
+                    raise ItemNotFoundException(
+                        f"Workspace '{item.workspace_id}' not found."
                     )
-                    session.add(workspace)
-                    await session.flush()
 
                 orm_item = ORMKnowledgeItem(
                     id=item.id,
@@ -140,6 +145,7 @@ class KnowledgeRepository(IKnowledgeRepository):
         workspace_id: Optional[str] = None,
     ) -> Optional[DomainKnowledgeItem]:
 
+        self._require_scope("knowledge:read")
         async with self.session_factory() as session:
             if version is not None:
                 stmt = (
@@ -149,10 +155,7 @@ class KnowledgeRepository(IKnowledgeRepository):
                 )
                 if workspace_id is not None:
                     stmt = stmt.where(
-                        or_(
-                            ORMKnowledgeItem.workspace_id == workspace_id,
-                            ORMKnowledgeItem.is_global == True,
-                        )
+                        ORMKnowledgeItem.workspace_id == workspace_id
                     )
                 res = await session.execute(stmt)
                 row = res.first()
@@ -173,10 +176,7 @@ class KnowledgeRepository(IKnowledgeRepository):
                 )
                 if workspace_id is not None:
                     stmt = stmt.where(
-                        or_(
-                            ORMKnowledgeItem.workspace_id == workspace_id,
-                            ORMKnowledgeItem.is_global == True,
-                        )
+                        ORMKnowledgeItem.workspace_id == workspace_id
                     )
                 res = await session.execute(stmt)
                 row = res.first()
@@ -196,6 +196,7 @@ class KnowledgeRepository(IKnowledgeRepository):
         workspace_id: Optional[str] = None,
     ) -> DomainKnowledgeItem:
 
+        self._require_scope("knowledge:write")
         now = utc_now()
         async with self.session_factory() as session:
             async with session.begin():
@@ -206,10 +207,7 @@ class KnowledgeRepository(IKnowledgeRepository):
                 )
                 if workspace_id is not None:
                     stmt = stmt.where(
-                        or_(
-                            ORMKnowledgeItem.workspace_id == workspace_id,
-                            ORMKnowledgeItem.is_global == True,
-                        )
+                        ORMKnowledgeItem.workspace_id == workspace_id
                     )
                 res = await session.execute(stmt)
                 row = res.first()
@@ -285,6 +283,7 @@ class KnowledgeRepository(IKnowledgeRepository):
         workspace_id: Optional[str] = None,
     ) -> bool:
 
+        self._require_scope("knowledge:write")
         async with self.session_factory() as session:
             async with session.begin():
                 stmt = (
@@ -294,10 +293,7 @@ class KnowledgeRepository(IKnowledgeRepository):
                 )
                 if workspace_id is not None:
                     stmt = stmt.where(
-                        or_(
-                            ORMKnowledgeItem.workspace_id == workspace_id,
-                            ORMKnowledgeItem.is_global == True,
-                        )
+                        ORMKnowledgeItem.workspace_id == workspace_id
                     )
                 res = await session.execute(stmt)
                 row = res.first()
@@ -323,6 +319,7 @@ class KnowledgeRepository(IKnowledgeRepository):
 
     async def list_revisions(self, item_id: UUID) -> List[DomainKnowledgeRevision]:
 
+        self._require_scope("knowledge:read")
         async with self.session_factory() as session:
             stmt = (
                 select(ORMKnowledgeRevision)
@@ -340,6 +337,7 @@ class KnowledgeRepository(IKnowledgeRepository):
         limit: int = 20,
     ) -> List[RankedSearchResult]:
 
+        self._require_scope("knowledge:read")
         if not query or not query.strip():
             return []
 
@@ -349,10 +347,7 @@ class KnowledgeRepository(IKnowledgeRepository):
                 .outerjoin(ORMKnowledgeRevision, ORMKnowledgeRevision.id == ORMKnowledgeItem.current_revision_id)
                 .where(
                     ORMKnowledgeItem.is_deleted == False,
-                    or_(
-                        ORMKnowledgeItem.workspace_id == workspace_id,
-                        ORMKnowledgeItem.is_global == True,
-                    ),
+                    ORMKnowledgeItem.workspace_id == workspace_id,
                 )
             )
             res = await session.execute(stmt)
@@ -411,6 +406,7 @@ class KnowledgeRepository(IKnowledgeRepository):
         limit: int = 20,
     ) -> List[RankedSearchResult]:
 
+        self._require_scope("knowledge:read")
         if not query_vector:
             return []
 
@@ -430,10 +426,7 @@ class KnowledgeRepository(IKnowledgeRepository):
                         .join(ORMKnowledgeRevision, ORMKnowledgeRevision.id == ORMKnowledgeItem.current_revision_id)
                         .where(
                             ORMKnowledgeItem.is_deleted == False,
-                            or_(
-                                ORMKnowledgeItem.workspace_id == workspace_id,
-                                ORMKnowledgeItem.is_global == True,
-                            ),
+                            ORMKnowledgeItem.workspace_id == workspace_id,
                             ORMKnowledgeRevision.embedding.isnot(None),
                         )
                         .order_by(distance_col.asc())
@@ -476,10 +469,7 @@ class KnowledgeRepository(IKnowledgeRepository):
                 .join(ORMKnowledgeRevision, ORMKnowledgeRevision.id == ORMKnowledgeItem.current_revision_id)
                 .where(
                     ORMKnowledgeItem.is_deleted == False,
-                    or_(
-                        ORMKnowledgeItem.workspace_id == workspace_id,
-                        ORMKnowledgeItem.is_global == True,
-                    ),
+                    ORMKnowledgeItem.workspace_id == workspace_id,
                     ORMKnowledgeRevision.embedding.isnot(None),
                 )
             )

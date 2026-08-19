@@ -117,6 +117,7 @@ class PersonalAPIKeyModel(Base):
     member_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True)
     public_id: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     key_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    pepper_version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -124,7 +125,10 @@ class PersonalAPIKeyModel(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    __table_args__ = (CheckConstraint("status IN ('active','revoked','expired')", name="ck_personal_api_keys_status"),)
+    __table_args__ = (
+        CheckConstraint("status IN ('active','revoked','expired')", name="ck_personal_api_keys_status"),
+        CheckConstraint("pepper_version > 0", name="ck_personal_api_keys_pepper_version"),
+    )
 
 
 class APIKeyScopeModel(Base):

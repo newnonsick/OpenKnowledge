@@ -7,7 +7,7 @@ import math
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.gateway.application.ports.repositories import IDocumentRepository
@@ -18,6 +18,8 @@ from src.gateway.domain.entities import (
     utc_now,
 )
 from src.gateway.infrastructure.database import get_session_factory
+from src.gateway.domain.exceptions import AuthorizationException, ItemNotFoundException
+from src.gateway.infrastructure.persistence.principal_context import get_bound_principal
 from src.gateway.infrastructure.persistence.models import (
     DocumentChunk as ORMDocumentChunk,
     DocumentFile as ORMDocumentFile,
@@ -33,6 +35,12 @@ class DocumentRepository(IDocumentRepository):
         session_factory: Optional[async_sessionmaker[AsyncSession]] = None,
     ) -> None:
         self.session_factory = session_factory or get_session_factory()
+
+    @staticmethod
+    def _require_scope(scope: str) -> None:
+        principal = get_bound_principal()
+        if principal is not None and "*" not in principal.scopes and scope not in principal.scopes:
+            raise AuthorizationException()
 
     def _to_domain_file(
         self,
@@ -81,6 +89,7 @@ class DocumentRepository(IDocumentRepository):
 
     async def save_document(self, document: DomainDocumentFile) -> DomainDocumentFile:
 
+        self._require_scope("knowledge:write")
         async with self.session_factory() as session:
             async with session.begin():
 
@@ -88,12 +97,9 @@ class DocumentRepository(IDocumentRepository):
                     select(ORMWorkspace).where(ORMWorkspace.id == document.workspace_id)
                 )
                 if ws_res.scalar_one_or_none() is None:
-                    workspace = ORMWorkspace(
-                        id=document.workspace_id,
-                        name=f"Workspace {document.workspace_id}",
+                    raise ItemNotFoundException(
+                        f"Workspace '{document.workspace_id}' not found."
                     )
-                    session.add(workspace)
-                    await session.flush()
 
                 stmt = select(ORMDocumentFile).where(ORMDocumentFile.id == document.id)
                 res = await session.execute(stmt)
@@ -126,16 +132,14 @@ class DocumentRepository(IDocumentRepository):
 
     async def get_by_hash(self, workspace_id: str, content_hash: str) -> Optional[DomainDocumentFile]:
 
+        self._require_scope("knowledge:read")
         async with self.session_factory() as session:
 
             stmt = (
                 select(ORMDocumentFile)
                 .join(ORMDocumentChunk, ORMDocumentChunk.document_id == ORMDocumentFile.id)
                 .where(
-                    or_(
-                        ORMDocumentFile.workspace_id == workspace_id,
-                        ORMDocumentFile.is_global == True,
-                    ),
+                    ORMDocumentFile.workspace_id == workspace_id,
                     ORMDocumentChunk.metadata_["content_hash"].astext == content_hash,
                 )
             )
@@ -147,6 +151,7 @@ class DocumentRepository(IDocumentRepository):
 
     async def get_by_id(self, document_id: UUID) -> Optional[DomainDocumentFile]:
 
+        self._require_scope("knowledge:read")
         async with self.session_factory() as session:
             stmt = select(ORMDocumentFile).where(ORMDocumentFile.id == document_id)
             res = await session.execute(stmt)
@@ -164,6 +169,7 @@ class DocumentRepository(IDocumentRepository):
 
     async def save_chunks_batch(self, chunks: List[DomainDocumentChunk]) -> int:
 
+        self._require_scope("knowledge:write")
         if not chunks:
             return 0
 
@@ -191,6 +197,7 @@ class DocumentRepository(IDocumentRepository):
 
     async def get_chunks_by_document(self, document_id: UUID) -> List[DomainDocumentChunk]:
 
+        self._require_scope("knowledge:read")
         async with self.session_factory() as session:
             stmt = (
                 select(ORMDocumentChunk)
@@ -208,6 +215,7 @@ class DocumentRepository(IDocumentRepository):
         limit: int = 20,
     ) -> List[RankedSearchResult]:
 
+        self._require_scope("knowledge:read")
         if not query or not query.strip():
             return []
 
@@ -216,10 +224,7 @@ class DocumentRepository(IDocumentRepository):
                 select(ORMDocumentChunk, ORMDocumentFile)
                 .join(ORMDocumentFile, ORMDocumentFile.id == ORMDocumentChunk.document_id)
                 .where(
-                    or_(
-                        ORMDocumentChunk.workspace_id == workspace_id,
-                        ORMDocumentChunk.is_global == True,
-                    )
+                    ORMDocumentChunk.workspace_id == workspace_id
                 )
             )
             res = await session.execute(stmt)
@@ -277,6 +282,7 @@ class DocumentRepository(IDocumentRepository):
         limit: int = 20,
     ) -> List[RankedSearchResult]:
 
+        self._require_scope("knowledge:read")
         if not query_vector:
             return []
 
@@ -295,10 +301,7 @@ class DocumentRepository(IDocumentRepository):
                         select(ORMDocumentChunk, ORMDocumentFile, distance_col)
                         .join(ORMDocumentFile, ORMDocumentFile.id == ORMDocumentChunk.document_id)
                         .where(
-                            or_(
-                                ORMDocumentChunk.workspace_id == workspace_id,
-                                ORMDocumentChunk.is_global == True,
-                            ),
+                            ORMDocumentChunk.workspace_id == workspace_id,
                             ORMDocumentChunk.embedding.isnot(None),
                         )
                         .order_by(distance_col.asc())
@@ -339,10 +342,7 @@ class DocumentRepository(IDocumentRepository):
                 select(ORMDocumentChunk, ORMDocumentFile)
                 .join(ORMDocumentFile, ORMDocumentFile.id == ORMDocumentChunk.document_id)
                 .where(
-                    or_(
-                        ORMDocumentChunk.workspace_id == workspace_id,
-                        ORMDocumentChunk.is_global == True,
-                    ),
+                    ORMDocumentChunk.workspace_id == workspace_id,
                     ORMDocumentChunk.embedding.isnot(None),
                 )
             )

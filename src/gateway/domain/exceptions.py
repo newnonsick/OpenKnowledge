@@ -45,6 +45,47 @@ class AuthenticationException(GatewayException):
             details=details,
         )
 
+class AuthorizationException(GatewayException):
+
+    def __init__(
+        self,
+        message: str = "Resource is unavailable.",
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            status_code=404,
+            error_type="authorization_error",
+            code="resource_unavailable",
+            details=details,
+        )
+
+
+class CSRFException(GatewayException):
+
+    def __init__(self) -> None:
+        super().__init__(
+            message="Request verification failed.",
+            status_code=403,
+            error_type="request_verification_error",
+            code="csrf_verification_failed",
+        )
+
+class ResourceConflictException(GatewayException):
+
+    def __init__(
+        self,
+        message: str = "Resource state conflict.",
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            status_code=409,
+            error_type="conflict_error",
+            code="resource_conflict",
+            details=details,
+        )
+
 class ItemNotFoundException(GatewayException):
 
     def __init__(

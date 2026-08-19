@@ -220,17 +220,24 @@ def _gateway_client(orch) -> httpx.AsyncClient:
     from src.gateway.main import create_app
     from src.gateway.presentation.routers import chat_completions, messages
 
-    app = create_app()
+    from src.gateway.config import Settings
+
+    app = create_app(
+        Settings(
+            gateway={
+                "environment": "test",
+                "api_keys": ["regression-key"],
+                "legacy_api_keys_enabled": True,
+            }
+        )
+    )
     app.dependency_overrides[chat_completions.get_chat_orchestrator] = lambda: orch
     app.dependency_overrides[messages.get_chat_orchestrator] = lambda: orch
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver")
 
 
 def _auth_headers() -> Dict[str, str]:
-    from src.gateway.config import get_settings
-
-    key = get_settings().gateway.gateway_api_keys[0]
-    return {"Authorization": f"Bearer {key}"}
+    return {"Authorization": "Bearer regression-key"}
 
 
 def _parse_sse_events(text: str) -> List[Dict[str, Any]]:
@@ -746,7 +753,7 @@ def test_bug_g_public_path_prefix_is_strict():
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_bug_h_document_is_global_persisted_and_searchable():
+async def test_document_legacy_global_flag_does_not_expand_requested_space():
     from src.gateway.application.services.ingestion_service import IngestionService
     from src.gateway.infrastructure.persistence.document_repository import DocumentRepository
     from src.gateway.infrastructure.storage.local_storage import LocalStorageAdapter
@@ -770,6 +777,4 @@ async def test_bug_h_document_is_global_persisted_and_searchable():
             workspace_id="team_b",
             limit=5,
         )
-        assert any(r.id for r in results), (
-            "A document ingested with is_global=true must be discoverable from other workspaces"
-        )
+        assert results == []

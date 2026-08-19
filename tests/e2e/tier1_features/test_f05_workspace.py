@@ -53,8 +53,7 @@ async def test_f05_multi_workspace_isolation():
         async with env.session_factory() as session:
             async with session.begin():
                 ws1 = DBWorkspace(id="ws-frontend", name="Frontend Team")
-                ws2 = DBWorkspace(id="ws-backend", name="Backend Team")
-                session.add_all([ws1, ws2])
+                session.add(ws1)
                 await session.flush()
 
                 k1 = DBKnowledgeItem(

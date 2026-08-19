@@ -99,9 +99,11 @@ async def test_web_lifespan_checks_schema_without_running_migrations(monkeypatch
     schema_check = AsyncMock(return_value=status)
     migrate = AsyncMock()
     bootstrap = AsyncMock()
+    validate_role = AsyncMock()
     monkeypatch.setattr(main, "get_schema_status_async", schema_check, raising=False)
     monkeypatch.setattr(main, "run_migrations_async", migrate, raising=False)
     monkeypatch.setattr(main, "bootstrap_global_workspace", bootstrap)
+    monkeypatch.setattr(main, "validate_runtime_database_role", validate_role)
     monkeypatch.setattr(main, "close_db_engine", AsyncMock())
     monkeypatch.setattr(main.HttpLLMClient, "close_shared_client", AsyncMock())
     monkeypatch.setattr(main.HTTPEmbeddingClient, "close_shared_client", AsyncMock())
@@ -111,4 +113,5 @@ async def test_web_lifespan_checks_schema_without_running_migrations(monkeypatch
 
     migrate.assert_not_awaited()
     schema_check.assert_awaited_once()
-    bootstrap.assert_awaited_once_with(app.state.settings)
+    bootstrap.assert_not_awaited()
+    validate_role.assert_not_awaited()

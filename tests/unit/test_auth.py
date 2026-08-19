@@ -1,11 +1,14 @@
 """Comprehensive unit tests for API Key Authentication Middleware and helpers."""
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.responses import StreamingResponse
 from fastapi.testclient import TestClient
 import pytest
 
 from src.gateway.domain.exceptions import AuthenticationException
+from src.gateway.domain.identity import PrincipalKind
+from src.gateway.infrastructure.persistence.principal_context import get_bound_principal
 from src.gateway.presentation.auth import (
     APIKeyAuthMiddleware,
     AuthValidator,
@@ -169,3 +172,68 @@ def test_api_key_auth_middleware_with_fastapi():
     )
     assert resp_valid_xkey.status_code == 200
     assert resp_valid_xkey.json()["result"] == "messages_ok"
+
+
+def test_legacy_middleware_exposes_only_a_redacted_principal():
+    app = FastAPI()
+    app.add_middleware(APIKeyAuthMiddleware, allowed_keys=["sk-test-secret"])
+
+    @app.get("/principal")
+    def principal_endpoint(request: Request):
+        principal = request.state.principal
+        return {
+            "kind": principal.kind.value,
+            "representation": repr(principal),
+            "raw_key_attached": hasattr(request.state, "api_key"),
+        }
+
+    response = TestClient(app).get(
+        "/principal",
+        headers={"Authorization": "Bearer sk-test-secret"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["kind"] == PrincipalKind.COMPATIBILITY.value
+    assert "sk-test-secret" not in response.json()["representation"]
+    assert response.json()["raw_key_attached"] is False
+
+
+def test_legacy_credentials_require_explicit_compatibility_switch():
+    app = FastAPI()
+    app.add_middleware(
+        APIKeyAuthMiddleware,
+        allowed_keys=["sk-test-secret"],
+        legacy_api_keys_enabled=False,
+    )
+
+    @app.get("/protected")
+    def protected_endpoint():
+        return {"ok": True}
+
+    response = TestClient(app).get(
+        "/protected",
+        headers={"Authorization": "Bearer sk-test-secret"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_principal_context_remains_bound_during_streaming_body():
+    app = FastAPI()
+    app.add_middleware(APIKeyAuthMiddleware, allowed_keys=["sk-stream-secret"])
+
+    @app.get("/stream")
+    async def stream_endpoint():
+        async def body():
+            principal = get_bound_principal()
+            yield principal.kind.value if principal is not None else "missing"
+
+        return StreamingResponse(body())
+
+    response = TestClient(app).get(
+        "/stream",
+        headers={"Authorization": "Bearer sk-stream-secret"},
+    )
+
+    assert response.status_code == 200
+    assert response.text == PrincipalKind.COMPATIBILITY.value

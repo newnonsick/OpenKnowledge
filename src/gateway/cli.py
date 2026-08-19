@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from src.gateway.application.security.passwords import PasswordService
 from src.gateway.application.services.bootstrap_service import BootstrapService
-from src.gateway.infrastructure.database import get_session_factory
+from src.gateway.infrastructure.database import get_migration_session_factory
 from src.gateway.infrastructure.migrations import (
     get_schema_status_async,
     run_migrations_async,
@@ -40,7 +40,7 @@ async def execute_identity(args: argparse.Namespace) -> int:
     if not sys.stdout.isatty() and not args.allow_secret_output:
         print("Secret output requires an interactive terminal or --allow-secret-output.")
         return 2
-    factory = get_session_factory()
+    factory = get_migration_session_factory()
     async with factory.begin() as session:
         service = BootstrapService(session, PasswordService())
         request_id = f"cli-{uuid4()}"

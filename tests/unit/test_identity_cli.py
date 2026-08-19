@@ -45,7 +45,7 @@ def test_cli_refuses_secret_reveal_to_noninteractive_output(monkeypatch, capsys)
 
     FakeBootstrapService.calls.clear()
     monkeypatch.setattr(cli, "BootstrapService", FakeBootstrapService)
-    monkeypatch.setattr(cli, "get_session_factory", lambda: FakeFactory())
+    monkeypatch.setattr(cli, "get_migration_session_factory", lambda: FakeFactory())
     monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False)
     result = cli.main(
         ["bootstrap-super-admin", "--username", "admin", "--display-name", "Admin"]
@@ -61,7 +61,7 @@ def test_cli_explicit_secret_output_reveals_once(monkeypatch, capsys) -> None:
 
     FakeBootstrapService.calls.clear()
     monkeypatch.setattr(cli, "BootstrapService", FakeBootstrapService)
-    monkeypatch.setattr(cli, "get_session_factory", lambda: FakeFactory())
+    monkeypatch.setattr(cli, "get_migration_session_factory", lambda: FakeFactory())
     monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False)
     result = cli.main(
         [

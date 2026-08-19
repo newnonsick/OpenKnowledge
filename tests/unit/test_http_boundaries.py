@@ -18,6 +18,7 @@ def boundary_settings() -> Settings:
         gateway={
             "environment": "test",
             "api_keys": ["test-key"],
+            "legacy_api_keys_enabled": True,
             "cors_origins": ["http://localhost:3000"],
             "trusted_hosts": ["testserver"],
         }

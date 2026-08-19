@@ -48,6 +48,7 @@ from src.gateway.presentation.converters.anthropic_converter import (
     anthropic_request_to_canonical,
     canonical_response_to_anthropic,
 )
+from src.gateway.presentation.authorization import require_scope
 from src.gateway.presentation.schemas.anthropic_schemas import (
     AnthropicContentBlock,
     AnthropicContentBlockDeltaEvent,
@@ -173,6 +174,7 @@ def get_chat_orchestrator(
 
 @router.post(
     "/messages",
+    dependencies=[Depends(require_scope("chat:write"))],
     response_model=None,
     responses={
         200: {"description": "Successful message completion or SSE stream"},

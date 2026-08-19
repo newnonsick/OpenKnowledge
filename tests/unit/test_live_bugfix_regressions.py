@@ -32,7 +32,7 @@ import pytest
 from sqlalchemy import event
 
 from src.gateway.application.ports.clients import ILLMClient
-from src.gateway.config import settings
+from src.gateway.config import Settings, settings
 from src.gateway.domain.canonical import (
     CanonicalLLMResponse,
     CanonicalLLMStreamChunk,
@@ -103,13 +103,21 @@ class ExplodingLLM(ILLMClient):
 
 
 def _make_app(llm: ILLMClient) -> httpx.AsyncClient:
-    app = create_app()
+    app = create_app(
+        Settings(
+            gateway={
+                "environment": "test",
+                "api_keys": ["live-regression-key"],
+                "legacy_api_keys_enabled": True,
+            }
+        )
+    )
     app.dependency_overrides[get_openai_llm_client] = lambda: llm
     app.dependency_overrides[get_anthropic_llm_client] = lambda: llm
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://gateway-test",
-        headers={"Authorization": f"Bearer {settings.gateway.gateway_api_keys[0]}"},
+        headers={"Authorization": "Bearer live-regression-key"},
     )
 
 

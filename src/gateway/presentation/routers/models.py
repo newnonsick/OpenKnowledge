@@ -12,6 +12,7 @@ from src.gateway.application.services.model_registry import (
     get_model_registry,
 )
 from src.gateway.domain.exceptions import ModelNotFoundException
+from src.gateway.presentation.authorization import require_scope
 from src.gateway.presentation.schemas.openai_schemas import (
     OpenAIErrorDetail,
     OpenAIErrorResponse,
@@ -21,7 +22,11 @@ from src.gateway.presentation.schemas.openai_schemas import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v1", tags=["Models"])
+router = APIRouter(
+    prefix="/v1",
+    tags=["Models"],
+    dependencies=[Depends(require_scope("chat:write"))],
+)
 
 @router.get("/models", response_model=OpenAIModelListResponse)
 async def list_models(

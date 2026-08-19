@@ -120,6 +120,16 @@ class DatabaseSettings(BaseSettings):
         validation_alias=AliasChoices("DATABASE_URL", "DB_URL", "database_url", "db_url", "url"),
         description="SQLAlchemy async database connection URL",
     )
+    migration_url: Optional[str] = Field(
+        default=None,
+        repr=False,
+        validation_alias=AliasChoices(
+            "MIGRATION_DATABASE_URL",
+            "migration_database_url",
+            "migration_url",
+        ),
+        description="Privileged database URL used only by explicit migration commands",
+    )
     pool_size: int = Field(
         default=20,
         gt=0,
@@ -215,6 +225,19 @@ class GatewaySettings(BaseSettings):
         validation_alias=AliasChoices(
             "LEGACY_API_KEYS_ENABLED",
             "legacy_api_keys_enabled",
+        ),
+    )
+    api_key_peppers: dict[int, str] = Field(
+        default_factory=dict,
+        repr=False,
+        validation_alias=AliasChoices("API_KEY_PEPPERS", "api_key_peppers"),
+    )
+    active_api_key_pepper_version: int = Field(
+        default=1,
+        ge=1,
+        validation_alias=AliasChoices(
+            "ACTIVE_API_KEY_PEPPER_VERSION",
+            "active_api_key_pepper_version",
         ),
     )
     max_request_body_bytes: int = Field(
@@ -373,6 +396,19 @@ class GatewaySettings(BaseSettings):
             add_error(("gateway", "api_keys"), "legacy static API keys are forbidden in production")
         if self.legacy_api_keys_enabled:
             add_error(("gateway", "legacy_api_keys_enabled"), "legacy API key compatibility is forbidden in production")
+        if not self.api_key_peppers or any(
+            len(pepper.encode("utf-8")) < 32
+            for pepper in self.api_key_peppers.values()
+        ):
+            add_error(
+                ("gateway", "api_key_peppers"),
+                "at least one 32-byte API key pepper is required in production",
+            )
+        elif self.active_api_key_pepper_version not in self.api_key_peppers:
+            add_error(
+                ("gateway", "active_api_key_pepper_version"),
+                "the active API key pepper version must exist",
+            )
         if database and database.echo:
             add_error(("database", "echo"), "database echo is forbidden in production")
 

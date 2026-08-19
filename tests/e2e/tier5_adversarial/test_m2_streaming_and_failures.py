@@ -18,7 +18,7 @@ import pytest
 
 from src.gateway.application.ports.clients import ILLMClient
 from src.gateway.application.services.model_registry import ModelRegistryService
-from src.gateway.config import settings
+from src.gateway.config import Settings
 from src.gateway.domain.canonical import (
     CanonicalBlock,
     CanonicalChatRequest,
@@ -49,7 +49,17 @@ from tests.e2e.harness.mock_server import (
 
 def get_test_api_key() -> str:
     """Get currently configured gateway API key for test requests."""
-    return settings.gateway.gateway_api_keys[0]
+    return "streaming-adversarial-key"
+
+
+def _test_settings() -> Settings:
+    return Settings(
+        gateway={
+            "environment": "test",
+            "api_keys": [get_test_api_key()],
+            "legacy_api_keys_enabled": True,
+        }
+    )
 
 
 # ==============================================================================
@@ -128,7 +138,7 @@ async def test_adv_openai_sse_format_double_newline_and_done():
         CanonicalLLMStreamChunk(id="c3", model="test-model", finish_reason="stop"),
     ]
     mock_client = MockCustomStreamLLMClient(chunks)
-    app = create_app()
+    app = create_app(_test_settings())
 
     from src.gateway.presentation.routers.chat_completions import get_llm_client
     app.dependency_overrides[get_llm_client] = lambda: mock_client
@@ -192,7 +202,7 @@ async def test_adv_openai_sse_tool_call_streaming_chunks():
         finish_reason="tool_use",
     )
     mock_client = MockCustomStreamLLMClient([tool_chunk_1, tool_chunk_2])
-    app = create_app()
+    app = create_app(_test_settings())
 
     from src.gateway.presentation.routers.chat_completions import get_llm_client
     app.dependency_overrides[get_llm_client] = lambda: mock_client
@@ -244,7 +254,7 @@ async def test_adv_anthropic_sse_exact_event_sequence_lifecycle():
         CanonicalLLMStreamChunk(id="c3", model="claude-3-5", finish_reason="stop"),
     ]
     mock_client = MockCustomStreamLLMClient(chunks)
-    app = create_app()
+    app = create_app(_test_settings())
 
     from src.gateway.presentation.routers.messages import get_llm_client
     app.dependency_overrides[get_llm_client] = lambda: mock_client
@@ -340,7 +350,7 @@ async def test_adv_anthropic_sse_tool_use_event_sequence():
         )
     ]
     mock_client = MockCustomStreamLLMClient(chunks)
-    app = create_app()
+    app = create_app(_test_settings())
 
     from src.gateway.presentation.routers.messages import get_llm_client
     app.dependency_overrides[get_llm_client] = lambda: mock_client
@@ -413,7 +423,7 @@ async def test_adv_openai_non_streaming_upstream_502_error_envelope():
     """Verify OpenAI non-streaming endpoint returns HTTP 502 with valid error JSON on upstream failure."""
     api_key = get_test_api_key()
     mock_failing = MockFailingLLMClient(failure_type="provider_error", error_message="LLM backend connection timeout")
-    app = create_app()
+    app = create_app(_test_settings())
 
     from src.gateway.presentation.routers.chat_completions import get_llm_client
     app.dependency_overrides[get_llm_client] = lambda: mock_failing
@@ -444,7 +454,7 @@ async def test_adv_anthropic_non_streaming_upstream_502_error_envelope():
     """Verify Anthropic non-streaming endpoint returns HTTP 502 with Anthropic error envelope."""
     api_key = get_test_api_key()
     mock_failing = MockFailingLLMClient(failure_type="provider_error", error_message="Upstream vLLM crashed")
-    app = create_app()
+    app = create_app(_test_settings())
 
     from src.gateway.presentation.routers.messages import get_llm_client
     app.dependency_overrides[get_llm_client] = lambda: mock_failing
@@ -475,7 +485,7 @@ async def test_adv_openai_streaming_midstream_error_recovery():
     """Verify OpenAI streaming endpoint emits error chunk and [DONE] when stream fails midstream."""
     api_key = get_test_api_key()
     mock_failing = MockFailingLLMClient(failure_type="midstream_error", error_message="Upstream dropped")
-    app = create_app()
+    app = create_app(_test_settings())
 
     from src.gateway.presentation.routers.chat_completions import get_llm_client
     app.dependency_overrides[get_llm_client] = lambda: mock_failing
@@ -513,7 +523,7 @@ async def test_adv_anthropic_streaming_midstream_error_recovery():
     """Verify Anthropic streaming endpoint emits `event: error` when stream fails midstream."""
     api_key = get_test_api_key()
     mock_failing = MockFailingLLMClient(failure_type="midstream_error", error_message="Upstream dropped")
-    app = create_app()
+    app = create_app(_test_settings())
 
     from src.gateway.presentation.routers.messages import get_llm_client
     app.dependency_overrides[get_llm_client] = lambda: mock_failing
@@ -639,7 +649,7 @@ async def test_adv_unicode_multibyte_and_emojis_in_sse():
         CanonicalLLMStreamChunk(id="c5", model="test-model", finish_reason="stop"),
     ]
     mock_client = MockCustomStreamLLMClient(unicode_chunks)
-    app = create_app()
+    app = create_app(_test_settings())
 
     from src.gateway.presentation.routers.chat_completions import get_llm_client
     app.dependency_overrides[get_llm_client] = lambda: mock_client
@@ -678,7 +688,7 @@ async def test_adv_large_chunk_streaming_stress():
     ]
     chunks.append(CanonicalLLMStreamChunk(id="c_end", model="test-model", finish_reason="stop"))
     mock_client = MockCustomStreamLLMClient(chunks)
-    app = create_app()
+    app = create_app(_test_settings())
 
     from src.gateway.presentation.routers.chat_completions import get_llm_client
     app.dependency_overrides[get_llm_client] = lambda: mock_client
@@ -703,7 +713,7 @@ async def test_adv_large_chunk_streaming_stress():
 @pytest.mark.asyncio
 async def test_adv_auth_missing_returns_protocol_specific_401():
     """Verify missing credentials return protocol-specific 401 formats."""
-    app = create_app()
+    app = create_app(_test_settings())
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:

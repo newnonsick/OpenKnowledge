@@ -52,6 +52,7 @@ from src.gateway.presentation.converters.openai_converter import (
     map_finish_reason_to_openai,
     openai_request_to_canonical,
 )
+from src.gateway.presentation.authorization import require_scope
 from src.gateway.presentation.schemas.openai_schemas import (
     OpenAIChatCompletionChunk,
     OpenAIChatCompletionRequest,
@@ -163,6 +164,7 @@ def get_chat_orchestrator(
 
 @router.post(
     "/chat/completions",
+    dependencies=[Depends(require_scope("chat:write"))],
     response_model=None,
     responses={
         200: {"description": "Successful chat completion or SSE stream"},

@@ -38,6 +38,7 @@ from src.gateway.domain.exceptions import (
     AuthenticationException,
     ModelNotFoundException,
 )
+from src.gateway.domain.identity import Principal, PrincipalKind, SystemRole
 from src.gateway.domain.tools import FunctionCall, FunctionDefinition, ToolCall, ToolDefinition
 from src.gateway.presentation.auth import (
     APIKeyAuthMiddleware,
@@ -83,6 +84,18 @@ from src.gateway.presentation.schemas.openai_schemas import (
     OpenAIToolCall,
     OpenAIToolDefinition,
 )
+
+
+def _authorize_test_app(app: FastAPI) -> None:
+    @app.middleware("http")
+    async def assign_principal(request, call_next):
+        request.state.principal = Principal(
+            subject_id="router-test",
+            kind=PrincipalKind.API_KEY,
+            system_role=SystemRole.MEMBER,
+            scopes=frozenset({"chat:write"}),
+        )
+        return await call_next(request)
 
 
 # ==============================================================================
@@ -627,6 +640,7 @@ class TestRouterAdversarial:
     def test_openai_chat_completions_alias_resolution_in_route(self):
         mock_llm = MockAdversarialLLMClient(mode="text")
         app = FastAPI()
+        _authorize_test_app(app)
         app.include_router(chat_router)
         app.dependency_overrides[get_chat_llm_client] = lambda: mock_llm
         app.dependency_overrides[get_model_registry] = lambda: ModelRegistryService(
@@ -655,6 +669,7 @@ class TestRouterAdversarial:
     def test_openai_chat_completions_streaming_sse_format(self):
         mock_llm = MockAdversarialLLMClient(mode="stream_text")
         app = FastAPI()
+        _authorize_test_app(app)
         app.include_router(chat_router)
         app.dependency_overrides[get_chat_llm_client] = lambda: mock_llm
 
@@ -694,6 +709,7 @@ class TestRouterAdversarial:
     def test_anthropic_messages_streaming_sse_events_sequence(self):
         mock_llm = MockAdversarialLLMClient(mode="stream_text")
         app = FastAPI()
+        _authorize_test_app(app)
         app.include_router(messages_router)
         app.dependency_overrides[get_messages_llm_client] = lambda: mock_llm
 
@@ -732,6 +748,7 @@ class TestRouterAdversarial:
     def test_anthropic_messages_streaming_tool_call_sequence(self):
         mock_llm = MockAdversarialLLMClient(mode="stream_tool_call")
         app = FastAPI()
+        _authorize_test_app(app)
         app.include_router(messages_router)
         app.dependency_overrides[get_messages_llm_client] = lambda: mock_llm
 
@@ -766,6 +783,7 @@ class TestRouterAdversarial:
     def test_anthropic_messages_streaming_error_event(self):
         mock_llm = MockAdversarialLLMClient(mode="stream_error")
         app = FastAPI()
+        _authorize_test_app(app)
         app.include_router(messages_router)
         app.dependency_overrides[get_messages_llm_client] = lambda: mock_llm
 
@@ -784,6 +802,7 @@ class TestRouterAdversarial:
 
     def test_models_router_get_model_with_slash_path(self):
         app = FastAPI()
+        _authorize_test_app(app)
         app.include_router(models_router)
         app.dependency_overrides[get_model_registry] = lambda: ModelRegistryService(
             default_model="org/backend-model-v1"

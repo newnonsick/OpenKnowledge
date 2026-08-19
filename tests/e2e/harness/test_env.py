@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import inspect
 import json
 import os
@@ -21,7 +22,9 @@ import secrets
 import shutil
 import tempfile
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from uuid import UUID, uuid4
 
 import httpx
 from sqlalchemy import text
@@ -236,11 +239,13 @@ class TestEnvironment:
         # 3. Build test environment variables
         test_env = {
             "HOST": "127.0.0.1",
+            "ENVIRONMENT": "test",
             "PORT": "8000",
             "LOG_LEVEL": "DEBUG",
             "STORAGE_DIR": str(self.storage_path),
             "DEFAULT_WORKSPACE_ID": "global",
             "GATEWAY_API_KEYS": "sk-test-admin,sk-test-user-1,sk-test-user-2",
+            "LEGACY_API_KEYS_ENABLED": "true",
             "CORS_ORIGINS": "*",
             "TRUSTED_HOSTS": "localhost,127.0.0.1,[::1],testserver,test,gateway-test",
             "MAX_TOOL_ITERATIONS": "5",
@@ -327,6 +332,11 @@ class TestEnvironment:
             pass
 
         # 7. Create database schema
+        from src.gateway.infrastructure.persistence.identity_models import (
+            CompatibilityPrincipalModel,
+            MemberModel,
+            SpaceMembershipModel,
+        )
         from src.gateway.infrastructure.persistence.models import Base
 
         async with self.engine.begin() as conn:
@@ -336,13 +346,70 @@ class TestEnvironment:
             # Seed global workspace
             await conn.execute(
                 text(
-                    "INSERT INTO workspaces (id, name) VALUES ('global', 'Global Shared Workspace') ON CONFLICT DO NOTHING;"
+                    "INSERT INTO workspaces (id, name) VALUES "
+                    "('global', 'Global Shared Workspace'), "
+                    "('test_ws', 'Test Workspace'), "
+                    "('ws_hybrid', 'Hybrid Workspace'), "
+                    "('ws-backend', 'Backend Workspace'), "
+                    "('team_a', 'Team A'), "
+                    "('team_b', 'Team B') ON CONFLICT DO NOTHING;"
                 )
                 if self.is_postgres
                 else text(
-                    "INSERT OR IGNORE INTO workspaces (id, name) VALUES ('global', 'Global Shared Workspace');"
+                    "INSERT OR IGNORE INTO workspaces (id, name) VALUES "
+                    "('global', 'Global Shared Workspace'), "
+                    "('test_ws', 'Test Workspace'), "
+                    "('ws_hybrid', 'Hybrid Workspace'), "
+                    "('ws-backend', 'Backend Workspace'), "
+                    "('team_a', 'Team A'), "
+                    "('team_b', 'Team B');"
                 )
             )
+        workspace_ids = (
+            "global",
+            "test_ws",
+            "ws_hybrid",
+            "ws-backend",
+            "team_a",
+            "team_b",
+        )
+        configured_keys = tuple(
+            key.strip()
+            for key in test_env["GATEWAY_API_KEYS"].split(",")
+            if key.strip()
+        )
+        async with self.session_factory.begin() as session:
+            for index, key in enumerate(configured_keys, start=1):
+                key_digest = hashlib.sha256(key.encode("utf-8")).digest()
+                principal_id = UUID(bytes=key_digest[:16])
+                session.add(
+                    MemberModel(
+                        id=principal_id,
+                        username=f"legacy-test-{index}",
+                        username_normalized=f"legacy-test-{index}",
+                        display_name=f"Legacy Test {index}",
+                        status="active",
+                        system_role="member",
+                        force_password_change=False,
+                    )
+                )
+                session.add(
+                    CompatibilityPrincipalModel(
+                        id=principal_id,
+                        name=f"legacy-test-{index}",
+                        key_digest=key_digest.hex(),
+                        expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+                    )
+                )
+                session.add_all(
+                    SpaceMembershipModel(
+                        id=uuid4(),
+                        space_id=workspace_id,
+                        member_id=principal_id,
+                        role="editor",
+                    )
+                    for workspace_id in workspace_ids
+                )
 
     async def stop(self) -> None:
         """Tear down test environment, restore settings, and clean storage."""

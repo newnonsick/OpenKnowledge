@@ -27,6 +27,8 @@ def production_settings(**gateway_overrides) -> Settings:
         "trusted_proxy_cidrs": [],
         "api_keys": [],
         "legacy_api_keys_enabled": False,
+        "api_key_peppers": {1: "p" * 32},
+        "active_api_key_pepper_version": 1,
     }
     gateway.update(gateway_overrides)
     return Settings(gateway=gateway, database={"echo": False})
@@ -43,6 +45,9 @@ def production_settings(**gateway_overrides) -> Settings:
         ({"api_keys": ["sk-gateway-default-key"]}, "api_keys"),
         ({"api_keys": ["sentinel-production-key"]}, "api_keys"),
         ({"legacy_api_keys_enabled": True}, "legacy_api_keys_enabled"),
+        ({"api_key_peppers": {}}, "api_key_peppers"),
+        ({"api_key_peppers": {1: "short"}}, "api_key_peppers"),
+        ({"active_api_key_pepper_version": 2}, "active_api_key_pepper_version"),
     ],
 )
 def test_production_rejects_unsafe_gateway_configuration(overrides, field_name):
@@ -81,6 +86,7 @@ async def test_injected_settings_are_active_through_request_dependencies():
         gateway={
             "environment": "test",
             "api_keys": ["context-key"],
+            "legacy_api_keys_enabled": True,
             "trusted_hosts": ["testserver"],
         },
         database={"url": custom_database_url},
@@ -120,7 +126,9 @@ def test_secret_values_are_redacted_from_settings_repr():
         LLMSettings(api_key=sentinel),
         EmbeddingSettings(api_key=sentinel),
         DatabaseSettings(url=f"postgresql+asyncpg://user:{sentinel}@db/gateway"),
+        DatabaseSettings(migration_url=f"postgresql+asyncpg://migrator:{sentinel}@db/gateway"),
         GatewaySettings(api_keys=[sentinel]),
+        GatewaySettings(api_key_peppers={1: sentinel}),
     ]
 
     assert all(sentinel not in repr(value) for value in values)

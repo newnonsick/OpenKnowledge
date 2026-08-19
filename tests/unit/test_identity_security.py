@@ -1,3 +1,4 @@
+from dataclasses import asdict
 import json
 
 import pytest
@@ -63,6 +64,31 @@ def test_opaque_and_api_key_tokens_store_only_digests() -> None:
     assert issued.secret.reveal().startswith("aigw_v1_")
     assert key_codec.verify(issued.secret.reveal(), issued.digest) is True
     assert key_codec.verify(issued.secret.reveal() + "x", issued.digest) is False
+
+
+def test_api_key_codec_uses_versioned_pepper_keyring() -> None:
+    codec = APIKeyCodec(
+        {1: SecretValue("old-deployment-pepper"), 2: SecretValue("new-deployment-pepper")},
+        active_pepper_version=2,
+    )
+    issued = codec.issue()
+    parsed = codec.parse(issued.secret.reveal())
+    assert issued.pepper_version == 2
+    assert parsed.pepper_version == 2
+    assert issued.secret.reveal() not in repr(parsed)
+    with pytest.raises(TypeError):
+        json.dumps(asdict(parsed))
+    assert issued.secret.reveal().startswith("aigw_v2_")
+    assert codec.verify(
+        issued.secret.reveal(),
+        issued.digest,
+        pepper_version=2,
+    ) is True
+    assert APIKeyCodec(SecretValue("old-deployment-pepper")).verify(
+        issued.secret.reveal(),
+        issued.digest,
+        pepper_version=2,
+    ) is False
 
 
 def test_totp_secrets_encrypt_and_recovery_codes_are_one_way() -> None:

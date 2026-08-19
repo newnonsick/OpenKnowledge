@@ -20,15 +20,23 @@ from tests.e2e.harness.mock_server import MockLLMResponse, MockServerManager, Mo
 @pytest.mark.asyncio
 async def test_f08_boundary_anthropic_malformed_json_body():
     """Test boundary: invalid JSON body is rejected by gateway request validation."""
-    from src.gateway.config import settings
+    from src.gateway.config import Settings
     from src.gateway.main import create_app
 
-    app = create_app()
+    app = create_app(
+        Settings(
+            gateway={
+                "environment": "test",
+                "api_keys": ["anthropic-boundary-key"],
+                "legacy_api_keys_enabled": True,
+            }
+        )
+    )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(
         transport=transport,
         base_url="http://gateway-test",
-        headers={"x-api-key": settings.gateway.gateway_api_keys[0]},
+        headers={"x-api-key": "anthropic-boundary-key"},
     ) as client:
         resp = await client.post(
             "/v1/messages",
@@ -45,7 +53,7 @@ async def test_f08_boundary_anthropic_malformed_json_body():
 async def test_f08_boundary_anthropic_missing_messages_or_empty_list():
     """Test boundary: the gateway rejects an empty messages list with a 400
     invalid_request_error instead of forwarding it to the upstream backend."""
-    from src.gateway.config import settings
+    from src.gateway.config import Settings
     from src.gateway.main import create_app
     from src.gateway.presentation.routers.messages import get_llm_client
 
@@ -57,13 +65,21 @@ async def test_f08_boundary_anthropic_missing_messages_or_empty_list():
             raise AssertionError("upstream must not be called for empty messages")
             yield
 
-    app = create_app()
+    app = create_app(
+        Settings(
+            gateway={
+                "environment": "test",
+                "api_keys": ["anthropic-boundary-key"],
+                "legacy_api_keys_enabled": True,
+            }
+        )
+    )
     app.dependency_overrides[get_llm_client] = _FailIfCalled
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(
         transport=transport,
         base_url="http://gateway-test",
-        headers={"x-api-key": settings.gateway.gateway_api_keys[0]},
+        headers={"x-api-key": "anthropic-boundary-key"},
     ) as client:
         resp = await client.post(
             "/v1/messages",

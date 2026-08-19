@@ -42,7 +42,10 @@ def get_alembic_config(db_url: Optional[str] = None) -> Config:
     cfg = Config(str(alembic_ini))
     cfg.set_main_option("script_location", str(base_dir / "alembic"))
 
-    target_url = normalize_database_url(db_url or get_settings().database.url)
+    database_settings = get_settings().database
+    target_url = normalize_database_url(
+        db_url or database_settings.migration_url or database_settings.url
+    )
     cfg.set_main_option("sqlalchemy.url", target_url)
     return cfg
 

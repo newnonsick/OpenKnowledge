@@ -11,13 +11,14 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from src.gateway.config import (
     AppSettings,
+    RuntimeEnvironment,
     get_settings,
     reset_runtime_settings,
     set_runtime_settings,
 )
 from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.adapters.http_llm_client import HttpLLMClient
-from src.gateway.infrastructure.database import close_db_engine, get_session_factory
+from src.gateway.infrastructure.database import close_db_engine, get_session_factory, validate_runtime_database_role
 from src.gateway.infrastructure.migrations import get_schema_status_async
 from src.gateway.infrastructure.persistence.models import Workspace
 from src.gateway.infrastructure.readiness import ReadinessProbe
@@ -67,6 +68,7 @@ async def bootstrap_global_workspace(
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
+    settings_token = set_runtime_settings(app.state.settings)
     logger.info("Starting AI Gateway infrastructure initialization...")
     try:
         status = await get_schema_status_async(
@@ -83,17 +85,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             extra={"exception_class": type(exc).__name__},
         )
 
-    if app.state.schema_compatible:
+    if not app.state.schema_compatible:
+        logger.error("Database schema is incompatible; readiness is disabled")
+    elif app.state.settings.gateway.environment is RuntimeEnvironment.PRODUCTION:
         try:
-            await bootstrap_global_workspace(app.state.settings)
+            await validate_runtime_database_role()
         except Exception as exc:
             app.state.schema_compatible = False
             logger.error(
-                "Workspace bootstrap failed",
+                "Runtime database role validation failed",
                 extra={"exception_class": type(exc).__name__},
             )
-    else:
-        logger.error("Database schema is incompatible; readiness is disabled")
 
     logger.info("AI Gateway startup completed successfully.")
     try:
@@ -103,6 +105,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await close_db_engine()
         await HttpLLMClient.close_shared_client()
         await HTTPEmbeddingClient.close_shared_client()
+        reset_runtime_settings(settings_token)
         logger.info("AI Gateway shutdown complete.")
 
 def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
@@ -129,6 +132,14 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
     app.add_middleware(
         APIKeyAuthMiddleware,
         allowed_keys=current_settings.gateway.gateway_api_keys,
+        api_key_peppers=current_settings.gateway.api_key_peppers,
+        active_api_key_pepper_version=(
+            current_settings.gateway.active_api_key_pepper_version
+        ),
+        legacy_api_keys_enabled=current_settings.gateway.legacy_api_keys_enabled,
+        require_persisted_legacy_principals=(
+            current_settings.gateway.environment is not RuntimeEnvironment.TEST
+        ),
     )
     app.add_middleware(
         CORSMiddleware,

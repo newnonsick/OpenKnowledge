@@ -6,13 +6,19 @@ import json
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.gateway.application.services.ingestion_service import IngestionService
+from src.gateway.application.services.authorization_service import AuthorizationService
 from src.gateway.config import get_settings
+from src.gateway.domain.authorization import Action
 from src.gateway.domain.exceptions import GatewayException
+from src.gateway.domain.identity import Principal
+from src.gateway.infrastructure.database import get_db_session
 from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.persistence.document_repository import DocumentRepository
 from src.gateway.infrastructure.storage.local_storage import LocalStorageAdapter
+from src.gateway.presentation.authorization import require_scope
 
 router = APIRouter(prefix="/v1/files", tags=["files"])
 
@@ -46,11 +52,18 @@ async def upload_file(
     is_global: bool = Form(False),
     tags: Optional[str] = Form(None),
     ingestion_service: IngestionService = Depends(get_ingestion_service),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+    session: AsyncSession = Depends(get_db_session),
 ) -> FileUploadResponse:
 
     try:
         content = await file.read()
         ws_id = workspace_id or get_settings().gateway.default_workspace_id
+        await AuthorizationService(session).authorize_space(
+            principal,
+            ws_id,
+            Action.CONTENT_WRITE,
+        )
 
         tag_list: List[str] = []
         if tags:

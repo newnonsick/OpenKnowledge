@@ -25,7 +25,7 @@ import httpx
 import pytest
 
 from src.gateway.application.ports.clients import ILLMClient
-from src.gateway.config import settings
+from src.gateway.config import Settings
 from src.gateway.domain.canonical import (
     CanonicalLLMResponse,
     CanonicalLLMStreamChunk,
@@ -39,7 +39,17 @@ from tests.e2e.harness.test_env import TestEnvironment
 
 
 def get_valid_api_key() -> str:
-    return settings.gateway.gateway_api_keys[0]
+    return "sk-test-admin"
+
+
+def _test_settings() -> Settings:
+    return Settings(
+        gateway={
+            "environment": "test",
+            "api_keys": [get_valid_api_key()],
+            "legacy_api_keys_enabled": True,
+        }
+    )
 
 
 class ScriptedAsyncLLM(ILLMClient):
@@ -108,7 +118,7 @@ class TestAdversarialAuthentication:
     )
     async def test_adversarial_auth_headers_rejected_401(self, invalid_header: Dict[str, str]):
         """Verify all invalid/malicious authentication headers return HTTP 401 Unauthorized."""
-        app = create_app()
+        app = create_app(_test_settings())
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             # Test against OpenAI endpoint
@@ -158,7 +168,7 @@ class TestAdversarialProtocolParity:
             usage=CanonicalUsage(prompt_tokens=25, completion_tokens=15, total_tokens=40),
         )
 
-        app = create_app()
+        app = create_app(_test_settings())
         app.dependency_overrides[get_openai_llm_client] = lambda: ScriptedAsyncLLM(mock_resp)
 
         transport = httpx.ASGITransport(app=app)
@@ -211,7 +221,7 @@ class TestAdversarialProtocolParity:
             usage=CanonicalUsage(prompt_tokens=25, completion_tokens=15, total_tokens=40),
         )
 
-        app = create_app()
+        app = create_app(_test_settings())
         app.dependency_overrides[get_anthropic_llm_client] = lambda: ScriptedAsyncLLM(mock_resp)
 
         transport = httpx.ASGITransport(app=app)
@@ -265,7 +275,7 @@ class TestAdversarialConcurrencyStress:
             usage=CanonicalUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
         )
 
-        app = create_app()
+        app = create_app(_test_settings())
         app.dependency_overrides[get_openai_llm_client] = lambda: ScriptedAsyncLLM(mock_resp)
 
         transport = httpx.ASGITransport(app=app)
@@ -301,7 +311,7 @@ class TestAdversarialConcurrencyStress:
             usage=CanonicalUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
         )
 
-        app = create_app()
+        app = create_app(_test_settings())
         app.dependency_overrides[get_anthropic_llm_client] = lambda: ScriptedAsyncLLM(mock_resp)
 
         transport = httpx.ASGITransport(app=app)
@@ -340,40 +350,58 @@ class TestAdversarialHTTPFileUpload:
 
     async def test_upload_corrupted_json_returns_422_validation_error(self):
         """Verify uploading malformed JSON returns HTTP 422 Unprocessable Entity."""
-        app = create_app()
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            corrupt_json_bytes = b'{"unclosed": "json data'
-            files = {"file": ("bad_file.json", io.BytesIO(corrupt_json_bytes), "application/json")}
+        async with TestEnvironment() as env:
+            app = create_app(_test_settings())
+            from src.gateway.infrastructure.database import get_db_session
 
-            resp = await client.post(
-                "/v1/files/upload",
-                headers={"Authorization": f"Bearer {get_valid_api_key()}"},
-                files=files,
-                data={"workspace_id": "test_ws"},
-            )
-            assert resp.status_code == 422
-            data = resp.json()
-            assert data["error"]["type"] == "validation_error"
-            assert data["error"]["code"] == "invalid_payload"
-            assert data["request_id"]
+            async def test_session():
+                async with env.session_factory() as session:
+                    yield session
+
+            app.dependency_overrides[get_db_session] = test_session
+            transport = httpx.ASGITransport(app=app)
+            client = httpx.AsyncClient(transport=transport, base_url="http://testserver")
+            async with client:
+                corrupt_json_bytes = b'{"unclosed": "json data'
+                files = {"file": ("bad_file.json", io.BytesIO(corrupt_json_bytes), "application/json")}
+
+                resp = await client.post(
+                    "/v1/files/upload",
+                    headers={"Authorization": f"Bearer {get_valid_api_key()}"},
+                    files=files,
+                    data={"workspace_id": "test_ws"},
+                )
+                assert resp.status_code == 422
+                data = resp.json()
+                assert data["error"]["type"] == "validation_error"
+                assert data["error"]["code"] == "invalid_payload"
+                assert data["request_id"]
 
     async def test_upload_corrupted_pdf_returns_422_validation_error(self):
         """Verify uploading invalid PDF file returns HTTP 422 Unprocessable Entity."""
-        app = create_app()
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            fake_pdf_bytes = b"Not a real PDF file header"
-            files = {"file": ("corrupt.pdf", io.BytesIO(fake_pdf_bytes), "application/pdf")}
+        async with TestEnvironment() as env:
+            app = create_app(_test_settings())
+            from src.gateway.infrastructure.database import get_db_session
 
-            resp = await client.post(
-                "/v1/files/upload",
-                headers={"Authorization": f"Bearer {get_valid_api_key()}"},
-                files=files,
-                data={"workspace_id": "test_ws"},
-            )
-            assert resp.status_code == 422
-            data = resp.json()
-            assert data["error"]["type"] == "validation_error"
-            assert data["error"]["code"] == "invalid_payload"
-            assert data["request_id"]
+            async def test_session():
+                async with env.session_factory() as session:
+                    yield session
+
+            app.dependency_overrides[get_db_session] = test_session
+            transport = httpx.ASGITransport(app=app)
+            client = httpx.AsyncClient(transport=transport, base_url="http://testserver")
+            async with client:
+                fake_pdf_bytes = b"Not a real PDF file header"
+                files = {"file": ("corrupt.pdf", io.BytesIO(fake_pdf_bytes), "application/pdf")}
+
+                resp = await client.post(
+                    "/v1/files/upload",
+                    headers={"Authorization": f"Bearer {get_valid_api_key()}"},
+                    files=files,
+                    data={"workspace_id": "test_ws"},
+                )
+                assert resp.status_code == 422
+                data = resp.json()
+                assert data["error"]["type"] == "validation_error"
+                assert data["error"]["code"] == "invalid_payload"
+                assert data["request_id"]
