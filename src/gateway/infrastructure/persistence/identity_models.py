@@ -1,0 +1,194 @@
+from __future__ import annotations
+
+from datetime import datetime
+from uuid import UUID, uuid4
+
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, func, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from src.gateway.infrastructure.persistence.models import Base
+
+
+class MemberModel(Base):
+    __tablename__ = "members"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    username: Mapped[str] = mapped_column(String(255), nullable=False)
+    username_normalized: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    system_role: Mapped[str] = mapped_column(String(24), nullable=False)
+    force_password_change: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint("username_normalized", name="uq_members_username_normalized"),
+        CheckConstraint("status IN ('invited','active','disabled')", name="ck_members_status"),
+        CheckConstraint("system_role IN ('super_admin','member')", name="ck_members_system_role"),
+    )
+
+
+class PasswordCredentialModel(Base):
+    __tablename__ = "password_credentials"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    member_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    temporary: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("uq_password_credentials_current_member", "member_id", unique=True, postgresql_where=text("retired_at IS NULL")),
+    )
+
+
+class MFAFactorModel(Base):
+    __tablename__ = "mfa_factors"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    member_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False)
+    factor_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    secret_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (CheckConstraint("factor_type IN ('totp')", name="ck_mfa_factors_type"),)
+
+
+class MFARecoveryCodeModel(Base):
+    __tablename__ = "mfa_recovery_codes"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    factor_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("mfa_factors.id", ondelete="CASCADE"), nullable=False)
+    code_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (UniqueConstraint("factor_id", "code_digest", name="uq_mfa_recovery_factor_digest"),)
+
+
+class SessionFamilyModel(Base):
+    __tablename__ = "session_families"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    member_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_activity_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    idle_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    absolute_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoke_reason: Mapped[str | None] = mapped_column(String(64))
+
+    __table_args__ = (CheckConstraint("idle_expires_at <= absolute_expires_at", name="ck_session_families_expiry_order"),)
+
+
+class SessionCredentialModel(Base):
+    __tablename__ = "session_credentials"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    family_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("session_families.id", ondelete="CASCADE"), nullable=False)
+    credential_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    token_digest: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    replaced_by_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("session_credentials.id", ondelete="SET NULL"))
+
+    __table_args__ = (CheckConstraint("credential_type IN ('access','refresh')", name="ck_session_credentials_type"),)
+
+
+class PersonalAPIKeyModel(Base):
+    __tablename__ = "personal_api_keys"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    member_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True)
+    public_id: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    key_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (CheckConstraint("status IN ('active','revoked','expired')", name="ck_personal_api_keys_status"),)
+
+
+class APIKeyScopeModel(Base):
+    __tablename__ = "api_key_scopes"
+
+    api_key_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("personal_api_keys.id", ondelete="CASCADE"), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+
+class SpaceMembershipModel(Base):
+    __tablename__ = "space_memberships"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    space_id: Mapped[str] = mapped_column(String(64), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    member_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("space_id", "member_id", name="uq_space_memberships_space_member"),
+        CheckConstraint("role IN ('owner','editor','reader')", name="ck_space_memberships_role"),
+    )
+
+
+class AuditEventModel(Base):
+    __tablename__ = "audit_events"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    actor_member_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("members.id", ondelete="SET NULL"))
+    actor_kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    action: Mapped[str] = mapped_column(String(128), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    resource_id: Mapped[str | None] = mapped_column(String(128))
+    outcome: Mapped[str] = mapped_column(String(24), nullable=False)
+    details: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"), nullable=False)
+
+    __table_args__ = (
+        Index("ix_audit_events_actor_time", "actor_member_id", "occurred_at"),
+        CheckConstraint("outcome IN ('success','denied','failed')", name="ck_audit_events_outcome"),
+    )
+
+
+class IdempotencyRecordModel(Base):
+    __tablename__ = "idempotency_records"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    operation: Mapped[str] = mapped_column(String(128), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_status: Mapped[int | None] = mapped_column(Integer)
+    resource_ids: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("actor_id", "operation", "idempotency_key", name="uq_idempotency_actor_operation_key"),
+        CheckConstraint("length(request_hash) = 64", name="ck_idempotency_request_hash"),
+        CheckConstraint("response_status IS NULL OR response_status BETWEEN 100 AND 599", name="ck_idempotency_response_status"),
+    )
+
+
+class CompatibilityPrincipalModel(Base):
+    __tablename__ = "compatibility_principals"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    key_digest: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

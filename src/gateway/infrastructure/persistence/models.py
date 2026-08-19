@@ -226,3 +226,6 @@ class DocumentChunk(Base):
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
     )
+
+
+from src.gateway.infrastructure.persistence import identity_models as identity_models

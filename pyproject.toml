@@ -21,6 +21,9 @@ dependencies = [
     "structlog>=24.4.0",
     "pypdf>=5.1.0",
     "python-multipart>=0.0.19",
+    "argon2-cffi>=25.1.0",
+    "cryptography>=45.0.0",
+    "pyotp>=2.9.0",
 ]
 
 [project.optional-dependencies]

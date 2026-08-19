@@ -23,7 +23,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Locked dependency installation failed" }
     & $python -m pip check
     if ($LASTEXITCODE -ne 0) { throw "Dependency consistency check failed" }
-    & $python -c "import alembic, asyncpg, fastapi, httpx, multipart, pgvector, pydantic, pydantic_settings, pypdf, sqlalchemy, structlog, uvicorn; print('runtime imports verified')"
+    & $python -c "import alembic, argon2, asyncpg, cryptography, fastapi, httpx, multipart, pgvector, pydantic, pydantic_settings, pyotp, pypdf, sqlalchemy, structlog, uvicorn; print('runtime imports verified')"
     if ($LASTEXITCODE -ne 0) { throw "Runtime import verification failed" }
     & $python -c 'from importlib.metadata import distributions; print("\n".join(sorted("{}=={}".format(d.metadata.get("Name"), d.version) for d in distributions())))'
     if ($LASTEXITCODE -ne 0) { throw "Installed package inventory failed" }
