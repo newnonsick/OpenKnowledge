@@ -82,14 +82,13 @@ export function DashboardShell({ member, ready, spaces }: DashboardShellProps) {
           <span className="brand-edition">HOME</span>
         </div>
 
-        <button className="family-switcher" type="button">
+        <div className="family-switcher console-family-card">
           <span className="family-avatar">K</span>
           <span className="family-copy">
             <strong>Family knowledge</strong>
             <small>{spaces.length} accessible {spaces.length === 1 ? "space" : "spaces"}</small>
           </span>
-          <ChevronDown aria-hidden="true" size={16} />
-        </button>
+        </div>
 
         <nav aria-label="Primary navigation" className="primary-navigation">
           <NavigationGroup items={navigation} label="Workspace" />
@@ -102,11 +101,11 @@ export function DashboardShell({ member, ready, spaces }: DashboardShellProps) {
             <div className="storage-track"><span className="access-track" /></div>
             <p>{spaces.length} spaces available to this account</p>
           </div>
-          <button className="profile-card" type="button">
+          <Link className="profile-card" href="/settings">
             <span className="profile-avatar">{initials || "M"}</span>
             <span><strong>{member.displayName}</strong><small>{member.role}</small></span>
             <ChevronDown aria-hidden="true" size={15} />
-          </button>
+          </Link>
         </div>
       </aside>
 
@@ -114,8 +113,8 @@ export function DashboardShell({ member, ready, spaces }: DashboardShellProps) {
         <header className="topbar">
           <div className="scope-indicator"><span className="scope-dot" />Searching all accessible spaces</div>
           <div className="topbar-actions">
-            <button className="command-button" type="button"><Command aria-hidden="true" size={15} /> Command <kbd>⌘ K</kbd></button>
-            <button aria-label="Open profile" className="icon-button" type="button"><CircleUserRound aria-hidden="true" size={20} /></button>
+            <Link className="command-button" href="/explore"><Command aria-hidden="true" size={15} /> Command <kbd>⌘ K</kbd></Link>
+            <Link aria-label="Open profile" className="icon-button" href="/settings"><CircleUserRound aria-hidden="true" size={20} /></Link>
           </div>
         </header>
 
@@ -132,10 +131,10 @@ export function DashboardShell({ member, ready, spaces }: DashboardShellProps) {
             </form>
 
             <div className="quick-actions" aria-label="Quick actions">
-              <button type="button"><span className="action-icon violet"><Upload aria-hidden="true" size={17} /></span>Upload source</button>
-              <button type="button"><span className="action-icon coral"><Plus aria-hidden="true" size={17} /></span>Capture knowledge</button>
-              <button type="button"><span className="action-icon cyan"><FolderKanban aria-hidden="true" size={17} /></span>Create space</button>
-              <button type="button"><span className="action-icon mint"><Gauge aria-hidden="true" size={17} /></span>Test retrieval</button>
+              <Link href="/sources"><span className="action-icon violet"><Upload aria-hidden="true" size={17} /></span>Upload source</Link>
+              <Link href="/knowledge"><span className="action-icon coral"><Plus aria-hidden="true" size={17} /></span>Capture knowledge</Link>
+              <Link href="/spaces"><span className="action-icon cyan"><FolderKanban aria-hidden="true" size={17} /></span>Create space</Link>
+              <Link href="/explore"><span className="action-icon mint"><Gauge aria-hidden="true" size={17} /></span>Test retrieval</Link>
             </div>
           </section>
 
