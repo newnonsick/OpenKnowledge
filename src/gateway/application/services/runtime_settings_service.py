@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from collections.abc import Awaitable, Callable
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -79,6 +80,12 @@ class RuntimeSettingsValues(BaseModel):
     tools: ToolRuntimeSettings = Field(default_factory=ToolRuntimeSettings)
     features: FeatureRuntimeSettings = Field(default_factory=FeatureRuntimeSettings)
 
+    @model_validator(mode="after")
+    def validate_dependencies(self):
+        if self.retrieval.semantic_policy == "required" and not self.features.semantic_retrieval_enabled:
+            raise ValueError("Required semantic retrieval cannot be disabled by a feature flag")
+        return self
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeSettingsRevision:
@@ -97,9 +104,11 @@ class RuntimeSettingsService:
         session: AsyncSession,
         *,
         step_up_window: timedelta = timedelta(minutes=10),
+        dependency_probe: Callable[[RuntimeSettingsValues], Awaitable[None]] | None = None,
     ) -> None:
         self._session = session
         self._step_up_window = step_up_window
+        self._dependency_probe = dependency_probe
         self._audit = AuditService(AuditRepository(session))
 
     async def active(self, *, for_update: bool = False) -> RuntimeSettingsRevision:
@@ -120,6 +129,19 @@ class RuntimeSettingsService:
                 None,
             )
         return self._to_domain(model)
+
+    async def history(self, *, limit: int = 50) -> list[RuntimeSettingsRevision]:
+        if limit < 1 or limit > 100:
+            raise ValueError("Runtime settings history limit must be between 1 and 100")
+        models = list(
+            await self._session.scalars(
+                select(RuntimeSettingRevisionModel)
+                .where(RuntimeSettingRevisionModel.state.in_(("active", "superseded")))
+                .order_by(RuntimeSettingRevisionModel.revision.desc())
+                .limit(limit)
+            )
+        )
+        return [self._to_domain(model) for model in models]
 
     async def create_draft(
         self,
@@ -205,12 +227,14 @@ class RuntimeSettingsService:
                 draft.base_revision,
                 active.revision,
             )
-        RuntimeSettingsValues.model_validate(draft.values)
+        values = RuntimeSettingsValues.model_validate(draft.values)
+        await self._preflight(values)
         if active.id is not None:
             current = await self._session.get(RuntimeSettingRevisionModel, active.id)
             if current is None:
                 raise ResourceConflictException()
             current.state = "superseded"
+            await self._session.flush()
         draft.state = "active"
         draft.activation_reason = clean_reason
         draft.activated_by_member_id = actor_id
@@ -226,6 +250,88 @@ class RuntimeSettingsService:
         )
         await self._session.flush()
         return self._to_domain(draft)
+
+    async def rollback(
+        self,
+        actor: Principal,
+        *,
+        family_id: UUID,
+        target_revision: int,
+        expected_active_revision: int,
+        reason: str,
+        request_id: str,
+        now: datetime | None = None,
+    ) -> RuntimeSettingsRevision:
+        current_time = now or datetime.now(timezone.utc)
+        actor_id = await self._require_recent_admin(actor, family_id, current_time)
+        clean_reason = self._reason(reason)
+        active = await self.active(for_update=True)
+        if expected_active_revision != active.revision:
+            raise ConcurrencyConflictException(
+                "runtime_settings",
+                expected_active_revision,
+                active.revision,
+            )
+        target = await self._session.scalar(
+            select(RuntimeSettingRevisionModel)
+            .where(
+                RuntimeSettingRevisionModel.revision == target_revision,
+                RuntimeSettingRevisionModel.state == "superseded",
+            )
+            .with_for_update()
+        )
+        if target is None:
+            raise ResourceConflictException("The requested runtime settings revision cannot be restored.")
+        values = RuntimeSettingsValues.model_validate(target.values)
+        await self._preflight(values)
+        if self._session.bind and self._session.bind.dialect.name == "postgresql":
+            await self._session.execute(text("SELECT pg_advisory_xact_lock(7046029254386353132)"))
+        maximum = int(
+            await self._session.scalar(select(func.max(RuntimeSettingRevisionModel.revision)))
+            or 0
+        )
+        current = await self._session.get(RuntimeSettingRevisionModel, active.id)
+        if current is None:
+            raise ResourceConflictException()
+        current.state = "superseded"
+        await self._session.flush()
+        restored = RuntimeSettingRevisionModel(
+            id=uuid4(),
+            revision=maximum + 1,
+            base_revision=active.revision,
+            state="active",
+            values=values.model_dump(mode="json"),
+            draft_reason=clean_reason,
+            activation_reason=clean_reason,
+            created_by_member_id=actor_id,
+            activated_by_member_id=actor_id,
+            created_at=current_time,
+            activated_at=current_time,
+        )
+        self._session.add(restored)
+        self._audit.record(
+            actor_member_id=actor_id,
+            actor_kind=actor.kind.value,
+            request_id=request_id,
+            action="runtime_settings.rolled_back",
+            resource_type="runtime_settings",
+            resource_id=str(restored.id),
+            details={
+                "old_revision": active.revision,
+                "new_revision": restored.revision,
+                "target_revision": target_revision,
+            },
+        )
+        await self._session.flush()
+        return self._to_domain(restored)
+
+    async def _preflight(self, values: RuntimeSettingsValues) -> None:
+        if self._dependency_probe is None:
+            return
+        try:
+            await self._dependency_probe(values)
+        except Exception as exc:
+            raise ResourceConflictException("Runtime settings dependency preflight failed.") from exc
 
     async def _require_recent_admin(
         self,

@@ -273,6 +273,32 @@ describe("management console", () => {
     expect(screen.getByText("Queued for durable ingestion")).toBeInTheDocument();
   });
 
+  it("archives a source only after explicit confirmation", async () => {
+    let archived = false;
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/sources?limit=100") {
+        return { items: archived ? [] : [{ id: "source-1", space_id: "global", display_name: "Procedures", status: "active", original_filename: "procedures.txt", size_bytes: 32, revision: 3, updated_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/sources/source-1?expected_revision=3" && options?.method === "DELETE") {
+        archived = true;
+        return undefined as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<SourcesConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Archive Procedures" }));
+    expect(screen.getByText(/leaves unified search immediately/i)).toBeInTheDocument();
+    expect(apiRequest).not.toHaveBeenCalledWith(expect.stringContaining("source-1?expected_revision"), expect.anything());
+    fireEvent.click(screen.getByRole("button", { name: "Confirm archive source" }));
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/sources/source-1?expected_revision=3", { idempotent: true, method: "DELETE" }));
+    await waitFor(() => expect(screen.queryByText("Procedures")).not.toBeInTheDocument());
+  });
+
   it("reveals a generated member password exactly in the creation result", async () => {
     currentMember.system_role = "super_admin";
     let created = false;
@@ -427,6 +453,9 @@ describe("management console", () => {
       if (path === "/api/v1/settings" && !options?.method) {
         return { id: null, revision: 0, base_revision: 0, state: "active", values: activeValues } as never;
       }
+      if (path === "/api/v1/settings/history?limit=20") {
+        return { items: [], next_cursor: null } as never;
+      }
       if (path === "/api/v1/settings/drafts" && options?.method === "POST") {
         return { id: "draft-1", revision: 1, base_revision: 0, state: "draft", values: { retrieval: { ...activeValues.retrieval, limit: 15 } } } as never;
       }
@@ -461,6 +490,46 @@ describe("management console", () => {
     expect(await screen.findByText("Revision 1 is active")).toBeInTheDocument();
   });
 
+  it("restores a historical safe setting as a new revision after confirmation", async () => {
+    currentMember.system_role = "super_admin";
+    const revisionOne = { id: "revision-1", revision: 1, base_revision: 0, state: "superseded", values: { retrieval: { limit: 15 } } };
+    const revisionTwo = { id: "revision-2", revision: 2, base_revision: 1, state: "active", values: { retrieval: { limit: 25 } } };
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/api-keys") {
+        return { items: [], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/sessions") {
+        return { items: [], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/settings" && !options?.method) {
+        return revisionTwo as never;
+      }
+      if (path === "/api/v1/settings/history?limit=20") {
+        return { items: [revisionTwo, revisionOne], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/settings/rollback/1" && options?.method === "POST") {
+        return { ...revisionOne, id: "revision-3", revision: 3, base_revision: 2, state: "active" } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<SettingsConsole />);
+
+    fireEvent.change(await screen.findByLabelText("Change reason"), { target: { value: "Restore the proven focused profile" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Restore revision 1" }));
+    expect(screen.getByText(/creates a new active revision/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm restore revision 1" }));
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/settings/rollback/1", {
+      body: { expected_active_revision: 2, reason: "Restore the proven focused profile" },
+      idempotent: true,
+      method: "POST",
+    }));
+    expect(await screen.findByText("Revision 3 is active")).toBeInTheDocument();
+  });
+
   it("shows durable ingestion state without inventing progress", async () => {
     vi.mocked(apiRequest).mockImplementation(async (path) => {
       if (path.startsWith("/api/v1/spaces")) {
@@ -476,6 +545,38 @@ describe("management console", () => {
     expect(await screen.findByText("job-1")).toBeInTheDocument();
     expect(screen.getByText("0%")) .toBeInTheDocument();
     expect(screen.getByText("queued")).toBeInTheDocument();
+  });
+
+  it("requests ingestion cancellation and retry only after confirmation", async () => {
+    let state = "queued";
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/ingestion-jobs?limit=100") {
+        return { items: [{ id: "job-1", space_id: "global", document_id: "doc-1", state, progress: 0, attempt_count: 1, max_attempts: 5, created_at: "2026-08-20T12:00:00Z", updated_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/ingestion-jobs/job-1/cancel" && options?.method === "POST") {
+        state = "cancelled";
+        return { id: "job-1", state: "cancellation_requested" } as never;
+      }
+      if (path === "/api/v1/ingestion-jobs/job-1/retry" && options?.method === "POST") {
+        state = "queued";
+        return { id: "job-1", state: "retry_requested" } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<IngestionConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel job job-1" }));
+    expect(screen.getByText(/worker will stop at a safe boundary/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm cancel job" }));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/ingestion-jobs/job-1/cancel", { idempotent: true, method: "POST" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry job job-1" }));
+    expect(screen.getByText(/starts a new durable attempt/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm retry job" }));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/ingestion-jobs/job-1/retry", { idempotent: true, method: "POST" }));
   });
 
   it("shows immutable audit activity to super admins", async () => {

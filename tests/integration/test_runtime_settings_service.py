@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from src.gateway.application.services.runtime_settings_service import RuntimeSettingsService, RuntimeSettingsValues
 from src.gateway.application.services.session_service import SessionService
-from src.gateway.domain.exceptions import AuthorizationException, ConcurrencyConflictException
+from src.gateway.domain.exceptions import AuthorizationException, ConcurrencyConflictException, ResourceConflictException
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SystemRole
 from src.gateway.infrastructure.persistence.identity_models import AuditEventModel, MemberModel
 from tests.integration.postgres_test_database import isolated_postgres_database
@@ -139,6 +139,92 @@ async def test_safe_runtime_setting_draft_activation_and_optimistic_concurrency(
             assert audit.details["old_revision"] == 0
             assert audit.details["new_revision"] == 1
 
+        second_values = RuntimeSettingsValues.model_validate(
+            {"retrieval": {"limit": 24}}
+        )
+        async with factory.begin() as session:
+            service = RuntimeSettingsService(session)
+            second_draft = await service.create_draft(
+                principal(admin_id, SystemRole.SUPER_ADMIN),
+                family_id=admin_session.family_id,
+                base_revision=1,
+                values=second_values,
+                reason="Measure a broader result set",
+                request_id="settings-second-draft",
+                now=now,
+            )
+            second_active = await service.activate(
+                principal(admin_id, SystemRole.SUPER_ADMIN),
+                family_id=admin_session.family_id,
+                draft_id=second_draft.id,
+                expected_active_revision=1,
+                reason="Activate measured broader results",
+                request_id="settings-second-activate",
+                now=now,
+            )
+            assert second_active.revision == 2
+            restored = await service.rollback(
+                principal(admin_id, SystemRole.SUPER_ADMIN),
+                family_id=admin_session.family_id,
+                target_revision=1,
+                expected_active_revision=2,
+                reason="Restore the proven retrieval profile",
+                request_id="settings-rollback",
+                now=now,
+            )
+            assert restored.revision == 3
+            assert restored.base_revision == 2
+            assert restored.values.retrieval.limit == 12
+
+        async with factory.begin() as session:
+            service = RuntimeSettingsService(session)
+            history = await service.history(limit=10)
+            assert [(entry.revision, entry.state) for entry in history] == [
+                (3, "active"),
+                (2, "superseded"),
+                (1, "superseded"),
+            ]
+            rollback_audit = await session.scalar(
+                select(AuditEventModel).where(AuditEventModel.request_id == "settings-rollback")
+            )
+            assert rollback_audit is not None
+            assert rollback_audit.details == {
+                "new_revision": 3,
+                "old_revision": 2,
+                "target_revision": 1,
+            }
+
+        required_semantic = RuntimeSettingsValues.model_validate(
+            {"retrieval": {"semantic_policy": "required"}}
+        )
+        async with factory.begin() as session:
+            draft = await RuntimeSettingsService(session).create_draft(
+                principal(admin_id, SystemRole.SUPER_ADMIN),
+                family_id=admin_session.family_id,
+                base_revision=3,
+                values=required_semantic,
+                reason="Require semantic retrieval readiness",
+                request_id="settings-semantic-draft",
+                now=now,
+            )
+
+        async def unavailable_dependency(_values):
+            raise RuntimeError("provider unavailable")
+
+        async with factory.begin() as session:
+            service = RuntimeSettingsService(session, dependency_probe=unavailable_dependency)
+            with pytest.raises(ResourceConflictException, match="dependency preflight"):
+                await service.activate(
+                    principal(admin_id, SystemRole.SUPER_ADMIN),
+                    family_id=admin_session.family_id,
+                    draft_id=draft.id,
+                    expected_active_revision=3,
+                    reason="Activation requires healthy semantics",
+                    request_id="settings-semantic-activate",
+                    now=now,
+                )
+            assert (await service.active()).revision == 3
+
 
 def test_runtime_settings_reject_unknown_fields_and_unsafe_ranges() -> None:
     with pytest.raises(Exception):
@@ -147,3 +233,10 @@ def test_runtime_settings_reject_unknown_fields_and_unsafe_ranges() -> None:
         RuntimeSettingsValues.model_validate({"retrieval": {"active_space_boost": 2.0}})
     with pytest.raises(Exception):
         RuntimeSettingsValues.model_validate({"retrieval": {"lexical_weight": 0, "vector_weight": 0}})
+    with pytest.raises(Exception):
+        RuntimeSettingsValues.model_validate(
+            {
+                "retrieval": {"semantic_policy": "required"},
+                "features": {"semantic_retrieval_enabled": False},
+            }
+        )

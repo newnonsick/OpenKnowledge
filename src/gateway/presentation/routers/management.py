@@ -9,16 +9,19 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, Response, UploadFile, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError as PydanticValidationError
-from sqlalchemy import and_, exists, or_, select
+from sqlalchemy import and_, exists, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.gateway.application.security.passwords import PasswordService
 from src.gateway.application.security.tokens import APIKeyCodec, SecretValue
 from src.gateway.application.services.api_key_service import APIKeyService
 from src.gateway.application.services.ai_management_service import AIManagementService
+from src.gateway.application.services.audit_service import AuditService
 from src.gateway.application.services.authorized_retrieval_service import AuthorizedRetrievalService
+from src.gateway.application.services.authorization_service import AuthorizationService
 from src.gateway.application.services.document_upload_service import DocumentUploadService
 from src.gateway.application.services.idempotency_service import IdempotencyService, ReservationStatus
+from src.gateway.application.services.ingestion_job_service import IngestionJobService
 from src.gateway.application.services.knowledge_management_service import KnowledgeManagementService
 from src.gateway.application.services.member_administration_service import MemberAdministrationService
 from src.gateway.application.services.runtime_settings_service import RuntimeSettingsService, RuntimeSettingsRevision, RuntimeSettingsValues
@@ -26,10 +29,13 @@ from src.gateway.application.services.session_service import SessionService
 from src.gateway.application.services.space_service import SpaceService
 from src.gateway.config import get_settings
 from src.gateway.domain.exceptions import AuthenticationException, AuthorizationException, ResourceConflictException, ValidationException
+from src.gateway.domain.authorization import Action
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SpaceRole, SystemRole
 from src.gateway.domain.entities import KnowledgeItem as DomainKnowledgeItem
 from src.gateway.infrastructure.database import get_db_session, get_session_factory
-from src.gateway.infrastructure.persistence.ingestion_models import DocumentModel, DocumentRevisionModel, IngestionJobModel
+from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
+from src.gateway.infrastructure.persistence.ingestion_models import DocumentModel, DocumentRevisionChunkModel, DocumentRevisionModel, IngestionJobModel, RetrievalUnitModel
+from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
 from src.gateway.infrastructure.persistence.models import KnowledgeItem as KnowledgeItemModel, KnowledgeRevision as KnowledgeRevisionModel
 from src.gateway.infrastructure.persistence.retrieval_unit_repository import PostgresRetrievalUnitRepository
 from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeModel, AuditEventModel, MemberModel, PendingAIActionModel, PersonalAPIKeyModel, SessionCredentialModel, SessionFamilyModel, SpaceMembershipModel
@@ -121,6 +127,13 @@ class RuntimeSettingsActivationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     expected_active_revision: int = Field(ge=0)
+    reason: str = Field(min_length=5, max_length=500)
+
+
+class RuntimeSettingsRollbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_active_revision: int = Field(ge=1)
     reason: str = Field(min_length=5, max_length=500)
 
 
@@ -232,6 +245,11 @@ def _settings_payload(revision: RuntimeSettingsRevision) -> dict:
         "created_at": revision.created_at.isoformat() if revision.created_at else None,
         "activated_at": revision.activated_at.isoformat() if revision.activated_at else None,
     }
+
+
+async def _runtime_settings_dependency_probe(values: RuntimeSettingsValues) -> None:
+    if values.retrieval.semantic_policy == "required":
+        await HTTPEmbeddingClient().embed_query("runtime settings readiness")
 
 
 def _knowledge_payload(item: DomainKnowledgeItem, *, include_content: bool = True) -> dict:
@@ -1048,6 +1066,65 @@ async def list_sources(
     }
 
 
+@router.delete("/sources/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def archive_source(
+    document_id: UUID,
+    request: Request,
+    expected_revision: int = Query(ge=1),
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> Response:
+    reservation = await _reserve(
+        session,
+        principal,
+        "source.archive",
+        idempotency_key,
+        {"document_id": str(document_id), "expected_revision": expected_revision},
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        return Response(status_code=204)
+    document = await session.scalar(
+        select(DocumentModel).where(DocumentModel.id == document_id).with_for_update()
+    )
+    if document is None or document.archived_at is not None:
+        raise AuthorizationException()
+    await AuthorizationService(session).authorize_space(principal, document.space_id, Action.CONTENT_WRITE)
+    if document.revision != expected_revision:
+        raise ResourceConflictException("The source changed before it could be archived.")
+    current_time = datetime.now(timezone.utc)
+    document.archived_at = current_time
+    document.revision += 1
+    document.updated_at = current_time
+    chunk_ids = select(DocumentRevisionChunkModel.id).where(
+        DocumentRevisionChunkModel.document_id == document_id
+    )
+    await session.execute(
+        update(RetrievalUnitModel)
+        .where(
+            RetrievalUnitModel.document_revision_chunk_id.in_(chunk_ids),
+            RetrievalUnitModel.active.is_(True),
+        )
+        .values(active=False, deactivated_at=current_time)
+        .execution_options(synchronize_session=False)
+    )
+    AuditService(AuditRepository(session)).record(
+        actor_member_id=_actor_id(principal),
+        actor_kind=principal.kind.value,
+        request_id=get_request_id(request),
+        action="source.archived",
+        resource_type="document",
+        resource_id=str(document_id),
+        details={"space_id": document.space_id, "revision": expected_revision},
+    )
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=204,
+        resource_ids=[str(document_id)],
+    )
+    return Response(status_code=204)
+
+
 @router.get("/ingestion-jobs")
 async def list_ingestion_jobs(
     space_id: str | None = Query(default=None, max_length=64),
@@ -1080,6 +1157,76 @@ async def list_ingestion_jobs(
         ],
         "next_cursor": None,
     }
+
+
+async def _mutate_ingestion_job(
+    job_id: UUID,
+    operation: str,
+    request: Request,
+    idempotency_key: str,
+    principal: Principal,
+    session: AsyncSession,
+) -> dict:
+    job = await session.get(IngestionJobModel, job_id)
+    if job is None:
+        raise AuthorizationException()
+    await AuthorizationService(session).authorize_space(principal, job.space_id, Action.CONTENT_WRITE)
+    reservation = await _reserve(
+        session,
+        principal,
+        f"ingestion_job.{operation}",
+        idempotency_key,
+        {"job_id": str(job_id)},
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        if operation == "cancel" and job.cancellation_requested and job.state not in {"failed", "cancelled", "succeeded"}:
+            state = "cancellation_requested"
+        elif operation == "retry" and job.retry_requested:
+            state = "retry_requested"
+        else:
+            state = job.state
+    elif operation == "cancel":
+        state = await IngestionJobService(session).request_cancellation(job_id)
+    else:
+        state = await IngestionJobService(session).request_retry(job_id)
+    if reservation.status is not ReservationStatus.REPLAY:
+        AuditService(AuditRepository(session)).record(
+            actor_member_id=_actor_id(principal),
+            actor_kind=principal.kind.value,
+            request_id=get_request_id(request),
+            action=f"ingestion_job.{operation}_requested",
+            resource_type="ingestion_job",
+            resource_id=str(job_id),
+            details={"space_id": job.space_id, "state": state},
+        )
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=200,
+            resource_ids=[str(job_id)],
+        )
+    return {"id": str(job_id), "state": state}
+
+
+@router.post("/ingestion-jobs/{job_id}/cancel")
+async def cancel_ingestion_job(
+    job_id: UUID,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    return await _mutate_ingestion_job(job_id, "cancel", request, idempotency_key, principal, session)
+
+
+@router.post("/ingestion-jobs/{job_id}/retry")
+async def retry_ingestion_job(
+    job_id: UUID,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    return await _mutate_ingestion_job(job_id, "retry", request, idempotency_key, principal, session)
 
 
 @router.get("/api-keys")
@@ -1409,13 +1556,36 @@ async def list_sessions(
 @router.delete("/sessions/{family_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_session(
     family_id: UUID,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
     principal: Principal = Depends(require_scope("sessions:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> Response:
     family = await session.get(SessionFamilyModel, family_id)
     if family is None or family.member_id != _actor_id(principal):
         raise AuthorizationException()
-    await SessionService(session).revoke_family(family_id, reason="member_revoked")
+    reservation = await _reserve(
+        session,
+        principal,
+        "session.revoke",
+        idempotency_key,
+        {"family_id": str(family_id)},
+    )
+    if reservation.status is not ReservationStatus.REPLAY:
+        await SessionService(session).revoke_family(family_id, reason="member_revoked")
+        AuditService(AuditRepository(session)).record(
+            actor_member_id=_actor_id(principal),
+            actor_kind=principal.kind.value,
+            request_id=get_request_id(request),
+            action="session.revoked",
+            resource_type="session_family",
+            resource_id=str(family_id),
+        )
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=204,
+            resource_ids=[str(family_id)],
+        )
     return Response(status_code=204)
 
 
@@ -1459,6 +1629,16 @@ async def active_runtime_settings(
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     return _settings_payload(await RuntimeSettingsService(session).active())
+
+
+@router.get("/settings/history")
+async def runtime_settings_history(
+    limit: int = Query(default=50, ge=1, le=100),
+    principal: Principal = Depends(require_scope("settings:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    history = await RuntimeSettingsService(session).history(limit=limit)
+    return {"items": [_settings_payload(revision) for revision in history], "next_cursor": None}
 
 
 @router.post("/settings/drafts", status_code=status.HTTP_201_CREATED)
@@ -1526,7 +1706,10 @@ async def activate_runtime_settings_draft(
             raise ResourceConflictException()
         return _settings_payload(RuntimeSettingsService._to_domain(model))
     try:
-        activated = await RuntimeSettingsService(session).activate(
+        activated = await RuntimeSettingsService(
+            session,
+            dependency_probe=_runtime_settings_dependency_probe,
+        ).activate(
             principal,
             family_id=await _family_id(session, principal),
             draft_id=draft_id,
@@ -1542,3 +1725,50 @@ async def activate_runtime_settings_draft(
         resource_ids=[str(activated.id)],
     )
     return _settings_payload(activated)
+
+
+@router.post("/settings/rollback/{target_revision}")
+async def rollback_runtime_settings(
+    target_revision: int,
+    payload: RuntimeSettingsRollbackRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("settings:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    if target_revision < 1:
+        raise ValidationException("A persisted runtime settings revision is required.")
+    reservation = await _reserve(
+        session,
+        principal,
+        "runtime_settings.rollback",
+        idempotency_key,
+        {"target_revision": target_revision, **payload.model_dump(mode="json")},
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        if not reservation.resource_ids:
+            raise ResourceConflictException()
+        model = await session.get(RuntimeSettingRevisionModel, UUID(reservation.resource_ids[0]))
+        if model is None:
+            raise ResourceConflictException()
+        return _settings_payload(RuntimeSettingsService._to_domain(model))
+    try:
+        restored = await RuntimeSettingsService(
+            session,
+            dependency_probe=_runtime_settings_dependency_probe,
+        ).rollback(
+            principal,
+            family_id=await _family_id(session, principal),
+            target_revision=target_revision,
+            expected_active_revision=payload.expected_active_revision,
+            reason=payload.reason,
+            request_id=get_request_id(request),
+        )
+    except ValueError as exc:
+        raise ValidationException(str(exc)) from exc
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=200,
+        resource_ids=[str(restored.id)],
+    )
+    return _settings_payload(restored)

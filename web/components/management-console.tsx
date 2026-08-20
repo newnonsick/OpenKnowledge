@@ -85,6 +85,7 @@ type SourceSummary = {
   display_name: string;
   id: string;
   original_filename: string | null;
+  revision: number;
   size_bytes: number | null;
   space_id: string;
   status: string;
@@ -168,6 +169,11 @@ type RuntimeSettings = {
     retrieval: { limit: number; [key: string]: unknown };
     [key: string]: unknown;
   };
+};
+
+type RuntimeSettingsHistoryResponse = {
+  items: RuntimeSettings[];
+  next_cursor: string | null;
 };
 
 type IngestionJob = {
@@ -817,6 +823,7 @@ export function SourcesConsole() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [queued, setQueued] = useState(false);
+  const [pendingArchive, setPendingArchive] = useState<SourceSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadSources = useCallback(async () => {
@@ -875,6 +882,23 @@ export function SourcesConsole() {
     }
   };
 
+  const archiveSource = async () => {
+    if (!pendingArchive || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/v1/sources/${pendingArchive.id}?expected_revision=${pendingArchive.revision}`, { idempotent: true, method: "DELETE" });
+      setPendingArchive(null);
+      await loadSources();
+    } catch (archiveError) {
+      setError(message(archiveError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <ConsoleShell
       description="Upload original files into versioned object storage and track every revision through the durable ingestion pipeline."
@@ -897,9 +921,11 @@ export function SourcesConsole() {
                 <span className="row-leading cyan"><FileText aria-hidden="true" size={18} /></span>
                 <div className="row-copy"><h3>{source.display_name}</h3><p>{source.original_filename || "Unnamed file"} · {source.space_id}</p></div>
                 <div className="row-stats"><strong>{source.size_bytes === null ? "—" : `${Math.max(1, Math.round(source.size_bytes / 1024))} KB`}</strong><span className={`status-pill status-${source.status}`}>{source.status}</span></div>
+                <button aria-label={`Archive ${source.display_name}`} className="archive-button compact" disabled={saving} onClick={() => setPendingArchive(source)} type="button"><Archive size={14} /> Archive</button>
               </article>
             ))}
           </div>
+          {pendingArchive ? <div aria-label={`Archive ${pendingArchive.display_name}`} className="confirmation-strip" role="alertdialog"><div><strong>Archive {pendingArchive.display_name}?</strong><span>The source leaves unified search immediately while its original bytes, revisions, and audit history remain preserved.</span></div><button className="secondary-button" onClick={() => setPendingArchive(null)} type="button">Keep source</button><button className="danger-button" disabled={saving} onClick={() => void archiveSource()} type="button">Confirm archive source</button></div> : null}
         </section>
         <aside className="console-panel action-panel upload-panel">
           <span className="action-panel-icon cyan"><FileUp aria-hidden="true" size={20} /></span>
@@ -1126,7 +1152,9 @@ export function SettingsConsole() {
   const [keys, setKeys] = useState<APIKeySummary[]>([]);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
+  const [settingsHistory, setSettingsHistory] = useState<RuntimeSettings[]>([]);
   const [runtimeDraft, setRuntimeDraft] = useState<RuntimeSettings | null>(null);
+  const [pendingSettingsRestore, setPendingSettingsRestore] = useState<RuntimeSettings | null>(null);
   const [runtimeLimit, setRuntimeLimit] = useState(20);
   const [runtimeReason, setRuntimeReason] = useState("");
   const [keyName, setKeyName] = useState("");
@@ -1147,6 +1175,14 @@ export function SettingsConsole() {
     setSessions(response.items);
   }, []);
 
+  const loadSettingsHistory = useCallback(async () => {
+    if (member.system_role !== "super_admin") {
+      return;
+    }
+    const response = await apiRequest<RuntimeSettingsHistoryResponse>("/api/v1/settings/history?limit=20");
+    setSettingsHistory(response.items);
+  }, [member.system_role]);
+
   useEffect(() => {
     let active = true;
     Promise.all([
@@ -1154,7 +1190,8 @@ export function SettingsConsole() {
       apiRequest<APIKeyListResponse>("/api/v1/api-keys"),
       apiRequest<SessionListResponse>("/api/v1/sessions"),
       apiRequest<RuntimeSettings>("/api/v1/settings"),
-    ]).then(([spaceResponse, keyResponse, sessionResponse, runtimeResponse]) => {
+      member.system_role === "super_admin" ? apiRequest<RuntimeSettingsHistoryResponse>("/api/v1/settings/history?limit=20") : Promise.resolve({ items: [], next_cursor: null }),
+    ]).then(([spaceResponse, keyResponse, sessionResponse, runtimeResponse, historyResponse]) => {
       if (!active) {
         return;
       }
@@ -1162,6 +1199,7 @@ export function SettingsConsole() {
       setKeys(keyResponse.items);
       setSessions(sessionResponse.items);
       setSettings(runtimeResponse);
+      setSettingsHistory(historyResponse.items);
       setRuntimeLimit(runtimeResponse.values.retrieval.limit);
     }).catch((loadError) => {
       if (active) {
@@ -1175,7 +1213,7 @@ export function SettingsConsole() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [member.system_role]);
 
   const createKey = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1287,8 +1325,35 @@ export function SettingsConsole() {
       setSettings(activated);
       setRuntimeLimit(activated.values.retrieval.limit);
       setRuntimeDraft(null);
+      await loadSettingsHistory();
     } catch (activationError) {
       setError(message(activationError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const restoreRuntimeSettings = async () => {
+    if (!settings || !pendingSettingsRestore || runtimeReason.trim().length < 5 || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const restored = await apiRequest<RuntimeSettings>(`/api/v1/settings/rollback/${pendingSettingsRestore.revision}`, {
+        body: {
+          expected_active_revision: settings.revision,
+          reason: runtimeReason.trim(),
+        },
+        idempotent: true,
+        method: "POST",
+      });
+      setSettings(restored);
+      setRuntimeLimit(restored.values.retrieval.limit);
+      setPendingSettingsRestore(null);
+      await loadSettingsHistory();
+    } catch (restoreError) {
+      setError(message(restoreError));
     } finally {
       setSaving(false);
     }
@@ -1340,6 +1405,8 @@ export function SettingsConsole() {
             </form>
           ) : null}
           {runtimeDraft ? <div className="runtime-draft-review"><div><strong>Draft revision {runtimeDraft.revision} ready</strong><span>Validated against the typed safe-setting schema. Activation remains a separate audited step.</span></div><button className="primary-button" disabled={saving} onClick={() => void activateRuntimeDraft()} type="button">Activate settings</button></div> : null}
+          {settingsHistory.length > 0 ? <div className="data-list compact-list">{settingsHistory.map((revision) => <article className="data-row" key={revision.id || revision.revision}><span className="row-leading violet"><Settings2 size={16} /></span><div className="row-copy"><h3>Revision {revision.revision}</h3><p>Retrieval limit {revision.values.retrieval.limit} · {revision.state}</p></div>{revision.state === "superseded" ? <button aria-label={`Restore revision ${revision.revision}`} className="row-action-button" disabled={saving} onClick={() => setPendingSettingsRestore(revision)} type="button">Restore</button> : <span className="status-pill status-active">active</span>}</article>)}</div> : null}
+          {pendingSettingsRestore ? <div aria-label={`Restore revision ${pendingSettingsRestore.revision}`} className="confirmation-strip" role="alertdialog"><div><strong>Restore revision {pendingSettingsRestore.revision}?</strong><span>This creates a new active revision from the historical values. The current revision remains preserved for audit and future recovery.</span></div><button className="secondary-button" onClick={() => setPendingSettingsRestore(null)} type="button">Keep current</button><button className="danger-button" disabled={saving || runtimeReason.trim().length < 5} onClick={() => void restoreRuntimeSettings()} type="button">Confirm restore revision {pendingSettingsRestore.revision}</button></div> : null}
           <pre>{JSON.stringify(runtimeDraft?.values || settings?.values || {}, null, 2)}</pre>
         </section>
       </div>
@@ -1353,6 +1420,8 @@ export function IngestionConsole() {
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [jobs, setJobs] = useState<IngestionJob[]>([]);
   const [loading, setLoading] = useState(true);
+  const [pendingJobAction, setPendingJobAction] = useState<{ job: IngestionJob; operation: "cancel" | "retry" } | null>(null);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadJobs = useCallback(async () => {
@@ -1386,6 +1455,23 @@ export function IngestionConsole() {
     };
   }, [loadJobs]);
 
+  const mutateJob = async () => {
+    if (!pendingJobAction || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/v1/ingestion-jobs/${pendingJobAction.job.id}/${pendingJobAction.operation}`, { idempotent: true, method: "POST" });
+      setPendingJobAction(null);
+      await loadJobs();
+    } catch (mutationError) {
+      setError(message(mutationError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const activeJobs = jobs.filter((job) => !["completed", "failed", "cancelled"].includes(job.state)).length;
   return (
     <ConsoleShell
@@ -1407,9 +1493,12 @@ export function IngestionConsole() {
               <div className="job-context"><strong>{job.space_id}</strong><span>document {job.document_id}</span><span>attempt {job.attempt_count}/{job.max_attempts}</span></div>
               <div className="progress-row"><progress max={100} value={Math.max(0, Math.min(100, job.progress))} /><strong>{Math.round(job.progress)}%</strong></div>
               {job.last_error_code ? <p className="job-error">{job.last_error_code}</p> : null}
+              {!['succeeded', 'failed', 'cancelled'].includes(job.state) ? <button aria-label={`Cancel job ${job.id}`} className="archive-button compact" disabled={saving} onClick={() => setPendingJobAction({ job, operation: "cancel" })} type="button">Cancel job</button> : null}
+              {['failed', 'cancelled'].includes(job.state) ? <button aria-label={`Retry job ${job.id}`} className="secondary-button" disabled={saving} onClick={() => setPendingJobAction({ job, operation: "retry" })} type="button">Retry job</button> : null}
             </article>
           ))}
         </div>
+        {pendingJobAction ? <div aria-label={`${pendingJobAction.operation === "cancel" ? "Cancel" : "Retry"} job ${pendingJobAction.job.id}`} className="confirmation-strip" role="alertdialog"><div><strong>{pendingJobAction.operation === "cancel" ? "Cancel this ingestion job?" : "Retry this ingestion job?"}</strong><span>{pendingJobAction.operation === "cancel" ? "The worker will stop at a safe boundary; completed durable stages and audit history remain preserved." : "This starts a new durable attempt from the preserved original source and records the request in the audit trail."}</span></div><button className="secondary-button" onClick={() => setPendingJobAction(null)} type="button">Not now</button><button className={pendingJobAction.operation === "cancel" ? "danger-button" : "primary-button"} disabled={saving} onClick={() => void mutateJob()} type="button">Confirm {pendingJobAction.operation} job</button></div> : null}
       </section>
       {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
     </ConsoleShell>

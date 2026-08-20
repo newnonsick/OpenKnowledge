@@ -11,7 +11,7 @@ from src.gateway.application.services.session_service import SessionService
 from src.gateway.config import Settings
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SpaceRole, SystemRole
 from src.gateway.infrastructure.database import set_session_factory
-from src.gateway.infrastructure.persistence.identity_models import MemberModel, PasswordCredentialModel, SpaceMembershipModel
+from src.gateway.infrastructure.persistence.identity_models import AuditEventModel, MemberModel, PasswordCredentialModel, SpaceMembershipModel
 from src.gateway.infrastructure.persistence.models import Workspace
 from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGenerationModel
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
@@ -106,6 +106,10 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 principal(member_id),
                 now=now,
                 step_up_at=now,
+            )
+            other_member_session = await SessionService(session).issue(
+                principal(member_id),
+                now=now,
             )
 
         app = FastAPI()
@@ -246,6 +250,19 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 jobs = await member_client.get("/api/v1/ingestion-jobs?space_id=global")
                 assert jobs.status_code == 200
                 assert jobs.json()["items"][0]["id"] == upload.json()["job_id"]
+                cancelled_job = await member_client.post(
+                    f"/api/v1/ingestion-jobs/{upload.json()['job_id']}/cancel",
+                    headers={**member_headers, "Idempotency-Key": "cancel-family-source"},
+                )
+                assert cancelled_job.status_code == 200
+                assert cancelled_job.json()["state"] == "cancellation_requested"
+                archived_source = await member_client.delete(
+                    f"/api/v1/sources/{upload.json()['document_id']}?expected_revision=1",
+                    headers={**member_headers, "Idempotency-Key": "archive-family-source"},
+                )
+                assert archived_source.status_code == 204
+                sources_after_archive = await member_client.get("/api/v1/sources?space_id=global")
+                assert sources_after_archive.json()["items"] == []
 
                 deleted_knowledge = await member_client.delete(
                     f"/api/v1/knowledge/{knowledge_id}?expected_version=2",
@@ -269,6 +286,17 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 assert keys.status_code == 200
                 assert keys.json()["items"][0]["name"] == "Laptop"
                 assert "secret" not in keys.json()["items"][0]
+
+                revoked_session = await member_client.delete(
+                    f"/api/v1/sessions/{other_member_session.family_id}",
+                    headers={**member_headers, "Idempotency-Key": "revoke-other-session"},
+                )
+                assert revoked_session.status_code == 204
+                replayed_session_revoke = await member_client.delete(
+                    f"/api/v1/sessions/{other_member_session.family_id}",
+                    headers={**member_headers, "Idempotency-Key": "revoke-other-session"},
+                )
+                assert replayed_session_revoke.status_code == 204
 
                 archived = await member_client.delete(
                     f"/api/v1/spaces/{private_space_id}",
@@ -360,6 +388,51 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 assert settings_activation.status_code == 200
                 assert settings_activation.json()["revision"] == 1
                 assert settings_activation.json()["values"]["retrieval"]["limit"] == 15
+                second_settings_draft = await admin_client.post(
+                    "/api/v1/settings/drafts",
+                    headers={
+                        "Origin": "https://gateway.test",
+                        "X-CSRF-Token": admin_session.csrf_token.reveal(),
+                        "Idempotency-Key": "settings-draft-two",
+                    },
+                    json={
+                        "base_revision": 1,
+                        "reason": "Measure broader retrieval defaults",
+                        "values": {"retrieval": {"limit": 25}},
+                    },
+                )
+                assert second_settings_draft.status_code == 201
+                second_settings_activation = await admin_client.post(
+                    f"/api/v1/settings/drafts/{second_settings_draft.json()['id']}/activate",
+                    headers={
+                        "Origin": "https://gateway.test",
+                        "X-CSRF-Token": admin_session.csrf_token.reveal(),
+                        "Idempotency-Key": "settings-activate-two",
+                    },
+                    json={
+                        "expected_active_revision": 1,
+                        "reason": "Activate broader retrieval defaults",
+                    },
+                )
+                assert second_settings_activation.status_code == 200
+                settings_history = await admin_client.get("/api/v1/settings/history?limit=10")
+                assert settings_history.status_code == 200
+                assert [item["revision"] for item in settings_history.json()["items"]] == [2, 1]
+                settings_rollback = await admin_client.post(
+                    "/api/v1/settings/rollback/1",
+                    headers={
+                        "Origin": "https://gateway.test",
+                        "X-CSRF-Token": admin_session.csrf_token.reveal(),
+                        "Idempotency-Key": "settings-rollback-one",
+                    },
+                    json={
+                        "expected_active_revision": 2,
+                        "reason": "Restore validated retrieval defaults",
+                    },
+                )
+                assert settings_rollback.status_code == 200
+                assert settings_rollback.json()["revision"] == 3
+                assert settings_rollback.json()["values"]["retrieval"]["limit"] == 15
 
         finally:
             set_session_factory(None)
@@ -378,3 +451,9 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
             assert temporary_password not in credential.password_hash
             assert reset_password not in credential.password_hash
             assert OpaqueTokenCodec().digest(raw_key) != credential.password_hash
+            session_revoke_audits = list(
+                await session.scalars(
+                    select(AuditEventModel).where(AuditEventModel.action == "session.revoked")
+                )
+            )
+            assert len(session_revoke_audits) == 1
