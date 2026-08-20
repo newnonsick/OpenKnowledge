@@ -202,11 +202,13 @@ def canonical_response_to_anthropic(
     for block in resp.content:
         if isinstance(block, CanonicalThinkingBlock):
             if block.thinking:
-                anthropic_content.append({
+                thinking_payload = {
                     "type": "thinking",
                     "thinking": block.thinking,
-                    "signature": block.signature or "gateway-thinking-signature",
-                })
+                }
+                if block.signature is not None:
+                    thinking_payload["signature"] = block.signature
+                anthropic_content.append(thinking_payload)
         elif isinstance(block, CanonicalTextBlock):
             if block.text:
                 anthropic_content.append(AnthropicTextBlock(type="text", text=block.text))

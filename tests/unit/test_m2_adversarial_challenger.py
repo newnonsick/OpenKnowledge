@@ -305,8 +305,8 @@ def test_adv_model_registry_casing_and_whitespace():
     # Default alias
     assert registry.resolve("default") == "test-default-backend"
 
-    # Unregistered backend model IDs fall back to the default (single-model gateway)
-    assert registry.resolve("some/unregistered-model") == "test-default-backend"
+    with pytest.raises(ModelNotFoundException):
+        registry.resolve("some/unregistered-model")
 
     # Empty or None resolves to default
     assert registry.resolve("") == "test-default-backend"

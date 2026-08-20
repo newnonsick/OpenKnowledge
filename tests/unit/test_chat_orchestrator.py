@@ -32,6 +32,7 @@ from src.gateway.domain.tools import (
     ToolDefinition,
     ToolResult,
 )
+from src.gateway.domain.exceptions import ToolExecutionException
 
 
 class MockStreamingLLMClient(ILLMClient):
@@ -263,7 +264,6 @@ async def test_orchestrator_streaming_internal_tool_interception():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_orchestrator_streaming_max_iterations_guardrail():
-    """Verify streaming guardrail yields finish_reason='max_tokens' and warning message when loop limit is hit."""
     mock_ks = MagicMock(spec=KnowledgeService)
     mock_ks.execute_tool = AsyncMock(return_value=ToolResult(
         tool_call_id="call_loop",
@@ -301,13 +301,9 @@ async def test_orchestrator_streaming_max_iterations_guardrail():
         stream=True,
     )
 
-    chunks: List[CanonicalStreamChunk] = []
-    async for chunk in orchestrator.orchestrate_chat_stream(req):
-        chunks.append(chunk)
-
-    assert len(chunks) == 1
-    assert chunks[0].finish_reason == "max_tokens"
-    assert "Tool execution limit reached (2 iterations)" in chunks[0].delta_content
+    with pytest.raises(ToolExecutionException):
+        async for _ in orchestrator.orchestrate_chat_stream(req):
+            pass
     assert client.stream_call_count == 2
 
 

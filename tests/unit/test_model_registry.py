@@ -11,7 +11,13 @@ def test_default_model_from_settings():
     registry = ModelRegistryService(default_model="test-default-model")
 
     assert registry.default_model == "test-default-model"
-    assert registry.aliases == {"default": "test-default-model"}
+    assert registry.aliases == {
+        "default": "test-default-model",
+        "coding": "test-default-model",
+        "reasoning": "test-default-model",
+        "fast": "test-default-model",
+        "chat": "test-default-model",
+    }
 
 
 def test_default_alias_resolution():
@@ -31,15 +37,15 @@ def test_fallback_on_empty_and_whitespace():
     assert registry.resolve("   ") == "fallback-backend-model"
 
 
-def test_unknown_models_fall_back_to_default():
-    """Verify the gateway is single-model: unknown names resolve to the default."""
+def test_unknown_models_fail_closed():
     registry = ModelRegistryService(default_model="test-default-model")
 
     assert registry.resolve("coding") == "test-default-model"
     assert registry.resolve("reasoning") == "test-default-model"
     assert registry.resolve("fast") == "test-default-model"
     assert registry.resolve("chat") == "test-default-model"
-    assert registry.resolve("mistralai/Mistral-7B-Instruct-v0.3") == "test-default-model"
+    with pytest.raises(ModelNotFoundException):
+        registry.resolve("mistralai/Mistral-7B-Instruct-v0.3")
 
 
 def test_dynamic_alias_registration():
@@ -75,9 +81,9 @@ def test_list_models_structure():
     model_ids = {m["id"] for m in models}
     assert "test-default-model" in model_ids
     assert "default" in model_ids
-    assert "coding" not in model_ids
-    assert "reasoning" not in model_ids
-    assert "fast" not in model_ids
+    assert "coding" in model_ids
+    assert "reasoning" in model_ids
+    assert "fast" in model_ids
 
     for m in models:
         assert m["object"] == "model"

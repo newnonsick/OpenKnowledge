@@ -31,6 +31,7 @@ from src.gateway.domain.entities import KnowledgeItem, KnowledgeRevision
 from src.gateway.domain.exceptions import (
     ConcurrencyConflictException,
     ItemNotFoundException,
+    ToolExecutionException,
     ValidationException,
 )
 from src.gateway.domain.tools import (
@@ -360,11 +361,8 @@ async def test_max_tool_iterations_guardrail_terminates_infinite_loop():
         messages=[CanonicalMessage(role="user", content="Start loop.")],
     )
 
-    result = await orchestrator.orchestrate_chat(request)
-
-    assert result.finish_reason == "max_tokens"
-    assert len(result.content) == 1
-    assert "Tool execution limit reached (4 iterations)" in result.content[0].text
+    with pytest.raises(ToolExecutionException):
+        await orchestrator.orchestrate_chat(request)
     assert llm_client.call_count == 4
 
 

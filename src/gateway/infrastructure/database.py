@@ -345,7 +345,7 @@ async def _validate_runtime_database_connection(connection) -> None:
         "password_credentials": ("SELECT", "INSERT", "UPDATE"),
         "personal_api_keys": ("SELECT", "INSERT", "UPDATE"),
         "provenance_links": ("SELECT", "INSERT"),
-        "retrieval_units": ("SELECT",),
+        "retrieval_units": ("SELECT", "INSERT"),
         "session_credentials": ("SELECT", "INSERT", "UPDATE"),
         "session_families": ("SELECT", "INSERT", "UPDATE"),
         "space_memberships": ("SELECT", "INSERT", "DELETE"),
@@ -442,6 +442,7 @@ async def _validate_runtime_database_connection(connection) -> None:
             "retry_requested",
             "updated_at",
         ),
+        "retrieval_units": ("active", "deactivated_at"),
         "space_memberships": ("role", "updated_at"),
         "workspaces": ("name", "archived_at", "revision"),
     }

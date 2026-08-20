@@ -85,10 +85,9 @@ async def test_f09_model_resolution_in_chat_request():
 
 @pytest.mark.tier1
 @pytest.mark.feature("F9")
-def test_f09_unknown_model_falls_back_to_default(registry: ModelRegistryService):
-    """Verify single-model gateway fallback: unknown names resolve to the default
-    model instead of failing the request (documented registry contract)."""
-    assert registry.resolve("non_existent_model_v99") == "meta-llama/Llama-3.1-8B-Instruct"
+def test_f09_unknown_model_fails_closed(registry: ModelRegistryService):
+    with pytest.raises(ModelNotFoundException):
+        registry.resolve("non_existent_model_v99")
     assert registry.resolve("") == "meta-llama/Llama-3.1-8B-Instruct"
     assert registry.resolve(None) == "meta-llama/Llama-3.1-8B-Instruct"
 

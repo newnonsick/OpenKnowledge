@@ -38,7 +38,7 @@ KNOWLEDGE_SEARCH_SCHEMA: Dict[str, Any] = {
     "type": "function",
     "function": {
         "name": "knowledge_search",
-        "description": "Searches the shared long-term knowledge base using hybrid retrieval. Use it to find previously stored information or context that may be relevant to the current task, and to discover related existing knowledge before creating, updating, or deleting memory.",
+        "description": "Searches authorized long-term knowledge across every accessible space using hybrid retrieval. The active space receives a small ranking boost. Use it to find relevant stored information and to discover existing knowledge before creating, updating, or deleting memory.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -49,7 +49,7 @@ KNOWLEDGE_SEARCH_SCHEMA: Dict[str, Any] = {
                 },
                 "workspace_id": {
                     "type": "string",
-                    "description": "Optional workspace identifier to scope search. When provided, searches that workspace together with globally shared knowledge. When omitted, searches the active session workspace together with global knowledge."
+                    "description": "Optional exact space filter. When omitted, searches every space the current member can access."
                 },
                 "limit": {
                     "type": "integer",

@@ -11,6 +11,7 @@ import uuid
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, Union
 
 from src.gateway.application.ports.clients import ILLMClient
+from src.gateway.application.services.authorized_retrieval_service import AuthorizedRetrievalService
 from src.gateway.application.services.knowledge_service import KnowledgeService
 from src.gateway.application.services.retrieval_service import IRetrievalService
 from src.gateway.config import get_settings
@@ -29,6 +30,7 @@ from src.gateway.domain.canonical import (
     CanonicalUsage,
 )
 from src.gateway.domain.exceptions import (
+    AuthorizationException,
     ConcurrencyConflictException,
     GatewayException,
     ItemNotFoundException,
@@ -45,6 +47,7 @@ from src.gateway.domain.tools import (
     get_internal_tool_definitions,
     is_internal_tool,
 )
+from src.gateway.infrastructure.persistence.principal_context import get_bound_principal
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +77,10 @@ class ChatOrchestratorService(IChatOrchestrator):
         self,
         llm_client: ILLMClient,
         knowledge_service: Optional[KnowledgeService] = None,
-        retrieval_service: Optional[IRetrievalService] = None,
+        retrieval_service: Optional[IRetrievalService | AuthorizedRetrievalService] = None,
         max_tool_iterations: Optional[int] = None,
+        tool_timeout_seconds: Optional[float] = None,
+        max_hidden_turn_bytes: int = 8 * 1024 * 1024,
     ) -> None:
         self.llm_client = llm_client
         self.knowledge_service = knowledge_service
@@ -85,11 +90,26 @@ class ChatOrchestratorService(IChatOrchestrator):
             if max_tool_iterations is not None
             else getattr(get_settings().gateway, "max_tool_iterations", 10)
         )
+        self.tool_timeout_seconds = (
+            tool_timeout_seconds
+            if tool_timeout_seconds is not None
+            else getattr(get_settings().gateway, "tool_timeout_seconds", 15.0)
+        )
+        if self.tool_timeout_seconds <= 0 or max_hidden_turn_bytes <= 0:
+            raise ValueError("Tool timeout and hidden turn buffer limit must be positive")
+        self.max_hidden_turn_bytes = max_hidden_turn_bytes
 
     def _prepare_tools(
         self, client_tools: List[ToolDefinition]
     ) -> Tuple[List[ToolDefinition], Optional[List[Dict[str, Any]]]]:
 
+        reserved = [
+            tool.function.name
+            for tool in client_tools
+            if is_internal_tool(tool.function.name)
+        ]
+        if reserved:
+            raise ValidationException("Client tools cannot use reserved gateway tool names.")
         combined_tools: List[ToolDefinition] = list(client_tools)
         existing_names = {t.function.name for t in client_tools}
 
@@ -255,35 +275,91 @@ class ChatOrchestratorService(IChatOrchestrator):
                         ),
                         is_error=True,
                     )
-                ws_id = args.get("workspace_id") or workspace_id
                 limit = int(args.get("limit", 5))
+                if limit < 1 or limit > 20:
+                    raise ValidationException("Search limit must be between 1 and 20.")
                 try:
-                    results = await self.retrieval_service.hybrid_search(
-                        query=query,
-                        workspace_id=ws_id,
-                        limit=limit,
-                    )
-                    content_payload = [
-                        {
-                            "id": r.id,
-                            "title": r.title,
-                            "content": r.content,
-                            "score": r.normalized_score or r.rrf_score,
-                            "source_type": r.source_type,
-                            "workspace_id": r.workspace_id,
-                            "version": r.version,
+                    if isinstance(self.retrieval_service, AuthorizedRetrievalService):
+                        principal = get_bound_principal()
+                        if principal is None:
+                            raise AuthorizationException()
+                        requested_workspace = args.get("workspace_id")
+                        response = await self.retrieval_service.search(
+                            principal,
+                            query,
+                            requested_space_ids=(
+                                {str(requested_workspace)}
+                                if requested_workspace
+                                else None
+                            ),
+                            active_space_id=workspace_id,
+                            limit=limit,
+                        )
+                        content_payload = [
+                            {
+                                "id": str(hit.candidate.canonical_id),
+                                "revision_id": str(hit.candidate.revision_id),
+                                "citation": hit.candidate.citation_uri,
+                                "title": hit.candidate.title,
+                                "content": hit.candidate.content,
+                                "score": hit.rank_score,
+                                "source_type": hit.candidate.source_type,
+                                "workspace_id": hit.candidate.space_id,
+                                "version": hit.candidate.version,
+                            }
+                            for hit in response.hits
+                        ]
+                        health_payload = {
+                            "semantic_status": response.health.semantic_status,
+                            "degraded_reasons": list(response.health.degraded_reasons),
+                            "embedding_coverage": response.health.embedding_coverage,
+                            "abstained": response.explanation.abstained,
                         }
-                        for r in results
-                    ]
+                    else:
+                        ws_id = args.get("workspace_id") or workspace_id
+                        results = await self.retrieval_service.hybrid_search(
+                            query=query,
+                            workspace_id=ws_id,
+                            limit=limit,
+                        )
+                        content_payload = [
+                            {
+                                "id": r.id,
+                                "title": r.title,
+                                "content": r.content,
+                                "score": r.normalized_score or r.rrf_score,
+                                "source_type": r.source_type,
+                                "workspace_id": r.workspace_id,
+                                "version": r.version,
+                            }
+                            for r in results
+                        ]
+                        health_payload = None
                     return CanonicalToolResultBlock(
                         tool_use_id=call_id,
-                        content=json.dumps({"results": content_payload, "count": len(content_payload)}),
+                        content=json.dumps(
+                            {
+                                "results": content_payload,
+                                "count": len(content_payload),
+                                "health": health_payload,
+                            }
+                        ),
                         is_error=False,
                     )
                 except Exception as exc:
                     logger.warning(
                         "Hybrid retrieval tool failed",
                         extra={"exception_class": type(exc).__name__},
+                    )
+                    return CanonicalToolResultBlock(
+                        tool_use_id=call_id,
+                        content=json.dumps(
+                            {
+                                "error": "Knowledge retrieval is currently unavailable.",
+                                "type": "retrieval_error",
+                            }
+                        ),
+                        is_error=True,
                     )
 
             if self.knowledge_service is not None:
@@ -326,6 +402,19 @@ class ChatOrchestratorService(IChatOrchestrator):
                 ),
                 is_error=True,
             )
+
+    async def _execute_internal_tool_bounded(
+        self,
+        tool_call: ToolCall,
+        workspace_id: str,
+    ) -> CanonicalToolResultBlock:
+        try:
+            return await asyncio.wait_for(
+                self._execute_internal_tool(tool_call, workspace_id),
+                timeout=self.tool_timeout_seconds,
+            )
+        except TimeoutError as exc:
+            raise ToolExecutionException("Internal tool execution timed out.") from exc
 
     async def orchestrate_chat(
         self,
@@ -387,9 +476,18 @@ class ChatOrchestratorService(IChatOrchestrator):
                     usage=total_usage,
                 )
 
+            if len(llm_response.tool_calls) > 64:
+                raise ToolExecutionException("Upstream returned too many tool calls.")
+            has_internal_tool = any(
+                is_internal_tool(tc.function.name) for tc in llm_response.tool_calls
+            )
             has_external_tool = any(
                 not is_internal_tool(tc.function.name) for tc in llm_response.tool_calls
             )
+            if has_internal_tool and has_external_tool:
+                raise ToolExecutionException(
+                    "Mixed internal and external tool calls are not supported."
+                )
             if has_external_tool:
                 blocks = []
                 if llm_response.reasoning_content:
@@ -459,7 +557,10 @@ class ChatOrchestratorService(IChatOrchestrator):
 
             tool_result_blocks: List[CanonicalToolResultBlock] = []
             for tc in llm_response.tool_calls:
-                result_block = await self._execute_internal_tool(tc, workspace_id=effective_workspace)
+                result_block = await self._execute_internal_tool_bounded(
+                    tc,
+                    effective_workspace,
+                )
                 tool_result_blocks.append(result_block)
 
             conversation_messages.append(
@@ -472,18 +573,7 @@ class ChatOrchestratorService(IChatOrchestrator):
                 )
             )
 
-        warning_text = (
-            f"Warning: Tool execution limit reached ({self.max_tool_iterations} iterations). "
-            "Terminating loop to prevent runaway recursive calls."
-        )
-        return CanonicalChatResponse(
-            id=f"chatcmpl-max-iter-{uuid.uuid4().hex[:8]}",
-            model=request.model,
-            role="assistant",
-            content=[CanonicalTextBlock(text=warning_text)],
-            finish_reason="max_tokens",
-            usage=total_usage,
-        )
+        raise ToolExecutionException("Tool execution budget exhausted.")
 
     async def orchestrate_chat_stream(
         self,
@@ -497,8 +587,6 @@ class ChatOrchestratorService(IChatOrchestrator):
 
         conversation_messages: List[CanonicalMessage] = list(request.messages)
         iteration = 0
-        total_usage = CanonicalUsage()
-
         while iteration < self.max_tool_iterations:
             iteration += 1
 
@@ -520,24 +608,30 @@ class ChatOrchestratorService(IChatOrchestrator):
                 **extra_kwargs,
             )
 
-            buffered_chunks: List[CanonicalLLMStreamChunk] = []
+            turn_chunks: List[CanonicalLLMStreamChunk] = []
             turn_text_fragments: List[str] = []
             turn_thinking_fragments: List[str] = []
             turn_tool_calls_dict: Dict[int, Dict[str, Any]] = {}
-            has_internal_tool = False
-            has_external_tool = False
             last_chunk_id = f"stream-{uuid.uuid4().hex[:8]}"
             last_model = request.model
+            buffered_bytes = 0
 
             async for chunk in stream_iter:
+                turn_chunks.append(chunk)
+                buffered_bytes += len((chunk.delta_content or "").encode("utf-8"))
+                buffered_bytes += len((chunk.delta_reasoning_content or "").encode("utf-8"))
+                if chunk.delta_tool_calls:
+                    buffered_bytes += sum(
+                        len((tool.function.name or "").encode("utf-8"))
+                        + len((tool.function.arguments or "").encode("utf-8"))
+                        for tool in chunk.delta_tool_calls
+                    )
+                if buffered_bytes > self.max_hidden_turn_bytes:
+                    raise ToolExecutionException("Upstream turn exceeded the safe buffering budget.")
                 if chunk.id:
                     last_chunk_id = chunk.id
                 if chunk.model:
                     last_model = chunk.model
-                if chunk.usage:
-                    total_usage.prompt_tokens += chunk.usage.prompt_tokens
-                    total_usage.completion_tokens += chunk.usage.completion_tokens
-                    total_usage.total_tokens += chunk.usage.total_tokens
 
                 if chunk.delta_content is not None:
                     turn_text_fragments.append(chunk.delta_content)
@@ -550,6 +644,8 @@ class ChatOrchestratorService(IChatOrchestrator):
 
                         slot = tc.index if tc.index is not None else idx
                         if slot not in turn_tool_calls_dict:
+                            if len(turn_tool_calls_dict) >= 64:
+                                raise ToolExecutionException("Upstream returned too many tool calls.")
                             turn_tool_calls_dict[slot] = {
                                 "id": tc.id or f"call_{uuid.uuid4().hex[:6]}",
                                 "name": tc.function.name or "",
@@ -563,39 +659,45 @@ class ChatOrchestratorService(IChatOrchestrator):
                             if tc.function.arguments:
                                 turn_tool_calls_dict[slot]["arguments"] += tc.function.arguments
 
-                        fn_name = turn_tool_calls_dict[slot]["name"]
-                        if fn_name:
-                            if is_internal_tool(fn_name):
-                                has_internal_tool = True
-                            else:
-                                has_external_tool = True
+            reconstructed_tool_calls: List[ToolCall] = []
+            for idx in sorted(turn_tool_calls_dict.keys()):
+                tc_data = turn_tool_calls_dict[idx]
+                reconstructed_tool_calls.append(
+                    ToolCall(
+                        id=tc_data["id"],
+                        function=FunctionCall(
+                            name=tc_data["name"],
+                            arguments=tc_data["arguments"],
+                        ),
+                    )
+                )
 
-                if has_internal_tool:
+            has_internal_tool = any(
+                is_internal_tool(tool.function.name)
+                for tool in reconstructed_tool_calls
+            )
+            has_external_tool = any(
+                not is_internal_tool(tool.function.name)
+                for tool in reconstructed_tool_calls
+            )
+            if has_internal_tool and has_external_tool:
+                raise ToolExecutionException(
+                    "Mixed internal and external tool calls are not supported."
+                )
 
-                    buffered_chunks = []
-                    continue
-
-                if has_external_tool:
-
-                    if buffered_chunks:
-                        for b_chunk in buffered_chunks:
-                            yield CanonicalStreamChunk(
-                                id=b_chunk.id or last_chunk_id,
-                                model=b_chunk.model or last_model,
-                                delta_content=b_chunk.delta_content,
-                                delta_thinking=b_chunk.delta_reasoning_content,
-                                delta_tool_calls=b_chunk.delta_tool_calls,
-                                finish_reason=None,
-                                usage=b_chunk.usage,
-                            )
-                        buffered_chunks = []
-
+            if not has_internal_tool:
+                for chunk in turn_chunks:
                     finish_reason = chunk.finish_reason
                     if finish_reason in ("tool_calls", "tool_use"):
                         finish_reason = "tool_use"
-                    elif finish_reason and finish_reason not in ("stop", "tool_use", "max_tokens", "content_filter", "error"):
+                    elif finish_reason and finish_reason not in (
+                        "stop",
+                        "tool_use",
+                        "max_tokens",
+                        "content_filter",
+                        "error",
+                    ):
                         finish_reason = "stop"
-
                     yield CanonicalStreamChunk(
                         id=chunk.id or last_chunk_id,
                         model=chunk.model or last_model,
@@ -605,57 +707,9 @@ class ChatOrchestratorService(IChatOrchestrator):
                         finish_reason=finish_reason,  # type: ignore[arg-type]
                         usage=chunk.usage,
                     )
-                elif chunk.delta_content is not None or chunk.finish_reason is not None:
-
-                    if buffered_chunks:
-                        for b_chunk in buffered_chunks:
-                            yield CanonicalStreamChunk(
-                                id=b_chunk.id or last_chunk_id,
-                                model=b_chunk.model or last_model,
-                                delta_content=b_chunk.delta_content,
-                                delta_thinking=b_chunk.delta_reasoning_content,
-                                delta_tool_calls=b_chunk.delta_tool_calls,
-                                finish_reason=None,
-                                usage=b_chunk.usage,
-                            )
-                        buffered_chunks = []
-
-                    finish_reason = chunk.finish_reason
-                    if finish_reason in ("tool_calls", "tool_use"):
-                        finish_reason = "tool_use"
-                    elif finish_reason and finish_reason not in ("stop", "tool_use", "max_tokens", "content_filter", "error"):
-                        finish_reason = "stop"
-
-                    yield CanonicalStreamChunk(
-                        id=chunk.id or last_chunk_id,
-                        model=chunk.model or last_model,
-                        delta_content=chunk.delta_content,
-                        delta_thinking=chunk.delta_reasoning_content,
-                        delta_tool_calls=chunk.delta_tool_calls,
-                        finish_reason=finish_reason,  # type: ignore[arg-type]
-                        usage=chunk.usage,
-                    )
-                else:
-
-                    buffered_chunks.append(chunk)
-
-            if has_external_tool:
                 return
 
             if has_internal_tool:
-
-                reconstructed_tool_calls: List[ToolCall] = []
-                for idx in sorted(turn_tool_calls_dict.keys()):
-                    tc_data = turn_tool_calls_dict[idx]
-                    reconstructed_tool_calls.append(
-                        ToolCall(
-                            id=tc_data["id"],
-                            function=FunctionCall(
-                                name=tc_data["name"],
-                                arguments=tc_data["arguments"],
-                            ),
-                        )
-                    )
 
                 full_text = "".join(turn_text_fragments)
                 full_thinking = "".join(turn_thinking_fragments)
@@ -692,8 +746,9 @@ class ChatOrchestratorService(IChatOrchestrator):
 
                 tool_result_blocks: List[CanonicalToolResultBlock] = []
                 for tc in reconstructed_tool_calls:
-                    result_block = await self._execute_internal_tool(
-                        tc, workspace_id=effective_workspace
+                    result_block = await self._execute_internal_tool_bounded(
+                        tc,
+                        effective_workspace,
                     )
                     tool_result_blocks.append(result_block)
 
@@ -710,32 +765,4 @@ class ChatOrchestratorService(IChatOrchestrator):
                 )
                 continue
 
-            if buffered_chunks:
-                for b_chunk in buffered_chunks:
-                    finish_reason = b_chunk.finish_reason
-                    if finish_reason and finish_reason not in ("stop", "tool_use", "max_tokens", "content_filter", "error"):
-                        finish_reason = "stop"
-
-                    yield CanonicalStreamChunk(
-                        id=b_chunk.id or last_chunk_id,
-                        model=b_chunk.model or last_model,
-                        delta_content=b_chunk.delta_content,
-                        delta_thinking=b_chunk.delta_reasoning_content,
-                        delta_tool_calls=b_chunk.delta_tool_calls,
-                        finish_reason=finish_reason,  # type: ignore[arg-type]
-                        usage=b_chunk.usage,
-                    )
-                buffered_chunks = []
-            return
-
-        warning_text = (
-            f"Warning: Tool execution limit reached ({self.max_tool_iterations} iterations). "
-            "Terminating loop to prevent runaway recursive calls."
-        )
-        yield CanonicalStreamChunk(
-            id=f"stream-max-iter-{uuid.uuid4().hex[:8]}",
-            model=request.model,
-            delta_content=warning_text,
-            finish_reason="max_tokens",
-            usage=total_usage,
-        )
+        raise ToolExecutionException("Tool execution budget exhausted.")

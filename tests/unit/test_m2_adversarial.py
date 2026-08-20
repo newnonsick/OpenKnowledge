@@ -259,7 +259,6 @@ class TestModelRegistryAdversarial:
             },
         )
 
-        # Mixed casing: built-in aliases are removed; unknown names fall back to default
         assert registry.resolve("CoDiNg") == "test-default-backend"
         assert registry.resolve("rEaSoNiNg") == "test-default-backend"
         assert registry.resolve("FaSt") == "test-default-backend"
@@ -268,15 +267,16 @@ class TestModelRegistryAdversarial:
 
         # Surrounding whitespace
         assert registry.resolve("  coding  ") == "test-default-backend"
-        assert registry.resolve("\tunknown-model\n") == "test-default-backend"
+        with pytest.raises(ModelNotFoundException):
+            registry.resolve("\tunknown-model\n")
         assert registry.resolve("   ") == "test-default-backend"
         assert registry.resolve(None) == "test-default-backend"
 
     def test_unicode_and_special_char_models(self):
         registry = ModelRegistryService(default_model="test-default-backend")
         unicode_model = "org/モデル-large-v2:q4_k_m"
-        # Single-model gateway: unregistered names fall back to the default
-        assert registry.resolve(unicode_model) == "test-default-backend"
+        with pytest.raises(ModelNotFoundException):
+            registry.resolve(unicode_model)
 
         # Register alias with special characters
         registry.register_alias("code/py:v1", "org/backend-py-model")
@@ -298,10 +298,8 @@ class TestModelRegistryAdversarial:
         assert info_backend["root"] is None
         assert info_backend["context_window"] == settings.llm.context_window
 
-        # Custom unlisted model resolves to the default
-        info_custom = registry.get_model_info("my-unregistered-model")
-        assert info_custom["id"] == "my-unregistered-model"
-        assert info_custom["root"] == "test-default-backend"
+        with pytest.raises(ModelNotFoundException):
+            registry.get_model_info("my-unregistered-model")
 
     def test_list_models_contains_backends_and_aliases(self):
         registry = ModelRegistryService(default_model="test-default-backend")
@@ -310,9 +308,9 @@ class TestModelRegistryAdversarial:
 
         assert "test-default-backend" in ids
         assert "default" in ids
-        assert "coding" not in ids
-        assert "reasoning" not in ids
-        assert "fast" not in ids
+        assert "coding" in ids
+        assert "reasoning" in ids
+        assert "fast" in ids
 
 
 # ==============================================================================

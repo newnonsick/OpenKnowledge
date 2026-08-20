@@ -67,4 +67,4 @@ async def test_api_key_pepper_downgrade_refuses_incompatible_credentials() -> No
         with pytest.raises(RuntimeError, match="non-v1 pepper"):
             await rollback_migrations_async("005", database_url)
         status = await get_schema_status_async(database_url)
-        assert status.current_revision == "014"
+        assert status.current_revision == "015"

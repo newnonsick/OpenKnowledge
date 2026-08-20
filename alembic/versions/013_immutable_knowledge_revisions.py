@@ -19,12 +19,16 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    revision_space = (
+        "(SELECT item.workspace_id FROM knowledge_items item "
+        "WHERE item.id = knowledge_revisions.item_id)"
+    )
     op.execute(
         "CREATE POLICY knowledge_revisions_member_update ON knowledge_revisions "
-        "FOR UPDATE USING (gateway_has_space_role(space_id, ARRAY['owner','editor','reader'])) "
-        "WITH CHECK (gateway_has_space_role(space_id, ARRAY['owner','editor']))"
+        f"FOR UPDATE USING (gateway_has_space_role({revision_space}, ARRAY['owner','editor','reader'])) "
+        f"WITH CHECK (gateway_has_space_role({revision_space}, ARRAY['owner','editor']))"
     )
     op.execute(
         "CREATE POLICY knowledge_revisions_member_delete ON knowledge_revisions "
-        "FOR DELETE USING (gateway_has_space_role(space_id, ARRAY['owner','editor']))"
+        f"FOR DELETE USING (gateway_has_space_role({revision_space}, ARRAY['owner','editor']))"
     )

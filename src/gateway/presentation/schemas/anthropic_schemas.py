@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import time
 from typing import Any, Dict, List, Literal, Optional, Union
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class AnthropicTextBlock(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
 
     type: Literal["text"] = "text"
     text: str
 
 class AnthropicImageSource(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
 
     type: Literal["base64"] = "base64"
     media_type: str
@@ -19,10 +23,14 @@ class AnthropicImageSource(BaseModel):
 
 class AnthropicImageBlock(BaseModel):
 
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["image"] = "image"
     source: AnthropicImageSource
 
 class AnthropicToolUseBlock(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
 
     type: Literal["tool_use"] = "tool_use"
     id: str
@@ -30,6 +38,8 @@ class AnthropicToolUseBlock(BaseModel):
     input: Dict[str, Any] = Field(default_factory=dict)
 
 class AnthropicToolResultBlock(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
 
     type: Literal["tool_result"] = "tool_result"
     tool_use_id: str
@@ -46,6 +56,8 @@ AnthropicContentBlock = Union[
 
 class AnthropicMessageParam(BaseModel):
 
+    model_config = ConfigDict(extra="forbid")
+
     role: Literal["user", "assistant"]
     content: Union[str, List[AnthropicContentBlock]]
 
@@ -54,15 +66,27 @@ class AnthropicMessageParam(BaseModel):
     def validate_content(cls, v: Any) -> Any:
         if v is None:
             return ""
+        if isinstance(v, list):
+            for part in v:
+                if isinstance(part, dict):
+                    block_type = part.get("type")
+                    if block_type == "image":
+                        raise ValueError("Image content is not supported")
+                    if block_type not in {"text", "tool_use", "tool_result", "thinking"}:
+                        raise ValueError("Unsupported content block type")
         return v
 
 class AnthropicToolParam(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str
     description: Optional[str] = None
     input_schema: Dict[str, Any] = Field(default_factory=dict)
 
 class AnthropicMessagesRequest(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
 
     model: str
     messages: List[AnthropicMessageParam] = Field(default_factory=list)

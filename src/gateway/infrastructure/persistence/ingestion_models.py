@@ -164,7 +164,25 @@ class RetrievalUnitModel(Base):
             ondelete="CASCADE",
         ),
         Index("ix_retrieval_units_space_active", "space_id", "active"),
+        Index(
+            "ix_retrieval_units_active_generation_space",
+            "embedding_generation_id",
+            "space_id",
+            postgresql_where=text("active"),
+        ),
         Index("ix_retrieval_units_tsv", "tsv", postgresql_using="gin"),
+        Index(
+            "ix_retrieval_units_content_trgm",
+            "content",
+            postgresql_using="gin",
+            postgresql_ops={"content": "gin_trgm_ops"},
+        ),
+        Index(
+            "ix_retrieval_units_title_trgm",
+            "title",
+            postgresql_using="gin",
+            postgresql_ops={"title": "gin_trgm_ops"},
+        ),
         Index(
             "ix_retrieval_units_embedding",
             "embedding",

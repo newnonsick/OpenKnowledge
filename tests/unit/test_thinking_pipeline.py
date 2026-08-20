@@ -220,7 +220,7 @@ def test_anthropic_nonstream_response_includes_thinking_block():
     thinking_blocks = [b for b in out.content if isinstance(b, dict) and b.get("type") == "thinking"]
     assert thinking_blocks, "thinking block must be present in Anthropic response"
     assert thinking_blocks[0]["thinking"] == "Chain of thought."
-    assert thinking_blocks[0].get("signature") is not None
+    assert "signature" not in thinking_blocks[0]
     # thinking must come before text
     assert out.content.index(thinking_blocks[0]) == 0
 

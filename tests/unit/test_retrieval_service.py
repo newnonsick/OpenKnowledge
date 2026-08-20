@@ -285,7 +285,7 @@ async def test_hybrid_search_end_to_end_fusion():
     assert blended[0].id == "item_a"
     assert blended[0].fts_rank == 1
     assert blended[0].vector_rank == 2
-    assert blended[0].normalized_score == 1.0
+    assert blended[0].normalized_score == pytest.approx(0.9919)
 
     # Remaining items
     ids = [b.id for b in blended]
@@ -321,7 +321,7 @@ async def test_hybrid_search_partial_failure_graceful_degradation(caplog):
     assert blended[0].id == "fts_only"
     assert blended[0].fts_rank == 1
     assert blended[0].vector_rank is None
-    assert blended[0].normalized_score == 1.0
+    assert blended[0].normalized_score == 0.5
     assert sentinel not in caplog.text
 
 

@@ -5,9 +5,11 @@ from __future__ import annotations
 import time
 from src.gateway.config import get_settings, settings
 from typing import Any, Dict, List, Literal, Optional, Union
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class OpenAIFunctionDefinition(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str
     description: Optional[str] = None
@@ -15,15 +17,21 @@ class OpenAIFunctionDefinition(BaseModel):
 
 class OpenAIToolDefinition(BaseModel):
 
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["function"] = "function"
     function: OpenAIFunctionDefinition
 
 class OpenAIFunctionCall(BaseModel):
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     arguments: str = "{}"
 
 class OpenAIToolCall(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
 
     id: str
     type: Literal["function"] = "function"
@@ -31,6 +39,8 @@ class OpenAIToolCall(BaseModel):
     index: Optional[int] = None
 
 class OpenAIChatMessage(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
 
     role: Literal["system", "developer", "user", "assistant", "tool", "function"]
     content: Optional[Union[str, List[Dict[str, Any]], Dict[str, Any]]] = None
@@ -44,9 +54,17 @@ class OpenAIChatMessage(BaseModel):
     def validate_content(cls, v: Any) -> Any:
         if v is None:
             return ""
+        if isinstance(v, list):
+            for part in v:
+                if not isinstance(part, dict) or part.get("type") != "text" or not isinstance(part.get("text"), str):
+                    raise ValueError("Only text content blocks are supported")
+        elif not isinstance(v, str):
+            raise ValueError("Only text message content is supported")
         return v
 
 class OpenAIChatCompletionRequest(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
 
     model: str
     messages: List[OpenAIChatMessage] = Field(default_factory=list)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from typing import Any, Dict, List, Optional, Sequence, Set
 
@@ -40,10 +41,10 @@ def compute_rrf(
 
     resolved_weights: List[float] = []
     for i in range(len(ranked_lists)):
-        if weights is not None and i < len(weights) and weights[i] > 0.0:
-            resolved_weights.append(float(weights[i]))
-        else:
-            resolved_weights.append(1.0)
+        weight = float(weights[i]) if weights is not None and i < len(weights) else 1.0
+        if not math.isfinite(weight) or weight < 0.0:
+            raise ValueError("RRF weights must be finite and non-negative")
+        resolved_weights.append(weight)
 
     scores: Dict[str, float] = {}
     items_map: Dict[str, RankedSearchResult] = {}
@@ -55,6 +56,8 @@ def compute_rrf(
         if not rank_list:
             continue
         weight = resolved_weights[list_idx]
+        if weight == 0.0:
+            continue
         seen_in_list.clear()
 
         for rank_idx, item in enumerate(rank_list, start=1):
@@ -80,7 +83,7 @@ def compute_rrf(
         return []
 
     sorted_docs = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:limit]
-    max_score = sorted_docs[0][1] if sorted_docs else 1.0
+    max_score = sum(resolved_weights) / (rrf_k + 1)
 
     blended: List[BlendedSearchResult] = []
     for doc_id, raw_rrf in sorted_docs:

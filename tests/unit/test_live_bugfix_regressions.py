@@ -152,7 +152,7 @@ async def test_openai_stream_single_id_and_model():
         resp = await client.post(
             "/v1/chat/completions",
             json={
-                "model": "alias-name",
+                    "model": "default",
                 "stream": True,
                 "messages": [{"role": "user", "content": "hi"}],
             },
@@ -189,7 +189,7 @@ async def test_openai_stream_usage_only_chunk_empty_choices():
         resp = await client.post(
             "/v1/chat/completions",
             json={
-                "model": "alias-name",
+                    "model": "default",
                 "stream": True,
                 "messages": [{"role": "user", "content": "hi"}],
             },

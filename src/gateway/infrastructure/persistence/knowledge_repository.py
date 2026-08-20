@@ -28,7 +28,7 @@ from src.gateway.infrastructure.persistence.models import (
     KnowledgeRevision as ORMKnowledgeRevision,
     Workspace as ORMWorkspace,
 )
-from src.gateway.infrastructure.persistence.ingestion_models import ProvenanceLinkModel, RetrievalUnitModel
+from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGenerationModel, ProvenanceLinkModel, RetrievalUnitModel
 
 class KnowledgeRepository(IKnowledgeRepository):
 
@@ -155,6 +155,13 @@ class KnowledgeRepository(IKnowledgeRepository):
 
                 orm_item.current_revision_id = orm_rev.id
                 await session.flush()
+
+                await self._activate_retrieval_projection(
+                    session,
+                    orm_item,
+                    orm_rev,
+                    now,
+                )
 
                 await session.refresh(orm_item, attribute_names=["updated_at"])
 
@@ -325,6 +332,12 @@ class KnowledgeRepository(IKnowledgeRepository):
                         source_metadata=dict(new_revision.provenance_metadata),
                     )
                 )
+                await self._activate_retrieval_projection(
+                    session,
+                    orm_item,
+                    orm_rev,
+                    now,
+                )
                 await session.flush()
                 await session.refresh(orm_item)
                 await session.refresh(orm_item, attribute_names=["updated_at"])
@@ -416,6 +429,70 @@ class KnowledgeRepository(IKnowledgeRepository):
     @staticmethod
     def _provenance_type(value: str) -> str:
         return value if value in {"manual", "ai_action"} else "manual"
+
+    @staticmethod
+    async def _activate_retrieval_projection(
+        session: AsyncSession,
+        item: ORMKnowledgeItem,
+        revision: ORMKnowledgeRevision,
+        now,
+    ) -> None:
+        generation_id = await session.scalar(
+            select(EmbeddingGenerationModel.id)
+            .where(
+                EmbeddingGenerationModel.purpose == "retrieval",
+                EmbeddingGenerationModel.status == "active",
+            )
+            .order_by(
+                EmbeddingGenerationModel.activated_at.desc().nullslast(),
+                EmbeddingGenerationModel.created_at.desc(),
+            )
+            .limit(1)
+        )
+        if generation_id is None:
+            return
+        revision_ids = select(ORMKnowledgeRevision.id).where(
+            ORMKnowledgeRevision.item_id == item.id
+        )
+        await session.execute(
+            update(RetrievalUnitModel)
+            .where(
+                RetrievalUnitModel.knowledge_revision_id.in_(revision_ids),
+                RetrievalUnitModel.active.is_(True),
+            )
+            .values(active=False, deactivated_at=now)
+        )
+        session.add(
+            RetrievalUnitModel(
+                space_id=item.workspace_id,
+                source_type="knowledge_revision",
+                knowledge_revision_id=revision.id,
+                embedding_generation_id=generation_id,
+                title=revision.title or item.title,
+                content=revision.content,
+                language=KnowledgeRepository._language_hint(revision.content),
+                source_metadata={
+                    "knowledge_item_id": str(item.id),
+                    "knowledge_revision_id": str(revision.id),
+                    "version": revision.version,
+                    "tags": list(revision.tags or []),
+                },
+                embedding=revision.embedding,
+                active=True,
+            )
+        )
+
+    @staticmethod
+    def _language_hint(content: str) -> str | None:
+        has_thai = any("\u0e00" <= character <= "\u0e7f" for character in content)
+        has_latin = any(character.isascii() and character.isalpha() for character in content)
+        if has_thai and has_latin:
+            return "mixed"
+        if has_thai:
+            return "th"
+        if has_latin:
+            return "en"
+        return None
 
     async def list_revisions(self, item_id: UUID) -> List[DomainKnowledgeRevision]:
 

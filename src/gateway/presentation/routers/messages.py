@@ -15,12 +15,12 @@ from src.gateway.application.services.chat_orchestrator import (
     ChatOrchestratorService,
     IChatOrchestrator,
 )
+from src.gateway.application.services.authorized_retrieval_service import AuthorizedRetrievalService
 from src.gateway.application.services.knowledge_service import KnowledgeService
 from src.gateway.application.services.model_registry import (
     ModelRegistryService,
     get_model_registry,
 )
-from src.gateway.application.services.retrieval_service import RetrievalService
 from src.gateway.domain.canonical import (
     CanonicalBlock,
     CanonicalChatRequest,
@@ -42,8 +42,8 @@ from src.gateway.domain.exceptions import (
 )
 from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.adapters.http_llm_client import HttpLLMClient
-from src.gateway.infrastructure.persistence.document_repository import DocumentRepository
 from src.gateway.infrastructure.persistence.knowledge_repository import KnowledgeRepository
+from src.gateway.infrastructure.persistence.retrieval_unit_repository import PostgresRetrievalUnitRepository
 from src.gateway.presentation.converters.anthropic_converter import (
     anthropic_request_to_canonical,
     canonical_response_to_anthropic,
@@ -154,16 +154,17 @@ def get_knowledge_service(
 
 def get_retrieval_service(
     embedding_client: IEmbeddingClient = Depends(get_embedding_client),
-) -> RetrievalService:
+) -> AuthorizedRetrievalService:
 
-    k_repo = KnowledgeRepository()
-    d_repo = DocumentRepository()
-    return RetrievalService(knowledge_repo=k_repo, document_repo=d_repo, embedding_client=embedding_client)
+    return AuthorizedRetrievalService(
+        PostgresRetrievalUnitRepository(),
+        embedding_client,
+    )
 
 def get_chat_orchestrator(
     llm_client: ILLMClient = Depends(get_llm_client),
     knowledge_service: KnowledgeService = Depends(get_knowledge_service),
-    retrieval_service: RetrievalService = Depends(get_retrieval_service),
+    retrieval_service: AuthorizedRetrievalService = Depends(get_retrieval_service),
 ) -> IChatOrchestrator:
 
     return ChatOrchestratorService(
@@ -303,7 +304,7 @@ def _handle_anthropic_streaming(
                 text_block_opened = True
                 content_block: Dict[str, Any] = {"type": "text", "text": ""}
             else:
-                content_block = {"type": "thinking", "thinking": "", "signature": ""}
+                content_block = {"type": "thinking", "thinking": ""}
             return sse(
                 "content_block_start",
                 {
@@ -424,6 +425,7 @@ def _handle_anthropic_streaming(
                 },
             }
             yield sse("error", err_event)
+            return
 
         if open_block is None and not text_block_opened and not open_tool_blocks:
             yield block_start("text")

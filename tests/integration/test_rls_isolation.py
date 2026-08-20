@@ -81,7 +81,7 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                         "idempotency_records, ingestion_jobs, job_outbox, knowledge_items, "
                         "knowledge_revisions, login_throttle_buckets, members, mfa_factors, "
                         "mfa_recovery_codes, password_credentials, personal_api_keys, "
-                        "provenance_links, session_credentials, session_families, "
+                        "provenance_links, retrieval_units, session_credentials, session_families, "
                         "space_memberships, workspaces "
                         f'TO "{runtime_role}"'
                     )
@@ -120,6 +120,12 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                     text(
                         "GRANT UPDATE (state, cancellation_requested, retry_requested, updated_at) "
                         f'ON ingestion_jobs TO "{runtime_role}"'
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "GRANT UPDATE (active, deactivated_at) "
+                        f'ON retrieval_units TO "{runtime_role}"'
                     )
                 )
                 await connection.execute(

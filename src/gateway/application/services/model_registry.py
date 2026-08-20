@@ -27,6 +27,10 @@ class ModelRegistryService:
 
         self.aliases: Dict[str, str] = {
             "default": self.default_model,
+            "coding": self.default_model,
+            "reasoning": self.default_model,
+            "fast": self.default_model,
+            "chat": self.default_model,
         }
         if aliases:
             self.aliases.update(aliases)
@@ -78,13 +82,7 @@ class ModelRegistryService:
         if cleaned in self.models_metadata:
             return cleaned
 
-        if cleaned != self.default_model:
-            logger.debug(
-                "Model '%s' is not registered; falling back to default model '%s'.",
-                cleaned,
-                self.default_model,
-            )
-        return self.default_model
+        raise ModelNotFoundException(cleaned)
 
     def get_model_info(self, model_name: str) -> Dict[str, Any]:
 

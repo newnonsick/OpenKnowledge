@@ -131,6 +131,24 @@ def test_compute_rrf_weights_scaling():
     assert results[1].rrf_score == round(0.5 / 61.0, 6)
 
 
+def test_compute_rrf_zero_weight_disables_branch_and_invalid_weights_fail():
+    item_fts = _make_candidate(doc_id="fts", rank=1)
+    item_vec = _make_candidate(doc_id="vec", rank=1)
+
+    results = compute_rrf(
+        ranked_lists=[[item_fts], [item_vec]],
+        weights=[1.0, 0.0],
+    )
+
+    assert [item.id for item in results] == ["fts"]
+    with pytest.raises(ValueError):
+        compute_rrf([[item_fts]], weights=[-1.0])
+    with pytest.raises(ValueError):
+        compute_rrf([[item_fts]], weights=[float("nan")])
+    with pytest.raises(ValueError):
+        compute_rrf([[item_fts]], weights=[float("inf")])
+
+
 def test_compute_rrf_deduplication_and_rank_accumulation():
     """Verify candidate appearing in both FTS and vector lists accumulates reciprocal scores."""
     shared = _make_candidate(doc_id="shared_item", title="Shared Item", rank=1)

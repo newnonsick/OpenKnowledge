@@ -27,6 +27,17 @@ class SchemaStatus:
     head_revisions: tuple[str, ...]
     compatible: bool
     embedding_dimensions: tuple[int, ...] = ()
+    vector_extension_version: Optional[str] = None
+    trigram_extension_available: bool = False
+
+
+def _version_tuple(value: Optional[str]) -> tuple[int, ...]:
+    if not value:
+        return ()
+    match = re.match(r"^(\d+)(?:\.(\d+))?(?:\.(\d+))?", value)
+    if match is None:
+        return ()
+    return tuple(int(part or 0) for part in match.groups())
 
 def get_alembic_config(db_url: Optional[str] = None) -> Config:
 
@@ -97,6 +108,13 @@ async def get_schema_status_async(
                 for value in dimension_rows.scalars().all()
                 if (match := re.fullmatch(r"vector\((\d+)\)", value or ""))
             )
+            extension_result = await connection.execute(
+                text(
+                    "SELECT extname, extversion FROM pg_extension "
+                    "WHERE extname IN ('vector', 'pg_trgm')"
+                )
+            )
+            extension_rows = dict(extension_result.tuples().all())
     finally:
         await engine.dispose()
     revision_compatible = current is not None and current in heads
@@ -104,11 +122,18 @@ async def get_schema_status_async(
         len(dimensions) == 2
         and all(dimension == expected_dimension for dimension in dimensions)
     )
+    vector_version = extension_rows.get("vector")
+    extensions_compatible = (
+        _version_tuple(vector_version) >= (0, 8, 0)
+        and "pg_trgm" in extension_rows
+    )
     return SchemaStatus(
         current_revision=current,
         head_revisions=heads,
-        compatible=revision_compatible and dimension_compatible,
+        compatible=revision_compatible and dimension_compatible and extensions_compatible,
         embedding_dimensions=dimensions,
+        vector_extension_version=vector_version,
+        trigram_extension_available="pg_trgm" in extension_rows,
     )
 
 def rollback_migrations_sync(revision: str = "base", alembic_cfg: Optional[Config] = None) -> None:

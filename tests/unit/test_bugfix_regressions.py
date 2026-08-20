@@ -272,7 +272,7 @@ async def test_bug_c_anthropic_stream_stop_reason_max_tokens():
             "/v1/messages",
             headers=_auth_headers(),
             json={
-                "model": "claude-3",
+                "model": "default",
                 "max_tokens": 100,
                 "stream": True,
                 "messages": [{"role": "user", "content": "hi"}],
@@ -316,7 +316,7 @@ async def test_bug_j_anthropic_stream_accumulates_tool_use_block():
             "/v1/messages",
             headers=_auth_headers(),
             json={
-                "model": "claude-3",
+                "model": "default",
                 "max_tokens": 100,
                 "stream": True,
                 "messages": [{"role": "user", "content": "weather?"}],
@@ -354,7 +354,7 @@ async def test_bug_b_router_openai_sse_maps_max_tokens_to_length():
             "/v1/chat/completions",
             headers=_auth_headers(),
             json={
-                "model": "gpt-test",
+                "model": "default",
                 "stream": True,
                 "messages": [{"role": "user", "content": "hi"}],
             },
@@ -385,7 +385,7 @@ async def test_openai_sse_forwards_usage_when_present():
         resp = await client.post(
             "/v1/chat/completions",
             headers=_auth_headers(),
-            json={"model": "gpt-test", "stream": True, "messages": [{"role": "user", "content": "hi"}]},
+            json={"model": "default", "stream": True, "messages": [{"role": "user", "content": "hi"}]},
         )
         events = _parse_sse_events(resp.text)
         with_usage = [e for e in events if e.get("usage")]
