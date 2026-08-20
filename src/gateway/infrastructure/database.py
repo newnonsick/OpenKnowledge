@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 import asyncio
 import logging
+from time import perf_counter
 from typing import Optional
 from uuid import UUID
 
@@ -16,13 +17,42 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from sqlalchemy.engine import Engine
 
 from src.gateway.config import get_settings
 from src.gateway.domain.exceptions import AuthorizationException
 from src.gateway.domain.identity import Principal
 from src.gateway.infrastructure.persistence.principal_context import get_bound_principal, set_principal_context
+from src.gateway.observability import increment_metric, observe_metric
 
 logger = logging.getLogger(__name__)
+
+
+@event.listens_for(Engine, "before_cursor_execute")
+def _measure_query_start(connection, cursor, statement, parameters, context, executemany) -> None:
+    context._gateway_query_started = perf_counter()
+
+
+@event.listens_for(Engine, "after_cursor_execute")
+def _measure_query_finish(connection, cursor, statement, parameters, context, executemany) -> None:
+    started = getattr(context, "_gateway_query_started", None)
+    if started is None:
+        return
+    operation = statement.lstrip().split(None, 1)[0].lower() if statement.strip() else "other"
+    if operation not in {"delete", "insert", "select", "update"}:
+        operation = "other"
+    observe_metric("gateway_database_query_duration_seconds", perf_counter() - started, operation=operation, outcome="success")
+
+
+@event.listens_for(Engine, "handle_error")
+def _measure_query_error(exception_context) -> None:
+    context = exception_context.execution_context
+    started = getattr(context, "_gateway_query_started", None) if context is not None else None
+    statement = exception_context.statement or ""
+    operation = statement.lstrip().split(None, 1)[0].lower() if statement.strip() else "other"
+    if operation not in {"delete", "insert", "select", "update"}:
+        operation = "other"
+    observe_metric("gateway_database_query_duration_seconds", perf_counter() - started if started is not None else 0, operation=operation, outcome="error")
 
 def normalize_database_url(url: str) -> str:
 
@@ -181,11 +211,18 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 
     session_factory = get_session_factory()
     async with session_factory() as session:
+        acquisition_started = perf_counter()
         try:
+            await session.connection()
+            observe_metric("gateway_database_acquisition_duration_seconds", perf_counter() - acquisition_started, outcome="success")
             yield session
             await session.commit()
+            increment_metric("gateway_database_transactions_total", outcome="commit")
         except Exception:
+            if not session.in_transaction():
+                observe_metric("gateway_database_acquisition_duration_seconds", perf_counter() - acquisition_started, outcome="error")
             await session.rollback()
+            increment_metric("gateway_database_transactions_total", outcome="rollback")
             raise
         finally:
             await session.close()

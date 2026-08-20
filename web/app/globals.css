@@ -149,26 +149,15 @@ button { color: inherit; }
 .live-dot.is-down { background: #ef8178; box-shadow: 0 0 0 4px rgba(239,129,120,.12); }
 .pulse-status { color: #7ee0b7; font-size: 8px; }
 .pulse-status.is-down { color: #f39a91; }
-.pulse-score { display: flex; align-items: flex-start; gap: 4px; margin-top: 28px; }
-.pulse-score strong { font-size: 52px; letter-spacing: -.065em; line-height: .9; }
-.pulse-score span { color: #8d8994; font-size: 15px; }
+.pulse-summary { display: flex; align-items: baseline; gap: 10px; margin-top: 25px; }
+.pulse-summary strong { font-size: 43px; letter-spacing: -.055em; line-height: .9; }
+.pulse-summary span { color: #aaa5b2; font-size: 9px; font-weight: 700; }
 .pulse-panel > p { margin: 12px 0 0; color: #8f8b96; font-size: 9px; }
-.pulse-bars { height: 72px; display: flex; align-items: flex-end; gap: 5px; margin: 23px 0; }
-.pulse-bars span { flex: 1; min-width: 4px; border-radius: 4px 4px 1px 1px; background: linear-gradient(180deg, #8f71f2, #38a9b7); opacity: .88; }
-.pulse-bar-62 { height: 62%; }
-.pulse-bar-70 { height: 70%; }
-.pulse-bar-78 { height: 78%; }
-.pulse-bar-83 { height: 83%; }
-.pulse-bar-87 { height: 87%; }
-.pulse-bar-91 { height: 91%; }
-.pulse-bar-92 { height: 92%; }
-.pulse-bar-94 { height: 94%; }
-.pulse-bar-96 { height: 96%; }
-.pulse-bar-98 { height: 98%; }
-.pulse-metrics { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
-.pulse-metrics div { display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; background: rgba(255,255,255,.035); }
-.pulse-metrics small { color: #85818c; font-size: 8px; }
-.pulse-metrics strong { font-size: 13px; }
+.pulse-operational-grid { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; margin-top: 20px; }
+.pulse-operational-grid div { display: flex; min-width: 0; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; background: rgba(255,255,255,.035); }
+.pulse-operational-grid small { color: #85818c; font-size: 8px; }
+.pulse-operational-grid strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.pulse-observed { position: relative; z-index: 1; display: block; margin-top: 10px; color: #76717f; font-size: 7px; }
 
 .attention-strip { display: flex; align-items: center; gap: 13px; margin-top: 18px; padding: 15px 17px; border: 1px solid #f0e4cd; border-radius: 15px; background: #fffaf1; }
 .attention-icon { width: 35px; height: 35px; display: grid; place-items: center; border-radius: 11px; background: var(--amber-soft); color: var(--amber); }

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from time import perf_counter
 from typing import Any, Dict, List, Optional
 import httpx
 
 from src.gateway.application.ports.clients import IEmbeddingClient
 from src.gateway.config import get_settings
 from src.gateway.domain.exceptions import EmbeddingException
+from src.gateway.observability import current_trace_headers, increment_metric, observe_metric
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +95,7 @@ class HTTPEmbeddingClient(IEmbeddingClient):
     def _build_headers(self) -> Dict[str, str]:
 
         headers = {"Content-Type": "application/json"}
+        headers.update(current_trace_headers())
         if self.api_key and self.api_key != "EMPTY":
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
@@ -178,7 +181,18 @@ class HTTPEmbeddingClient(IEmbeddingClient):
 
         client = self._client or await self.get_shared_client(self.timeout_seconds)
         for b in batches:
-            res = await _process_batch(client, b)
+            started = perf_counter()
+            outcome = "success"
+            try:
+                res = await _process_batch(client, b)
+            except Exception as exc:
+                outcome = "timeout" if isinstance(exc.__cause__, (TimeoutError, httpx.TimeoutException)) else "error"
+                raise
+            finally:
+                elapsed = perf_counter() - started
+                increment_metric("gateway_embedding_events_total", event="batch", outcome=outcome)
+                observe_metric("gateway_dependency_duration_seconds", elapsed, dependency="embedding", operation="batch", outcome=outcome)
+                observe_metric("gateway_embedding_batch_size", len(b), operation="batch", outcome=outcome)
             all_embeddings.extend(res)
 
         return all_embeddings

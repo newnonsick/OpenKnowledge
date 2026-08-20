@@ -46,11 +46,40 @@ export type DashboardSpace = {
   role: string;
 };
 
+export type DashboardOperations = {
+  ingestion: {
+    cancelled: number;
+    cancellation_requested: number;
+    failed: number;
+    queued: number;
+    retry_wait: number;
+    running: number;
+    succeeded: number;
+  };
+  observed_at: string;
+  retrieval: { embedding_generation_active: boolean };
+  scope: "accessible_spaces";
+  settings_revision: number;
+  spaces: number;
+  storage: { referenced_bytes: number };
+};
+
 type DashboardShellProps = {
   member: { displayName: string; role: string };
+  operations: DashboardOperations | null;
   ready: boolean;
   spaces: DashboardSpace[];
 };
+
+function formatBytes(value: number): string {
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function NavigationGroup({ label, items }: { label: string; items: typeof navigation }) {
   return (
@@ -71,8 +100,9 @@ function NavigationGroup({ label, items }: { label: string; items: typeof naviga
   );
 }
 
-export function DashboardShell({ member, ready, spaces }: DashboardShellProps) {
+export function DashboardShell({ member, operations, ready, spaces }: DashboardShellProps) {
   const initials = member.displayName.split(/\s+/).map((value) => value[0]).join("").slice(0, 2).toUpperCase();
+  const queued = operations ? operations.ingestion.queued + operations.ingestion.retry_wait : 0;
   return (
     <div className="app-frame">
       <aside className="sidebar">
@@ -158,16 +188,17 @@ export function DashboardShell({ member, ready, spaces }: DashboardShellProps) {
 
             <article className="pulse-panel">
               <div className="pulse-topline"><span><span className={`live-dot${ready ? "" : " is-down"}`} /> System pulse</span><span className={`pulse-status${ready ? "" : " is-down"}`}>{ready ? "Ready" : "Needs attention"}</span></div>
-              <div className="pulse-score"><strong>{ready ? "100" : "0"}</strong><span>%</span></div>
-              <p>Gateway readiness reported by the live production boundary</p>
-              <div className="pulse-bars" aria-hidden="true">
-                {[62, 78, 70, 91, 83, 94, 87, 96, 92, 98].map((height) => <span className={`pulse-bar-${height}`} key={height} />)}
+              <div className="pulse-summary"><strong>{operations ? operations.ingestion.running : "—"}</strong><span>jobs processing now</span></div>
+              <p>{operations ? `Observed across ${operations.spaces} accessible ${operations.spaces === 1 ? "space" : "spaces"}` : "Operational snapshot is temporarily unavailable"}</p>
+              <div className="pulse-operational-grid">
+                <div><small>Queue</small><strong>{operations ? `${queued} queued` : "Unavailable"}</strong></div>
+                <div><small>Processing</small><strong>{operations ? `${operations.ingestion.running} running` : "Unavailable"}</strong></div>
+                <div><small>Storage</small><strong>{operations ? `${formatBytes(operations.storage.referenced_bytes)} referenced` : "Unavailable"}</strong></div>
+                <div><small>Retrieval</small><strong>{operations?.retrieval.embedding_generation_active ? "Generation active" : "Check generation"}</strong></div>
+                <div><small>Settings</small><strong>{operations ? `Revision ${operations.settings_revision}` : "Unavailable"}</strong></div>
+                <div><small>Failures</small><strong>{operations ? `${operations.ingestion.failed} terminal` : "Unavailable"}</strong></div>
               </div>
-              <div className="pulse-metrics">
-                <div><small>Spaces</small><strong>{spaces.length}</strong></div>
-                <div><small>Access</small><strong>Scoped</strong></div>
-                <div><small>Gateway</small><strong>{ready ? "Ready" : "Check"}</strong></div>
-              </div>
+              {operations ? <time className="pulse-observed" dateTime={operations.observed_at}>Snapshot {new Date(operations.observed_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time> : null}
             </article>
           </section>
 

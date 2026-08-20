@@ -45,7 +45,7 @@ class RequestBodyLimitMiddleware:
         async def replay():
             nonlocal index
             if index >= len(messages):
-                return {"type": "http.request", "body": b"", "more_body": False}
+                return await receive()
             message = messages[index]
             index += 1
             return message

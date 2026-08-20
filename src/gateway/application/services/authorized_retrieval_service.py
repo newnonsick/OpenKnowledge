@@ -4,6 +4,7 @@ import asyncio
 import math
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
+from time import perf_counter
 from typing import Sequence
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from src.gateway.domain.identity import Principal
 from src.gateway.domain.retrieval import RetrievalCandidate, RetrievalExplanation, RetrievalHealth, RetrievalHit, RetrievalResponse, SemanticPolicy
 from src.gateway.infrastructure.database import get_session_factory, principal_session
 from src.gateway.infrastructure.persistence.principal_context import bind_principal, reset_principal
+from src.gateway.observability import increment_metric, observe_metric
 
 
 ScopeResolver = Callable[[Principal, set[str] | None], Awaitable[tuple[str, ...]]]
@@ -89,22 +91,30 @@ class AuthorizedRetrievalService:
             active_space_boost,
             hnsw_ef_search,
         )
+        total_started = perf_counter()
+        outcome = "error"
         token = bind_principal(principal)
         try:
             effective_spaces = await self._scope_resolver(principal, requested_space_ids)
             if not effective_spaces:
-                return self._empty_response(normalized_query, effective_spaces, semantic_policy)
+                response = self._empty_response(normalized_query, effective_spaces, semantic_policy)
+                self._observe_response(response)
+                outcome = "success"
+                return response
 
             generation_id = await self._repository.active_generation(principal)
             if generation_id is None:
                 if semantic_policy == "required":
                     raise EmbeddingException("Semantic retrieval is currently unavailable.")
-                return self._empty_response(
+                response = self._empty_response(
                     normalized_query,
                     effective_spaces,
                     semantic_policy,
                     degraded_reason="active_embedding_generation_unavailable",
                 )
+                self._observe_response(response)
+                outcome = "degraded"
+                return response
 
             resolved_branch_limit = branch_limit or max(limit * 4, 40)
             coverage_task = asyncio.create_task(
@@ -117,13 +127,16 @@ class AuthorizedRetrievalService:
             lexical_task = None
             if lexical_weight > 0.0:
                 lexical_task = asyncio.create_task(
-                    self._repository.lexical_search(
-                        principal,
-                        effective_spaces,
-                        normalized_query,
-                        generation_id,
-                        resolved_branch_limit,
-                        minimum_lexical_score,
+                    self._timed_phase(
+                        "fts",
+                        lambda: self._repository.lexical_search(
+                            principal,
+                            effective_spaces,
+                            normalized_query,
+                            generation_id,
+                            resolved_branch_limit,
+                            minimum_lexical_score,
+                        ),
                     )
                 )
 
@@ -146,15 +159,18 @@ class AuthorizedRetrievalService:
                         degraded_reasons = ("embedding_provider_unavailable",)
                     else:
                         try:
-                            vector_candidates = await self._repository.vector_search(
-                                principal,
-                                effective_spaces,
-                                query_vector,
-                                generation_id,
-                                resolved_branch_limit,
-                                minimum_vector_similarity,
-                                exact_vector,
-                                hnsw_ef_search,
+                            vector_candidates = await self._timed_phase(
+                                "vector",
+                                lambda: self._repository.vector_search(
+                                    principal,
+                                    effective_spaces,
+                                    query_vector,
+                                    generation_id,
+                                    resolved_branch_limit,
+                                    minimum_vector_similarity,
+                                    exact_vector,
+                                    hnsw_ef_search,
+                                ),
                             )
                         except Exception:
                             await self._cancel_tasks(coverage_task, lexical_task)
@@ -166,6 +182,8 @@ class AuthorizedRetrievalService:
                 await self._cancel_tasks(coverage_task)
                 raise
             coverage = await coverage_task
+            observe_metric("gateway_embedding_generation_coverage_ratio", coverage, outcome="success")
+            fusion_started = perf_counter()
             hits = self._fuse(
                 lexical_candidates,
                 vector_candidates,
@@ -177,13 +195,14 @@ class AuthorizedRetrievalService:
                 active_space_id=active_space_id if active_space_id in effective_spaces else None,
                 active_space_boost=active_space_boost,
             )
+            observe_metric("gateway_retrieval_duration_seconds", perf_counter() - fusion_started, phase="fusion", outcome="success")
             if semantic_policy == "disabled" or vector_weight == 0.0:
                 semantic_status = "disabled"
             elif degraded_reasons:
                 semantic_status = "degraded"
             else:
                 semantic_status = "active"
-            return RetrievalResponse(
+            response = RetrievalResponse(
                 query=normalized_query,
                 hits=hits,
                 health=RetrievalHealth(
@@ -201,8 +220,33 @@ class AuthorizedRetrievalService:
                     abstained=not hits,
                 ),
             )
+            self._observe_response(response)
+            outcome = "degraded" if degraded_reasons else "success"
+            return response
         finally:
             reset_principal(token)
+            observe_metric("gateway_retrieval_duration_seconds", perf_counter() - total_started, phase="total", outcome=outcome)
+
+    @staticmethod
+    async def _timed_phase(phase: str, operation):
+        started = perf_counter()
+        outcome = "success"
+        try:
+            return await operation()
+        except Exception:
+            outcome = "error"
+            raise
+        finally:
+            observe_metric("gateway_retrieval_duration_seconds", perf_counter() - started, phase=phase, outcome=outcome)
+
+    @staticmethod
+    def _observe_response(response: RetrievalResponse) -> None:
+        result_count = len(response.hits)
+        outcome = "zero" if result_count == 0 else "results"
+        increment_metric("gateway_retrieval_events_total", event="search", outcome=outcome)
+        observe_metric("gateway_retrieval_result_count", result_count, outcome=outcome)
+        coverage = 0.0 if result_count == 0 else sum(bool(hit.candidate.citation_uri) for hit in response.hits) / result_count
+        observe_metric("gateway_retrieval_citation_coverage_ratio", coverage, outcome=outcome)
 
     async def _resolve_scope(
         self,

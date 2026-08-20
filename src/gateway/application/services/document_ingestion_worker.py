@@ -3,7 +3,10 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
+import logging
+from time import perf_counter
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -15,6 +18,10 @@ from src.gateway.application.services.document_activation_service import Activat
 from src.gateway.application.services.ingestion_job_service import IngestionJobService, JobClaim
 from src.gateway.domain.exceptions import AuthorizationException, ConcurrencyConflictException, EmbeddingException, ItemNotFoundException, JobLeaseLostException, ParserTimeoutException, StorageException, ValidationException
 from src.gateway.infrastructure.persistence.ingestion_models import DocumentRevisionModel, EmbeddingGenerationModel, IngestionJobModel
+from src.gateway.observability import increment_metric, observe_metric, set_metric_gauge
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,16 +65,29 @@ class DocumentIngestionWorker:
         self._heartbeat_interval_seconds = heartbeat_interval_seconds
         self._chunker = Chunker(chunk_size, chunk_overlap)
         self._max_chunks = max_chunks
+        self._last_queue_observation = 0.0
 
     async def run_once(self):
         async with self._session_factory.begin() as session:
-            claim = await IngestionJobService(session).claim_next(
+            jobs = IngestionJobService(session)
+            current_tick = perf_counter()
+            if current_tick - self._last_queue_observation >= 15:
+                for state, depth in (await jobs.queue_depths()).items():
+                    set_metric_gauge("gateway_ingestion_queue_depth", depth, state=state)
+                self._last_queue_observation = current_tick
+            claim = await jobs.claim_next(
                 self._worker_id,
                 lease_seconds=self._lease_seconds,
             )
         if claim is None:
             return None
-        processing = asyncio.create_task(self._process_claim(claim))
+        observe_metric(
+            "gateway_ingestion_claim_latency_seconds",
+            max(0.0, (datetime.now(timezone.utc) - claim.queued_at).total_seconds()),
+            outcome="success",
+        )
+        increment_metric("gateway_ingestion_events_total", event="claim", outcome="success")
+        processing = asyncio.create_task(self._process_claim_observed(claim))
         try:
             while True:
                 done, _ = await asyncio.wait(
@@ -98,6 +118,24 @@ class DocumentIngestionWorker:
                 with suppress(asyncio.CancelledError):
                     await processing
 
+    async def _process_claim_observed(self, claim: JobClaim) -> str:
+        started = perf_counter()
+        outcome = "error"
+        try:
+            outcome = await self._process_claim(claim)
+            return outcome
+        except JobLeaseLostException:
+            outcome = "lease_lost"
+            raise
+        finally:
+            observe_metric("gateway_ingestion_processing_duration_seconds", perf_counter() - started, outcome=outcome)
+            event = "terminal" if outcome in {"cancelled", "failed", "succeeded"} else "attempt"
+            increment_metric("gateway_ingestion_events_total", event=event, outcome=outcome)
+            logger.info(
+                "Ingestion job attempt completed",
+                extra={"attempt": claim.attempt_count, "job_id": claim.job_id, "outcome": outcome, "worker_id": self._worker_id},
+            )
+
     async def run_until_stopped(
         self,
         stop_event: asyncio.Event,
@@ -114,11 +152,11 @@ class DocumentIngestionWorker:
                 except TimeoutError:
                     pass
 
-    async def _process_claim(self, claim: JobClaim) -> None:
+    async def _process_claim(self, claim: JobClaim) -> str:
         try:
             revision = await self._mark_processing(claim)
             if not await self._checkpoint(claim, 5):
-                return
+                return "cancelled"
             try:
                 content = await self._storage.read(revision.storage_key)
             except ItemNotFoundException as exc:
@@ -130,7 +168,7 @@ class DocumentIngestionWorker:
             if hashlib.sha256(content).hexdigest() != revision.checksum_sha256:
                 raise _IngestionFailure("storage_checksum_mismatch", False, True)
             if not await self._checkpoint(claim, 20):
-                return
+                return "cancelled"
             try:
                 parsed = await self._parser.parse(
                     filename=revision.original_filename,
@@ -147,7 +185,7 @@ class DocumentIngestionWorker:
             if len(chunks) > self._max_chunks:
                 raise _IngestionFailure("chunk_limit_exceeded", False)
             if not await self._checkpoint(claim, 45):
-                return
+                return "cancelled"
             generation = await self._active_generation()
             try:
                 embeddings = await self._embedding_client.embed_texts(chunks)
@@ -156,7 +194,7 @@ class DocumentIngestionWorker:
             if len(embeddings) != len(chunks):
                 raise _IngestionFailure("embedding_count_mismatch", True)
             if not await self._checkpoint(claim, 80):
-                return
+                return "cancelled"
             artifacts = [
                 ActivationChunk(
                     content=value,
@@ -176,22 +214,23 @@ class DocumentIngestionWorker:
                     embedding_generation_id=generation.id,
                     chunks=artifacts,
                 )
+            return "succeeded"
         except JobLeaseLostException:
             raise
         except _IngestionFailure as failure:
-            await self._record_failure(claim, failure)
+            return await self._record_failure(claim, failure)
         except AuthorizationException:
-            await self._record_failure(
+            return await self._record_failure(
                 claim,
                 _IngestionFailure("authorization_revoked", False),
             )
         except ConcurrencyConflictException:
-            await self._record_failure(
+            return await self._record_failure(
                 claim,
                 _IngestionFailure("activation_conflict", False),
             )
         except Exception as exc:
-            await self._record_failure(
+            return await self._record_failure(
                 claim,
                 _IngestionFailure(f"internal_{type(exc).__name__.lower()}", True),
             )
@@ -245,7 +284,7 @@ class DocumentIngestionWorker:
         self,
         claim: JobClaim,
         failure: _IngestionFailure,
-    ) -> None:
+    ) -> str:
         async with self._session_factory.begin() as session:
             state = await IngestionJobService(session).fail(
                 claim.job_id,
@@ -269,3 +308,4 @@ class DocumentIngestionWorker:
                 )
                 .values(status=revision_state, failure_code=failure.code)
             )
+            return state

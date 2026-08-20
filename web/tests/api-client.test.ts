@@ -23,6 +23,10 @@ describe("apiRequest", () => {
     expect(refreshCall[0]).toBe("/api/v1/auth/refresh");
     expect(refreshCall[1]).toEqual(expect.objectContaining({ body: "{}", credentials: "include", method: "POST" }));
     expect(new Headers(refreshCall[1]?.headers).get("X-CSRF-Token")).toBe("test-csrf");
+    const initialTrace = new Headers(fetchMock.mock.calls[0][1]?.headers).get("traceparent");
+    const retryTrace = new Headers(fetchMock.mock.calls[2][1]?.headers).get("traceparent");
+    expect(initialTrace).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+    expect(retryTrace).toBe(initialTrace);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
@@ -41,6 +45,7 @@ describe("apiRequest", () => {
     expect(requestHeaders.get("Content-Type")).toBe("application/json");
     expect(requestHeaders.get("Idempotency-Key")).toEqual(expect.any(String));
     expect(requestHeaders.get("X-CSRF-Token")).toBe("test-csrf");
+    expect(requestHeaders.get("traceparent")).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
   });
 
   it("uploads multipart bodies without overriding the browser boundary", async () => {
@@ -60,6 +65,7 @@ describe("apiRequest", () => {
     expect(requestHeaders.has("Content-Type")).toBe(false);
     expect(requestHeaders.get("Idempotency-Key")).toEqual(expect.any(String));
     expect(requestHeaders.get("X-CSRF-Token")).toBe("test-csrf");
+    expect(requestHeaders.get("traceparent")).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
   });
 
   it("keeps the multipart idempotency key while refreshing a session", async () => {

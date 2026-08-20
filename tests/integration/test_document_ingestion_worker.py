@@ -13,6 +13,8 @@ from src.gateway.infrastructure.persistence.ingestion_models import DocumentMode
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, SpaceMembershipModel
 from src.gateway.infrastructure.persistence.models import Workspace
 from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
+from src.gateway.observability import metrics_registry_context
+from src.gateway.presentation.metrics import MetricsRegistry
 from tests.e2e.harness.test_env import TestEnvironment
 from tests.integration.postgres_test_database import isolated_postgres_database
 
@@ -105,7 +107,18 @@ async def test_worker_parses_embeds_and_atomically_activates_revision(tmp_path) 
             max_chunks=20,
         )
 
-        assert await worker.run_once() == receipt.job_id
+        registry = MetricsRegistry()
+        metrics_token = metrics_registry_context.set(registry)
+        try:
+            assert await worker.run_once() == receipt.job_id
+        finally:
+            metrics_registry_context.reset(metrics_token)
+
+        metrics = registry.render()
+        assert 'gateway_ingestion_events_total{event="claim",outcome="success"} 1' in metrics
+        assert 'gateway_ingestion_events_total{event="terminal",outcome="succeeded"} 1' in metrics
+        assert 'gateway_ingestion_processing_duration_seconds_count{outcome="succeeded"} 1' in metrics
+        assert 'gateway_ingestion_queue_depth{state="queued"} 1' in metrics
 
         async with env.session_factory() as session:
             document = await session.get(DocumentModel, receipt.document_id)

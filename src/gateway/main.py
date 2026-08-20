@@ -23,6 +23,7 @@ from src.gateway.infrastructure.database import close_db_engine, get_session_fac
 from src.gateway.infrastructure.migrations import get_schema_status_async
 from src.gateway.infrastructure.persistence.models import Workspace
 from src.gateway.infrastructure.readiness import ReadinessProbe
+from src.gateway.observability import configure_logging
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
 from src.gateway.presentation.errors import register_exception_handlers
 from src.gateway.presentation.request_context import RequestContextMiddleware
@@ -117,6 +118,8 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
 
     current_settings = app_settings or get_settings()
     current_settings.validate_runtime_safety()
+    if current_settings.gateway.environment is not RuntimeEnvironment.TEST:
+        configure_logging(current_settings.gateway.log_level)
 
     app = FastAPI(
         title="Local AI Gateway with Internal Shared Knowledge",

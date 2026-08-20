@@ -9,7 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, Response, UploadFile, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError as PydanticValidationError
-from sqlalchemy import and_, exists, or_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.gateway.application.security.passwords import PasswordService
@@ -34,7 +34,7 @@ from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, 
 from src.gateway.domain.entities import KnowledgeItem as DomainKnowledgeItem
 from src.gateway.infrastructure.database import get_db_session, get_session_factory
 from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
-from src.gateway.infrastructure.persistence.ingestion_models import DocumentModel, DocumentRevisionChunkModel, DocumentRevisionModel, IngestionJobModel, RetrievalUnitModel
+from src.gateway.infrastructure.persistence.ingestion_models import DocumentModel, DocumentRevisionChunkModel, DocumentRevisionModel, EmbeddingGenerationModel, IngestionJobModel, RetrievalUnitModel
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
 from src.gateway.infrastructure.persistence.models import KnowledgeItem as KnowledgeItemModel, KnowledgeRevision as KnowledgeRevisionModel
 from src.gateway.infrastructure.persistence.retrieval_unit_repository import PostgresRetrievalUnitRepository
@@ -45,10 +45,60 @@ from src.gateway.infrastructure.runtime_settings_provider import load_active_ret
 from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
 from src.gateway.presentation.authorization import require_principal, require_scope
 from src.gateway.presentation.request_context import get_request_id
+from src.gateway.observability import increment_metric, set_metric_gauge
 
 
 router = APIRouter(prefix="/api/v1", tags=["Management"])
 KnowledgeTag = Annotated[str, Field(min_length=1, max_length=80)]
+
+
+@router.get("/operations/summary")
+async def operations_summary(
+    principal: Principal = Depends(require_scope("settings:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal))
+    states = ("queued", "retry_wait", "running", "cancellation_requested", "succeeded", "failed", "cancelled")
+    if space_ids:
+        job_rows = await session.execute(
+            select(IngestionJobModel.state, func.count(IngestionJobModel.id))
+            .where(IngestionJobModel.space_id.in_(space_ids))
+            .group_by(IngestionJobModel.state)
+        )
+        job_counts = {state: int(count) for state, count in job_rows}
+        referenced_bytes = int(
+            await session.scalar(
+                select(func.coalesce(func.sum(DocumentRevisionModel.size_bytes), 0)).where(
+                    DocumentRevisionModel.space_id.in_(space_ids),
+                    DocumentRevisionModel.storage_key.is_not(None),
+                )
+            )
+            or 0
+        )
+    else:
+        job_counts = {}
+        referenced_bytes = 0
+    ingestion = {state: job_counts.get(state, 0) for state in states}
+    for state, depth in ingestion.items():
+        set_metric_gauge("gateway_ingestion_queue_depth", depth, state=state)
+    set_metric_gauge("gateway_storage_bytes", referenced_bytes, kind="referenced")
+    set_metric_gauge("gateway_dependency_available", 1, dependency="database")
+    generation_active = await session.scalar(
+        select(EmbeddingGenerationModel.id).where(
+            EmbeddingGenerationModel.purpose == "retrieval",
+            EmbeddingGenerationModel.status == "active",
+        )
+    )
+    active_settings = await RuntimeSettingsService(session).active()
+    return {
+        "scope": "accessible_spaces",
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "spaces": len(space_ids),
+        "ingestion": ingestion,
+        "storage": {"referenced_bytes": referenced_bytes},
+        "retrieval": {"embedding_generation_active": generation_active is not None},
+        "settings_revision": active_settings.revision,
+    }
 
 
 class SpaceCreateRequest(BaseModel):
@@ -567,6 +617,8 @@ async def execute_ai_tool(
         idempotency_key,
         normalized,
     )
+    if reservation.status is ReservationStatus.REPLAY:
+        increment_metric("gateway_tool_events_total", event="duplicate", outcome="replayed")
     if confirmation == "required":
         if reservation.status is ReservationStatus.REPLAY:
             if not reservation.resource_ids:
@@ -590,6 +642,7 @@ async def execute_ai_tool(
                 response_status=202,
                 resource_ids=[str(pending_id)],
             )
+            increment_metric("gateway_tool_events_total", event="confirmation", outcome="proposed")
         return JSONResponse(
             status_code=202,
             content={

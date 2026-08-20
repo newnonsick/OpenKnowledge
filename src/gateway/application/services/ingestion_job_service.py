@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 import random
 from uuid import UUID, uuid4
 
@@ -21,6 +21,7 @@ class JobClaim:
     claim_token: UUID
     attempt_count: int
     cancellation_requested: bool
+    queued_at: datetime
 
 
 class IngestionJobService:
@@ -71,7 +72,17 @@ class IngestionJobService:
             claim_token=token,
             attempt_count=job.attempt_count,
             cancellation_requested=job.cancellation_requested,
+            queued_at=job.created_at,
         )
+
+    async def queue_depths(self) -> dict[str, int]:
+        rows = await self._session.execute(
+            select(IngestionJobModel.state, func.count(IngestionJobModel.id))
+            .where(IngestionJobModel.state.in_(("queued", "retry_wait", "running")))
+            .group_by(IngestionJobModel.state)
+        )
+        counts = {state: count for state, count in rows}
+        return {state: int(counts.get(state, 0)) for state in ("queued", "retry_wait", "running")}
 
     async def heartbeat(self, job_id: UUID, claim_token: UUID, *, lease_seconds: int) -> None:
         if lease_seconds <= 0:

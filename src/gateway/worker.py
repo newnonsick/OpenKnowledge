@@ -19,6 +19,7 @@ from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbedd
 from src.gateway.infrastructure.database import close_db_engine, get_worker_session_factory, normalize_database_url, validate_worker_database_role
 from src.gateway.infrastructure.migrations import get_schema_status_async
 from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
+from src.gateway.observability import configure_logging
 
 
 logger = logging.getLogger(__name__)
@@ -125,7 +126,7 @@ async def _main() -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=get_settings().gateway.log_level.upper())
+    configure_logging(get_settings().gateway.log_level)
     asyncio.run(_main())
 
 

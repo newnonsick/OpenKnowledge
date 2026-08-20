@@ -14,6 +14,7 @@ from src.gateway.domain.exceptions import AuthenticationException, CSRFException
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SystemRole
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, SessionCredentialModel, SessionFamilyModel
+from src.gateway.observability import increment_metric
 
 
 class RefreshStatus(StrEnum):
@@ -201,12 +202,14 @@ class SessionService:
                 resource_id=str(family.id),
                 outcome="denied",
             )
+            increment_metric("gateway_auth_events_total", event="token_reuse", outcome="detected")
             return RefreshRotation(RefreshStatus.REUSE_DETECTED)
         member = await self._session.get(MemberModel, family.member_id)
         if member is None or member.status == MemberStatus.DISABLED.value:
             family.revoked_at = current_time
             family.revoke_reason = "member_inactive"
             await self._revoke_credentials(family.id, current_time)
+            increment_metric("gateway_auth_events_total", event="token_reuse", outcome="member_inactive")
             return RefreshRotation(RefreshStatus.REUSE_DETECTED)
         access = self._tokens.issue()
         refresh = self._tokens.issue()

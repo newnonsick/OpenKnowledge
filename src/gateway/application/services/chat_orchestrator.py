@@ -48,6 +48,7 @@ from src.gateway.domain.tools import (
     is_internal_tool,
 )
 from src.gateway.infrastructure.persistence.principal_context import get_bound_principal
+from src.gateway.observability import increment_metric, observe_metric
 
 logger = logging.getLogger(__name__)
 
@@ -410,12 +411,18 @@ class ChatOrchestratorService(IChatOrchestrator):
         workspace_id: str,
     ) -> CanonicalToolResultBlock:
         try:
-            return await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 self._execute_internal_tool(tool_call, workspace_id),
                 timeout=self.tool_timeout_seconds,
             )
         except TimeoutError as exc:
+            increment_metric("gateway_tool_events_total", event="execution", outcome="timeout")
             raise ToolExecutionException("Internal tool execution timed out.") from exc
+        except Exception:
+            increment_metric("gateway_tool_events_total", event="execution", outcome="failure")
+            raise
+        increment_metric("gateway_tool_events_total", event="execution", outcome="success")
+        return result
 
     async def orchestrate_chat(
         self,
@@ -458,6 +465,7 @@ class ChatOrchestratorService(IChatOrchestrator):
                 total_usage.total_tokens += llm_response.usage.total_tokens
 
             if not llm_response.tool_calls:
+                observe_metric("gateway_tool_iteration_count", iteration, outcome="completed")
                 blocks: List[CanonicalBlock] = []
                 if llm_response.reasoning_content:
                     blocks.append(CanonicalThinkingBlock(thinking=llm_response.reasoning_content))
@@ -490,6 +498,7 @@ class ChatOrchestratorService(IChatOrchestrator):
                     "Mixed internal and external tool calls are not supported."
                 )
             if has_external_tool:
+                observe_metric("gateway_tool_iteration_count", iteration, outcome="external_handoff")
                 blocks = []
                 if llm_response.reasoning_content:
                     blocks.append(CanonicalThinkingBlock(thinking=llm_response.reasoning_content))
@@ -574,6 +583,8 @@ class ChatOrchestratorService(IChatOrchestrator):
                 )
             )
 
+        observe_metric("gateway_tool_iteration_count", iteration, outcome="exhausted")
+        increment_metric("gateway_tool_events_total", event="budget", outcome="exhausted")
         raise ToolExecutionException("Tool execution budget exhausted.")
 
     async def orchestrate_chat_stream(
@@ -687,6 +698,7 @@ class ChatOrchestratorService(IChatOrchestrator):
                 )
 
             if not has_internal_tool:
+                observe_metric("gateway_tool_iteration_count", iteration, outcome="completed")
                 for chunk in turn_chunks:
                     finish_reason = chunk.finish_reason
                     if finish_reason in ("tool_calls", "tool_use"):
@@ -766,4 +778,6 @@ class ChatOrchestratorService(IChatOrchestrator):
                 )
                 continue
 
+        observe_metric("gateway_tool_iteration_count", iteration, outcome="exhausted")
+        increment_metric("gateway_tool_events_total", event="budget", outcome="exhausted")
         raise ToolExecutionException("Tool execution budget exhausted.")

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { apiRequest } from "@/lib/api-client";
 import { useCurrentMember } from "@/components/auth/session-gate";
-import { DashboardShell, DashboardSpace } from "@/components/dashboard-shell";
+import { DashboardOperations, DashboardShell, DashboardSpace } from "@/components/dashboard-shell";
 
 type SpacesResponse = {
   items: Array<{
@@ -23,13 +23,15 @@ export function DashboardController() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<DashboardSpace[]>([]);
   const [ready, setReady] = useState(false);
+  const [operations, setOperations] = useState<DashboardOperations | null>(null);
 
   useEffect(() => {
     let active = true;
     Promise.allSettled([
       apiRequest<SpacesResponse>("/api/v1/spaces"),
       apiRequest<HealthResponse>("/healthz/ready", { retryAuthentication: false }),
-    ]).then(([spacesResult, healthResult]) => {
+      apiRequest<DashboardOperations>("/api/v1/operations/summary"),
+    ]).then(([spacesResult, healthResult, operationsResult]) => {
       if (!active) {
         return;
       }
@@ -42,6 +44,7 @@ export function DashboardController() {
         })));
       }
       setReady(healthResult.status === "fulfilled" && healthResult.value.status === "ready");
+      setOperations(operationsResult.status === "fulfilled" ? operationsResult.value : null);
     });
     return () => {
       active = false;
@@ -54,6 +57,7 @@ export function DashboardController() {
         displayName: member.display_name,
         role: member.system_role === "super_admin" ? "Super admin" : "Member",
       }}
+      operations={operations}
       ready={ready}
       spaces={spaces}
     />

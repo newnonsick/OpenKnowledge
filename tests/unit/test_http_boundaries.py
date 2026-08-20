@@ -187,11 +187,13 @@ async def test_metrics_expose_low_cardinality_http_health_without_authentication
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         await client.get("/healthz/live")
+        await client.post("/api/v1/auth/login", json={})
         metrics = await client.get("/metrics")
 
     assert metrics.status_code == 200
     assert 'gateway_http_requests_total{method="GET",route="/healthz/live",status="200"}' in metrics.text
     assert "gateway_http_active_requests 1" in metrics.text
+    assert 'gateway_auth_events_total{event="login",outcome="failure"} 1' in metrics.text
     assert "request_id" not in metrics.text
 
 

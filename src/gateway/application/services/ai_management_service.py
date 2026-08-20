@@ -22,6 +22,7 @@ from src.gateway.infrastructure.persistence.audit_repository import AuditReposit
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, PendingAIActionModel, SessionCredentialModel, SpaceMembershipModel
 from src.gateway.infrastructure.persistence.ingestion_models import IngestionJobModel
 from src.gateway.infrastructure.persistence.models import KnowledgeItem, KnowledgeRevision, Workspace
+from src.gateway.observability import increment_metric
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +202,7 @@ class AIManagementService:
         if action is None or action.actor_member_id != actor_id:
             raise AuthorizationException()
         if action.state != "pending" or current_time >= action.expires_at:
+            increment_metric("gateway_tool_events_total", event="confirmation", outcome="expired")
             raise ResourceConflictException("The pending AI action is unavailable.")
         expected_hash = IdempotencyService.request_hash(
             {"tool_name": action.tool_name, "arguments": action.normalized_command}
@@ -233,6 +235,7 @@ class AIManagementService:
             details={"tool_name": action.tool_name, "target_ids": action.target_ids},
         )
         await self._session.flush()
+        increment_metric("gateway_tool_events_total", event="confirmation", outcome="success")
         return action
 
     async def _execute_space_archive(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from time import perf_counter
 import uuid
 from typing import Any, AsyncIterator, Dict, List, Optional
 import httpx
@@ -18,6 +19,7 @@ from src.gateway.domain.canonical import (
 )
 from src.gateway.domain.exceptions import LLMProviderException
 from src.gateway.domain.tools import FunctionCall, ToolCall
+from src.gateway.observability import current_trace_headers, increment_metric, observe_metric
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +115,7 @@ class HttpLLMClient(ILLMClient):
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        headers.update(current_trace_headers())
         if self.api_key and self.api_key != "EMPTY":
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
@@ -172,6 +175,8 @@ class HttpLLMClient(ILLMClient):
             pool=30.0,
         )
 
+        started = perf_counter()
+        outcome = "success"
         try:
             resp = await client.post(
                 self.endpoint,
@@ -239,6 +244,8 @@ class HttpLLMClient(ILLMClient):
                     usage_data.get("prompt_tokens", 0) + usage_data.get("completion_tokens", 0),
                 ),
             )
+            observe_metric("gateway_llm_token_count", usage.prompt_tokens, direction="input", outcome="success")
+            observe_metric("gateway_llm_token_count", usage.completion_tokens, direction="output", outcome="success")
 
             return CanonicalLLMResponse(
                 id=data.get("id", f"chatcmpl-{uuid.uuid4().hex[:12]}"),
@@ -251,6 +258,7 @@ class HttpLLMClient(ILLMClient):
             )
 
         except httpx.RequestError as exc:
+            outcome = "timeout" if isinstance(exc, httpx.TimeoutException) else "error"
             logger.error(
                 "LLM provider connection failed",
                 extra={"exception_class": type(exc).__name__},
@@ -259,6 +267,12 @@ class HttpLLMClient(ILLMClient):
                 message="LLM provider connection failed.",
                 details={"error_type": type(exc).__name__},
             )
+        except LLMProviderException:
+            outcome = "error"
+            raise
+        finally:
+            increment_metric("gateway_llm_events_total", event="request", outcome=outcome)
+            observe_metric("gateway_dependency_duration_seconds", perf_counter() - started, dependency="llm", operation="request", outcome=outcome)
 
     async def generate_stream(
         self,
@@ -314,6 +328,8 @@ class HttpLLMClient(ILLMClient):
             pool=30.0,
         )
 
+        started = perf_counter()
+        outcome = "success"
         try:
             async with client.stream(
                 "POST",
@@ -395,6 +411,8 @@ class HttpLLMClient(ILLMClient):
                             completion_tokens=usage_data.get("completion_tokens", 0),
                             total_tokens=usage_data.get("total_tokens", 0),
                         )
+                        observe_metric("gateway_llm_token_count", usage_obj.prompt_tokens, direction="input", outcome="success")
+                        observe_metric("gateway_llm_token_count", usage_obj.completion_tokens, direction="output", outcome="success")
 
                     yield CanonicalLLMStreamChunk(
                         id=chunk_dict.get("id", f"chatcmpl-{uuid.uuid4().hex[:8]}"),
@@ -407,6 +425,7 @@ class HttpLLMClient(ILLMClient):
                     )
 
         except httpx.RequestError as exc:
+            outcome = "timeout" if isinstance(exc, httpx.TimeoutException) else "error"
             logger.error(
                 "LLM provider stream connection failed",
                 extra={"exception_class": type(exc).__name__},
@@ -415,3 +434,12 @@ class HttpLLMClient(ILLMClient):
                 message="LLM provider stream connection failed.",
                 details={"error_type": type(exc).__name__},
             )
+        except LLMProviderException:
+            outcome = "error"
+            raise
+        except Exception:
+            outcome = "stream_failure"
+            raise
+        finally:
+            increment_metric("gateway_llm_events_total", event="stream", outcome=outcome)
+            observe_metric("gateway_dependency_duration_seconds", perf_counter() - started, dependency="llm", operation="stream", outcome=outcome)

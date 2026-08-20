@@ -44,6 +44,20 @@ export type RefreshResponse = {
 
 let refreshInFlight: Promise<RefreshResponse> | null = null;
 
+function traceparent(): string {
+  const traceId = globalThis.crypto.randomUUID().replaceAll("-", "");
+  const spanId = globalThis.crypto.randomUUID().replaceAll("-", "").slice(0, 16);
+  return `00-${traceId}-${spanId}-01`;
+}
+
+function tracedHeaders(value?: HeadersInit): Headers {
+  const headers = new Headers(value);
+  if (!headers.has("traceparent")) {
+    headers.set("traceparent", traceparent());
+  }
+  return headers;
+}
+
 function csrfToken(): string | null {
   if (typeof document === "undefined") {
     return null;
@@ -68,7 +82,7 @@ async function decodeResponse<T>(response: Response): Promise<T> {
 
 async function rawRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const method = options.method || "GET";
-  const headers = new Headers(options.headers);
+  const headers = tracedHeaders(options.headers);
   if (options.body !== undefined) {
     headers.set("Content-Type", "application/json");
   }
@@ -107,17 +121,18 @@ export function refreshSession(): Promise<RefreshResponse> {
 }
 
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+  const tracedOptions = { ...options, headers: tracedHeaders(options.headers) };
   try {
-    return await rawRequest<T>(path, options);
+    return await rawRequest<T>(path, tracedOptions);
   } catch (error) {
     if (
       error instanceof ApiError &&
       error.status === 401 &&
-      options.retryAuthentication !== false &&
+      tracedOptions.retryAuthentication !== false &&
       !path.startsWith("/api/v1/auth/")
     ) {
       await refreshSession();
-      return rawRequest<T>(path, { ...options, retryAuthentication: false });
+      return rawRequest<T>(path, { ...tracedOptions, retryAuthentication: false });
     }
     throw error;
   }
@@ -128,7 +143,7 @@ export async function apiMultipart<T>(
   body: FormData,
   options: ApiMultipartOptions = {},
 ): Promise<T> {
-  const headers = new Headers(options.headers);
+  const headers = tracedHeaders(options.headers);
   const token = csrfToken();
   if (token) {
     headers.set("X-CSRF-Token", token);

@@ -250,6 +250,13 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 jobs = await member_client.get("/api/v1/ingestion-jobs?space_id=global")
                 assert jobs.status_code == 200
                 assert jobs.json()["items"][0]["id"] == upload.json()["job_id"]
+                operations = await member_client.get("/api/v1/operations/summary")
+                assert operations.status_code == 200
+                assert operations.json()["scope"] == "accessible_spaces"
+                assert operations.json()["ingestion"]["queued"] == 1
+                assert operations.json()["storage"]["referenced_bytes"] == len(b"Turn off the water valve before repairs.")
+                assert operations.json()["retrieval"]["embedding_generation_active"] is True
+                assert operations.json()["settings_revision"] == 0
                 cancelled_job = await member_client.post(
                     f"/api/v1/ingestion-jobs/{upload.json()['job_id']}/cancel",
                     headers={**member_headers, "Idempotency-Key": "cancel-family-source"},
