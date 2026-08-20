@@ -11,8 +11,7 @@ from tests.e2e.harness.test_env import TestEnvironment
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_file_upload_api_success():
-    """Verify POST /v1/files/upload successfully uploads and ingests a file."""
+async def test_legacy_file_upload_is_retired_for_authenticated_clients():
     async with TestEnvironment() as env:
         client = env.get_client(api_key="sk-test-admin")
         async with client:
@@ -27,14 +26,8 @@ async def test_file_upload_api_success():
             }
 
             resp = await client.post("/v1/files/upload", files=files, data=data)
-            assert resp.status_code == 201
-            payload = resp.json()
-            assert payload["filename"] == "architecture.md"
-            assert payload["file_size"] == len(file_content)
-            assert payload["workspace_id"] == "ws-backend"
-            assert payload["is_global"] is False
-            assert payload["total_chunks"] >= 1
-            assert "id" in payload
+            assert resp.status_code == 410
+            assert "/api/v1/sources/upload" in resp.json()["error"]["message"]
 
 
 @pytest.mark.integration

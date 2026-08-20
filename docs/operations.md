@@ -1,0 +1,13 @@
+# Production operations
+
+Deploy with a dedicated DNS name and create `.env.production` from `.env.production.example`. Generate independent random PostgreSQL passwords, an API-key pepper of at least 32 random characters, and a Fernet MFA encryption key. Start with `docker compose --env-file .env.production up --build -d`. Only the edge service publishes host ports; PostgreSQL, the API, worker, and Next.js remain private.
+
+Run encrypted backups at least daily and retain enough copies to meet the household recovery policy. The target is a 24-hour recovery point and a four-hour recovery time. Stop the gateway and worker, set `BACKUP_WRITERS_QUIESCED=true`, run `scripts/backup.sh` with a dedicated PostgreSQL role that has `BYPASSRLS`, and start the services again only after the bundle completes. The script refuses a row-filtered role and creates one age-encrypted bundle containing a PostgreSQL custom dump, immutable object storage, a database-bound storage manifest, cutoff metadata, and checksums. Keep the age identity outside the server and keep at least one backup copy off-site.
+
+Every quarter, restore the newest backup into an isolated database and empty storage directory with `scripts/restore.sh`. Restore fails if any database-referenced object is missing, has the wrong size, has the wrong SHA-256 checksum, or if the manifest itself was altered. Run migrations, readiness checks, PostgreSQL integrity queries, a lexical retrieval check, a vector retrieval check, and a representative source download before recording the restore result. Never point the restore script at the live database or live storage directory.
+
+For a database migration, take a fresh backup, stop writers, run the one-shot migration and permission services, verify `/healthz/ready`, then restart the API and worker. Roll forward with a corrective migration when data has changed. Use an Alembic downgrade only after proving it against a restored production-shaped copy.
+
+Rotate API-key peppers and MFA encryption keys by adding a new numbered key, deploying it as active, migrating or naturally replacing protected records, and retaining the previous key until no live record references it. Rotate database credentials by updating the role password and deployment secret in one maintenance window. A suspected credential leak requires immediate member disablement, session and API-key revocation, secret rotation, and audit export.
+
+Alert externally on readiness failure, repeated authentication throttling, refresh-token reuse, ingestion queue growth, terminal ingestion failures, storage reconciliation alerts, stale backup age, certificate expiry, and failed restore rehearsals. Keep PostgreSQL and recovery commands unreachable from the public network.

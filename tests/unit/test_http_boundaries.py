@@ -148,6 +148,53 @@ async def test_authentication_error_has_request_id_and_security_headers():
     assert_security_headers(response)
 
 
+@pytest.mark.asyncio
+async def test_request_body_limit_rejects_declared_and_streamed_oversize_payloads():
+    settings = boundary_settings()
+    settings.gateway.max_request_body_bytes = 64
+    app = create_app(settings)
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        declared = await client.post(
+            "/api/v1/auth/login",
+            content=b"x" * 65,
+            headers={"Content-Type": "application/json"},
+        )
+
+        async def chunks():
+            yield b"x" * 40
+            yield b"y" * 40
+
+        streamed = await client.post(
+            "/api/v1/auth/login",
+            content=chunks(),
+            headers={"Content-Type": "application/json"},
+        )
+        oversized_get = await client.request(
+            "GET",
+            "/healthz/live",
+            content=b"z" * 65,
+        )
+
+    assert declared.status_code == 413
+    assert streamed.status_code == 413
+    assert oversized_get.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_metrics_expose_low_cardinality_http_health_without_authentication():
+    app = create_app(boundary_settings())
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.get("/healthz/live")
+        metrics = await client.get("/metrics")
+
+    assert metrics.status_code == 200
+    assert 'gateway_http_requests_total{method="GET",route="/healthz/live",status="200"}' in metrics.text
+    assert "gateway_http_active_requests 1" in metrics.text
+    assert "request_id" not in metrics.text
+
+
 class FailingStreamOrchestrator:
     async def orchestrate_chat_stream(self, request, workspace_id):
         raise RuntimeError("sentinel-stream-secret")

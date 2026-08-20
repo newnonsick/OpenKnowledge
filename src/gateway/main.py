@@ -5,6 +5,7 @@ import logging
 from typing import AsyncIterator, Optional
 
 from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -25,6 +26,8 @@ from src.gateway.infrastructure.readiness import ReadinessProbe
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
 from src.gateway.presentation.errors import register_exception_handlers
 from src.gateway.presentation.request_context import RequestContextMiddleware
+from src.gateway.presentation.request_limits import RequestBodyLimitMiddleware
+from src.gateway.presentation.metrics import MetricsMiddleware, MetricsRegistry
 from src.gateway.presentation.security_headers import SecurityHeadersMiddleware
 from src.gateway.presentation.settings_context import SettingsContextMiddleware
 from src.gateway.presentation.routers import (
@@ -124,6 +127,7 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
     app.state.settings = current_settings
     app.state.schema_compatible = None
     app.state.readiness_probe = ReadinessProbe(current_settings.database.url)
+    app.state.metrics = MetricsRegistry()
     register_exception_handlers(app)
 
     cors_origins = (
@@ -157,6 +161,18 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(SettingsContextMiddleware)
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_body_bytes=current_settings.gateway.max_request_body_bytes,
+    )
+    app.add_middleware(MetricsMiddleware, registry=app.state.metrics)
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics() -> PlainTextResponse:
+        return PlainTextResponse(
+            app.state.metrics.render(),
+            media_type="text/plain; version=0.0.4",
+        )
 
     app.include_router(health_router)
     app.include_router(management_auth_router)

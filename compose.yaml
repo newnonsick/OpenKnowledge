@@ -1,0 +1,151 @@
+name: kinbase
+services:
+  postgres:
+    image: pgvector/pgvector:pg17@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-kinbase}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      GATEWAY_RUNTIME_DB_PASSWORD: ${GATEWAY_RUNTIME_DB_PASSWORD:?GATEWAY_RUNTIME_DB_PASSWORD is required}
+      GATEWAY_WORKER_DB_PASSWORD: ${GATEWAY_WORKER_DB_PASSWORD:?GATEWAY_WORKER_DB_PASSWORD is required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres-init.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
+    networks: [data]
+
+  migrate:
+    build: .
+    user: "10001:10001"
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kinbase}
+    command: ["python", "-c", "import asyncio; from src.gateway.infrastructure.migrations import run_migrations_async; asyncio.run(run_migrations_async())"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    networks: [data]
+    restart: "no"
+
+  permissions:
+    image: pgvector/pgvector:pg17@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    command: ["psql", "--host=postgres", "--username=${POSTGRES_USER:-postgres}", "--dbname=${POSTGRES_DB:-kinbase}", "--file=/grant-runtime.sql"]
+    volumes:
+      - ./deploy/grant-runtime.sql:/grant-runtime.sql:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    networks: [data]
+    restart: "no"
+
+  gateway:
+    build: .
+    restart: unless-stopped
+    env_file: ["${APP_ENV_FILE:-.env.production}"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://gateway_runtime:${GATEWAY_RUNTIME_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-kinbase}
+      WORKER_DATABASE_URL: postgresql+asyncpg://gateway_worker:${GATEWAY_WORKER_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-kinbase}
+      HOST: 0.0.0.0
+      PORT: 8000
+      STORAGE_DIR: /data/storage
+    depends_on:
+      permissions:
+        condition: service_completed_successfully
+    volumes:
+      - object-storage:/data/storage
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    networks: [app, data]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "src.gateway.worker"]
+    env_file: ["${APP_ENV_FILE:-.env.production}"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://gateway_runtime:${GATEWAY_RUNTIME_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-kinbase}
+      WORKER_DATABASE_URL: postgresql+asyncpg://gateway_worker:${GATEWAY_WORKER_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-kinbase}
+      STORAGE_DIR: /data/storage
+    depends_on:
+      gateway:
+        condition: service_healthy
+    volumes:
+      - object-storage:/data/storage
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    networks: [data]
+
+  web:
+    build: ./web
+    restart: unless-stopped
+    environment:
+      GATEWAY_INTERNAL_URL: http://gateway:8000
+      NODE_ENV: production
+    depends_on:
+      gateway:
+        condition: service_healthy
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    networks: [app]
+
+  edge:
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    restart: unless-stopped
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?PUBLIC_DOMAIN is required}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [web]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
+    networks: [app]
+
+networks:
+  app:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  data:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
+
+volumes:
+  caddy-config:
+  caddy-data:
+  object-storage:
+  postgres-data:

@@ -1,0 +1,10 @@
+.git
+.agents
+.env
+.pytest_cache
+.venv
+data
+reports
+venv
+web/.next
+web/node_modules
