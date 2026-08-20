@@ -8,13 +8,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, Response, UploadFile, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError as PydanticValidationError
 from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.gateway.application.security.passwords import PasswordService
 from src.gateway.application.security.tokens import APIKeyCodec, SecretValue
 from src.gateway.application.services.api_key_service import APIKeyService
+from src.gateway.application.services.ai_management_service import AIManagementService
 from src.gateway.application.services.authorized_retrieval_service import AuthorizedRetrievalService
 from src.gateway.application.services.document_upload_service import DocumentUploadService
 from src.gateway.application.services.idempotency_service import IdempotencyService, ReservationStatus
@@ -31,7 +32,7 @@ from src.gateway.infrastructure.database import get_db_session, get_session_fact
 from src.gateway.infrastructure.persistence.ingestion_models import DocumentModel, DocumentRevisionModel, IngestionJobModel
 from src.gateway.infrastructure.persistence.models import KnowledgeItem as KnowledgeItemModel, KnowledgeRevision as KnowledgeRevisionModel
 from src.gateway.infrastructure.persistence.retrieval_unit_repository import PostgresRetrievalUnitRepository
-from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeModel, AuditEventModel, MemberModel, PersonalAPIKeyModel, SessionCredentialModel, SessionFamilyModel, SpaceMembershipModel
+from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeModel, AuditEventModel, MemberModel, PendingAIActionModel, PersonalAPIKeyModel, SessionCredentialModel, SessionFamilyModel, SpaceMembershipModel
 from src.gateway.infrastructure.persistence.models import Workspace
 from src.gateway.infrastructure.persistence.runtime_settings_models import RuntimeSettingRevisionModel
 from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings
@@ -121,6 +122,31 @@ class RuntimeSettingsActivationRequest(BaseModel):
 
     expected_active_revision: int = Field(ge=0)
     reason: str = Field(min_length=5, max_length=500)
+
+
+class AIArchiveSpaceArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    space_id: str = Field(min_length=1, max_length=64)
+    expected_revision: int = Field(ge=1)
+
+
+class AIListSpacesArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int = Field(default=50, ge=1, le=100)
+
+
+class AICreateSpaceArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=255)
+
+
+class AIToolExecutionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    arguments: dict
 
 
 def _actor_id(principal: Principal) -> UUID:
@@ -249,6 +275,217 @@ async def _upload_chunks(file: UploadFile):
         if not chunk:
             return
         yield chunk
+
+
+@router.get("/ai-tools")
+async def list_ai_tools(
+    principal: Principal = Depends(require_scope("spaces:read")),
+) -> dict:
+    tools = []
+    if "*" in principal.scopes or "spaces:read" in principal.scopes:
+        tools.append(
+            {
+                "name": "spaces.list.v1",
+                "description": "List only active spaces accessible to the current member.",
+                "confirmation": "none",
+                "parameters": AIListSpacesArguments.model_json_schema(),
+            }
+        )
+    if "*" in principal.scopes or "spaces:write" in principal.scopes:
+        tools.extend(
+            [
+                {
+                    "name": "spaces.create.v1",
+                    "description": "Create a private space owned by the current member.",
+                    "confirmation": "none",
+                    "parameters": AICreateSpaceArguments.model_json_schema(),
+                },
+                {
+                    "name": "spaces.archive.v1",
+                    "description": "Propose archiving an owned non-global space. A website confirmation is required before execution.",
+                    "confirmation": "required",
+                    "parameters": AIArchiveSpaceArguments.model_json_schema(),
+                },
+            ]
+        )
+    return {"items": tools}
+
+
+@router.post("/ai-tools/{tool_name}", status_code=status.HTTP_202_ACCEPTED)
+async def execute_ai_tool(
+    tool_name: str,
+    payload: AIToolExecutionRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("spaces:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> JSONResponse:
+    if tool_name not in {"spaces.list.v1", "spaces.create.v1", "spaces.archive.v1"}:
+        raise ValidationException("Unknown or unavailable AI tool.")
+    try:
+        if tool_name == "spaces.list.v1":
+            arguments = AIListSpacesArguments.model_validate(payload.arguments)
+        elif tool_name == "spaces.create.v1":
+            arguments = AICreateSpaceArguments.model_validate(payload.arguments)
+        else:
+            arguments = AIArchiveSpaceArguments.model_validate(payload.arguments)
+    except PydanticValidationError as exc:
+        raise ValidationException("Invalid AI tool arguments.") from exc
+    normalized = arguments.model_dump(mode="json")
+    reservation = await _reserve(
+        session,
+        principal,
+        f"ai_tool.{tool_name}",
+        idempotency_key,
+        normalized,
+    )
+    if tool_name == "spaces.list.v1":
+        rows = list(
+            await session.execute(
+                select(Workspace, SpaceMembershipModel.role)
+                .join(SpaceMembershipModel, SpaceMembershipModel.space_id == Workspace.id)
+                .where(
+                    SpaceMembershipModel.member_id == _actor_id(principal),
+                    Workspace.archived_at.is_(None),
+                )
+                .order_by(Workspace.name, Workspace.id)
+                .limit(arguments.limit)
+            )
+        )
+        result = [
+            {"id": space.id, "name": space.name, "role": role, "revision": space.revision}
+            for space, role in rows
+        ]
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=200,
+            resource_ids=[space["id"] for space in result],
+        )
+        return JSONResponse(content={"items": result, "next_cursor": None})
+    if tool_name == "spaces.create.v1":
+        if reservation.status is ReservationStatus.REPLAY:
+            space = await session.get(Workspace, reservation.resource_ids[0])
+            if space is None:
+                raise ResourceConflictException("The created space is unavailable.")
+            result = {"id": space.id, "name": space.name, "role": "owner", "revision": space.revision}
+        else:
+            created = await SpaceService(session).create(
+                principal,
+                name=arguments.name,
+                request_id=get_request_id(request),
+            )
+            result = {"id": created.space_id, "name": created.name, "role": "owner", "revision": created.revision}
+            await IdempotencyService(session).complete(
+                reservation.record_id,
+                response_status=201,
+                resource_ids=[created.space_id],
+            )
+        return JSONResponse(status_code=201, content={"status": "executed", "tool_name": tool_name, "result": result})
+    if reservation.status is ReservationStatus.REPLAY:
+        action = await session.get(PendingAIActionModel, UUID(reservation.resource_ids[0]))
+        if action is None:
+            raise ResourceConflictException("The pending AI action is unavailable.")
+        pending_id = action.id
+        expires_at = action.expires_at
+    else:
+        pending = await AIManagementService(session).propose_space_archive(
+            principal,
+            space_id=arguments.space_id,
+            expected_revision=arguments.expected_revision,
+            request_id=get_request_id(request),
+        )
+        pending_id = pending.action_id
+        expires_at = pending.expires_at
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=202,
+            resource_ids=[str(pending_id)],
+        )
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "confirmation_required",
+            "pending_action_id": str(pending_id),
+            "tool_name": tool_name,
+            "expires_at": expires_at.isoformat(),
+        },
+    )
+
+
+@router.post("/ai-actions/{action_id}/confirm")
+async def confirm_ai_action(
+    action_id: UUID,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("spaces:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    if principal.kind is not PrincipalKind.SESSION:
+        raise AuthorizationException()
+    reservation = await _reserve(
+        session,
+        principal,
+        "ai_action.confirm",
+        idempotency_key,
+        {"action_id": str(action_id)},
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        action = await session.get(PendingAIActionModel, action_id)
+        if action is None or action.actor_member_id != _actor_id(principal):
+            raise AuthorizationException()
+    else:
+        action = await AIManagementService(session).confirm_and_execute(
+            principal,
+            action_id,
+            request_id=get_request_id(request),
+        )
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=200,
+            resource_ids=[str(action_id)],
+        )
+    return {
+        "pending_action_id": str(action.id),
+        "status": action.state,
+        "tool_name": action.tool_name,
+    }
+
+
+@router.get("/ai-actions")
+async def list_ai_actions(
+    principal: Principal = Depends(require_scope("spaces:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    if principal.kind is not PrincipalKind.SESSION:
+        raise AuthorizationException()
+    current_time = datetime.now(timezone.utc)
+    actions = list(
+        await session.scalars(
+            select(PendingAIActionModel)
+            .where(
+                PendingAIActionModel.actor_member_id == _actor_id(principal),
+                PendingAIActionModel.state == "pending",
+                PendingAIActionModel.expires_at > current_time,
+            )
+            .order_by(PendingAIActionModel.created_at.desc())
+            .limit(100)
+        )
+    )
+    return {
+        "items": [
+            {
+                "id": str(action.id),
+                "tool_name": action.tool_name,
+                "target_ids": action.target_ids,
+                "expected_revision": action.expected_revision,
+                "created_at": action.created_at.isoformat(),
+                "expires_at": action.expires_at.isoformat(),
+                "status": action.state,
+            }
+            for action in actions
+        ],
+        "next_cursor": None,
+    }
 
 
 @router.get("/me")

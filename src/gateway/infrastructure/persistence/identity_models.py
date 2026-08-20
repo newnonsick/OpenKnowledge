@@ -194,6 +194,31 @@ class IdempotencyRecordModel(Base):
     )
 
 
+class PendingAIActionModel(Base):
+    __tablename__ = "pending_ai_actions"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    actor_member_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True)
+    proposed_by_kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    normalized_command: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    command_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_ids: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False)
+    expected_revision: Mapped[int | None] = mapped_column(BigInteger)
+    state: Mapped[str] = mapped_column(String(24), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    confirmed_by_member_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("members.id", ondelete="SET NULL"))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint("length(command_hash) = 64", name="ck_pending_ai_actions_command_hash"),
+        CheckConstraint("state IN ('pending','executed','expired','cancelled')", name="ck_pending_ai_actions_state"),
+        Index("ix_pending_ai_actions_actor_state_expiry", "actor_member_id", "state", "expires_at"),
+    )
+
+
 class CompatibilityPrincipalModel(Base):
     __tablename__ = "compatibility_principals"
 

@@ -496,12 +496,31 @@ describe("management console", () => {
   });
 
   it("presents AI management tools as deliberate actions without a chat surface", async () => {
-    vi.mocked(apiRequest).mockResolvedValue({ items: [], next_cursor: null } as never);
+    let confirmed = false;
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path === "/api/v1/spaces?limit=100") {
+        return { items: [{ id: "private", name: "Private", role: "owner", revision: 1 }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/ai-tools") {
+        return { items: [{ name: "spaces.archive.v1", description: "Archive an owned space.", confirmation: "required", parameters: {} }] } as never;
+      }
+      if (path === "/api/v1/ai-actions") {
+        return { items: confirmed ? [] : [{ id: "action-1", tool_name: "spaces.archive.v1", target_ids: ["private"], expected_revision: 1, status: "pending", created_at: "2026-08-20T12:00:00Z", expires_at: "2026-08-20T12:10:00Z" }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/ai-actions/action-1/confirm" && options?.method === "POST") {
+        confirmed = true;
+        return { pending_action_id: "action-1", status: "executed", tool_name: "spaces.archive.v1" } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
     render(<AiActionsConsole />);
 
-    expect(await screen.findByText("list_spaces")).toBeInTheDocument();
-    expect(screen.getByText("create_space")).toBeInTheDocument();
-    expect(screen.getByText("upload_source")).toBeInTheDocument();
+    expect((await screen.findAllByText("spaces.archive.v1")).length).toBe(2);
     expect(screen.queryByText(/chat/i)).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Review spaces.archive.v1 for private" }));
+    expect(screen.getByText(/permanently removes it from unified search/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm AI action" }));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/ai-actions/action-1/confirm", { idempotent: true, method: "POST" }));
+    await waitFor(() => expect(screen.queryByText("Pending confirmation")).not.toBeInTheDocument());
   });
 });

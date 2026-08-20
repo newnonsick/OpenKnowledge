@@ -223,6 +223,7 @@ async def _validate_runtime_database_connection(connection) -> None:
         "mfa_factors",
         "mfa_recovery_codes",
         "password_credentials",
+        "pending_ai_actions",
         "personal_api_keys",
         "provenance_links",
         "retrieval_units",
@@ -347,6 +348,7 @@ async def _validate_runtime_database_connection(connection) -> None:
         "mfa_factors": ("SELECT", "INSERT", "UPDATE"),
         "mfa_recovery_codes": ("SELECT", "INSERT", "UPDATE"),
         "password_credentials": ("SELECT", "INSERT", "UPDATE"),
+        "pending_ai_actions": ("SELECT", "INSERT"),
         "personal_api_keys": ("SELECT", "INSERT", "UPDATE"),
         "provenance_links": ("SELECT", "INSERT"),
         "retrieval_units": ("SELECT", "INSERT"),
@@ -447,6 +449,12 @@ async def _validate_runtime_database_connection(connection) -> None:
             "cancellation_requested",
             "retry_requested",
             "updated_at",
+        ),
+        "pending_ai_actions": (
+            "state",
+            "confirmed_by_member_id",
+            "confirmed_at",
+            "consumed_at",
         ),
         "retrieval_units": ("active", "deactivated_at"),
         "runtime_setting_revisions": (

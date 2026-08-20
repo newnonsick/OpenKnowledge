@@ -1472,32 +1472,50 @@ export function ActivityConsole() {
   );
 }
 
-const aiTools = [
-  ["list_spaces", "Read", "Return only spaces the current member can access."],
-  ["create_space", "Write", "Create a new private space owned by the current member."],
-  ["list_space_members", "Read", "Inspect access for a space the current member owns."],
-  ["set_space_membership", "Confirm", "Grant or change a member role after explicit confirmation."],
-  ["search_knowledge", "Read", "Run permission-aware unified retrieval across authorized spaces."],
-  ["create_knowledge", "Write", "Capture a canonical knowledge item with provenance and revision one."],
-  ["update_knowledge", "Confirm", "Create an immutable new revision with optimistic concurrency."],
-  ["delete_knowledge", "Confirm", "Archive an item and remove its active retrieval projection."],
-  ["upload_source", "Write", "Store original bytes and queue the durable ingestion pipeline."],
-  ["list_ingestion_jobs", "Read", "Return real job states, retries, progress, and terminal errors."],
-  ["create_api_key", "Confirm", "Issue a personal scoped key and reveal its secret once."],
-  ["revoke_api_key", "Confirm", "Revoke one of the current member's API keys."],
-];
+type AIManagementTool = {
+  confirmation: string;
+  description: string;
+  name: string;
+  parameters: Record<string, unknown>;
+};
+
+type PendingAIAction = {
+  created_at: string;
+  expected_revision: number | null;
+  expires_at: string;
+  id: string;
+  status: string;
+  target_ids: string[];
+  tool_name: string;
+};
 
 export function AiActionsConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
+  const [tools, setTools] = useState<AIManagementTool[]>([]);
+  const [pendingActions, setPendingActions] = useState<PendingAIAction[]>([]);
+  const [reviewing, setReviewing] = useState<PendingAIAction | null>(null);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const loadActions = useCallback(async () => {
+    const response = await apiRequest<{ items: PendingAIAction[] }>("/api/v1/ai-actions");
+    setPendingActions(response.items);
+  }, []);
 
   useEffect(() => {
     let active = true;
-    apiRequest<SpaceListResponse>("/api/v1/spaces?limit=100").then((response) => {
-      if (active) {
-        setSpaces(response.items);
+    Promise.all([
+      apiRequest<SpaceListResponse>("/api/v1/spaces?limit=100"),
+      apiRequest<{ items: AIManagementTool[] }>("/api/v1/ai-tools"),
+      apiRequest<{ items: PendingAIAction[] }>("/api/v1/ai-actions"),
+    ]).then(([spaceResponse, toolResponse, actionResponse]) => {
+      if (!active) {
+        return;
       }
+      setSpaces(spaceResponse.items);
+      setTools(toolResponse.items);
+      setPendingActions(actionResponse.items);
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
@@ -1507,6 +1525,26 @@ export function AiActionsConsole() {
       active = false;
     };
   }, []);
+
+  const confirmAction = async () => {
+    if (!reviewing || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/v1/ai-actions/${reviewing.id}/confirm`, {
+        idempotent: true,
+        method: "POST",
+      });
+      setReviewing(null);
+      await loadActions();
+    } catch (confirmError) {
+      setError(message(confirmError));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <ConsoleShell
@@ -1518,8 +1556,9 @@ export function AiActionsConsole() {
     >
       <section className="tool-principle"><Sparkles size={22} /><div><strong>Plain requests in, deliberate operations out</strong><p>Read actions can run directly. High-impact writes require a short-lived confirmation before execution.</p></div></section>
       <div className="tool-grid">
-        {aiTools.map(([name, mode, description], index) => <article className="tool-card" key={name}><div><span className={`tool-icon accent-${index % 4}`}><Code2 size={17} /></span><span className={`mode-pill mode-${mode.toLowerCase()}`}>{mode}</span></div><code>{name}</code><p>{description}</p></article>)}
+        {tools.map((tool, index) => <article className="tool-card" key={tool.name}><div><span className={`tool-icon accent-${index % 4}`}><Code2 size={17} /></span><span className={`mode-pill mode-${tool.confirmation === "required" ? "confirm" : "read"}`}>{tool.confirmation === "required" ? "Confirm" : "Direct"}</span></div><code>{tool.name}</code><p>{tool.description}</p></article>)}
       </div>
+      {pendingActions.length > 0 ? <section className="console-panel pending-ai-panel"><div className="panel-heading"><div><span>Human approval</span><h2>Pending confirmation</h2></div><span className="count-pill">{pendingActions.length}</span></div><div className="data-list">{pendingActions.map((action) => <article className="data-row" key={action.id}><span className="row-leading violet"><Sparkles size={17} /></span><div className="row-copy"><h3>{action.tool_name}</h3><p>{action.target_ids.join(", ")} · revision {action.expected_revision ?? "—"}</p></div><button aria-label={`Review ${action.tool_name} for ${action.target_ids.join(", ")}`} className="row-action-button" onClick={() => setReviewing(action)} type="button">Review</button></article>)}</div>{reviewing ? <div aria-label={`Confirm ${reviewing.tool_name}`} className="confirmation-strip" role="alertdialog"><div><strong>Execute {reviewing.tool_name}?</strong><span>This permanently removes it from unified search. Approval is bound to this target, revision, member, and expiration.</span></div><button className="secondary-button" onClick={() => setReviewing(null)} type="button">Not now</button><button className="danger-button" disabled={saving} onClick={() => void confirmAction()} type="button">Confirm AI action</button></div> : null}</section> : null}
       {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
     </ConsoleShell>
   );

@@ -69,7 +69,7 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                         "embedding_generations, idempotency_records, ingestion_jobs, "
                         "knowledge_items, knowledge_revisions, "
                         "login_throttle_buckets, members, mfa_factors, mfa_recovery_codes, "
-                        "password_credentials, personal_api_keys, session_credentials, "
+                        "password_credentials, pending_ai_actions, personal_api_keys, session_credentials, "
                         "provenance_links, retrieval_units, session_families, "
                         f'runtime_setting_revisions, space_memberships, workspaces TO "{runtime_role}"'
                     )
@@ -80,7 +80,7 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                         "document_chunks, document_files, document_revisions, documents, "
                         "idempotency_records, ingestion_jobs, job_outbox, knowledge_items, "
                         "knowledge_revisions, login_throttle_buckets, members, mfa_factors, "
-                        "mfa_recovery_codes, password_credentials, personal_api_keys, "
+                        "mfa_recovery_codes, password_credentials, pending_ai_actions, personal_api_keys, "
                         "provenance_links, retrieval_units, session_credentials, session_families, "
                         "runtime_setting_revisions, space_memberships, workspaces "
                         f'TO "{runtime_role}"'
@@ -132,6 +132,12 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                     text(
                         "GRANT UPDATE (state, activation_reason, activated_by_member_id, activated_at) "
                         f'ON runtime_setting_revisions TO "{runtime_role}"'
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "GRANT UPDATE (state, confirmed_by_member_id, confirmed_at, consumed_at) "
+                        f'ON pending_ai_actions TO "{runtime_role}"'
                     )
                 )
                 await connection.execute(
