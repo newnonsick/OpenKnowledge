@@ -9,7 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, Response, UploadFile, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.gateway.application.security.passwords import PasswordService
@@ -386,6 +386,52 @@ async def list_space_members(
     }
 
 
+@router.get("/spaces/{space_id}/member-candidates")
+async def list_space_member_candidates(
+    space_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None),
+    principal: Principal = Depends(require_scope("spaces:members")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    actor_membership = await session.scalar(
+        select(SpaceMembershipModel).where(
+            SpaceMembershipModel.space_id == space_id,
+            SpaceMembershipModel.member_id == _actor_id(principal),
+        )
+    )
+    if actor_membership is None or actor_membership.role != SpaceRole.OWNER.value:
+        raise AuthorizationException()
+    after = _cursor_decode(cursor)
+    query = (
+        select(MemberModel)
+        .where(
+            MemberModel.status == MemberStatus.ACTIVE.value,
+            ~exists().where(
+                SpaceMembershipModel.space_id == space_id,
+                SpaceMembershipModel.member_id == MemberModel.id,
+            ),
+        )
+        .order_by(MemberModel.username_normalized)
+        .limit(limit + 1)
+    )
+    if after is not None:
+        query = query.where(MemberModel.username_normalized > after)
+    rows = list(await session.scalars(query))
+    page = rows[:limit]
+    return {
+        "items": [
+            {
+                "member_id": str(member.id),
+                "username": member.username,
+                "display_name": member.display_name,
+            }
+            for member in page
+        ],
+        "next_cursor": _cursor_encode(page[-1].username_normalized) if len(rows) > limit else None,
+    }
+
+
 @router.put("/spaces/{space_id}/members/{member_id}")
 async def set_space_membership(
     space_id: str,
@@ -417,6 +463,38 @@ async def set_space_membership(
             resource_ids=[space_id, str(member_id)],
         )
     return {"space_id": space_id, "member_id": str(member_id), "role": payload.role.value}
+
+
+@router.delete("/spaces/{space_id}/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_space_membership(
+    space_id: str,
+    member_id: UUID,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("spaces:members")),
+    session: AsyncSession = Depends(get_db_session),
+) -> Response:
+    reservation = await _reserve(
+        session,
+        principal,
+        "space.membership.remove",
+        idempotency_key,
+        {"space_id": space_id, "member_id": str(member_id)},
+    )
+    if reservation.status is not ReservationStatus.REPLAY:
+        await SpaceService(session).set_membership(
+            principal,
+            space_id,
+            member_id,
+            role=None,
+            request_id=get_request_id(request),
+        )
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=204,
+            resource_ids=[space_id, str(member_id)],
+        )
+    return Response(status_code=204)
 
 
 @router.delete("/spaces/{space_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -156,6 +156,18 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 assert replay.status_code == 201
                 assert replay.json()["id"] == private_space_id
 
+                candidates = await member_client.get(
+                    f"/api/v1/spaces/{private_space_id}/member-candidates"
+                )
+                assert candidates.status_code == 200
+                assert candidates.json()["items"] == [
+                    {
+                        "member_id": str(admin_id),
+                        "username": "admin",
+                        "display_name": "Admin",
+                    }
+                ]
+
                 membership = await member_client.put(
                     f"/api/v1/spaces/{private_space_id}/members/{admin_id}",
                     headers={**member_headers, "Idempotency-Key": "add-admin-reader"},
@@ -165,6 +177,18 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 members = await member_client.get(f"/api/v1/spaces/{private_space_id}/members")
                 assert members.status_code == 200
                 assert {item["role"] for item in members.json()["items"]} == {"owner", "reader"}
+
+                removed_membership = await member_client.delete(
+                    f"/api/v1/spaces/{private_space_id}/members/{admin_id}",
+                    headers={**member_headers, "Idempotency-Key": "remove-admin-reader"},
+                )
+                assert removed_membership.status_code == 204
+                members_after_removal = await member_client.get(
+                    f"/api/v1/spaces/{private_space_id}/members"
+                )
+                assert [item["member_id"] for item in members_after_removal.json()["items"]] == [
+                    str(member_id)
+                ]
 
                 created_knowledge = await member_client.post(
                     "/api/v1/knowledge",

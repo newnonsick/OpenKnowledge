@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Activity, ArrowUpRight, BookOpen, Code2, Copy, FileText, FileUp, FolderKanban, KeyRound, Layers3, LoaderCircle, LockKeyhole, MonitorSmartphone, Plus, Search, Settings2, ShieldCheck, Sparkles, Tag, UserPlus, UsersRound } from "lucide-react";
+import { Activity, Archive, ArrowUpRight, BookOpen, Code2, Copy, FileText, FileUp, FolderKanban, KeyRound, Layers3, LoaderCircle, LockKeyhole, MonitorSmartphone, Plus, Save, Search, Settings2, ShieldCheck, Sparkles, Tag, UserMinus, UserPlus, UsersRound, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 
 import { useCurrentMember } from "@/components/auth/session-gate";
@@ -21,6 +21,30 @@ type SpaceListResponse = {
   next_cursor: string | null;
 };
 
+type SpaceMember = {
+  display_name: string;
+  member_id: string;
+  role: "editor" | "owner" | "reader";
+  status: string;
+  username: string;
+};
+
+type SpaceMemberCandidate = {
+  display_name: string;
+  member_id: string;
+  username: string;
+};
+
+type SpaceMemberListResponse = {
+  items: SpaceMember[];
+  next_cursor: string | null;
+};
+
+type SpaceMemberCandidateListResponse = {
+  items: SpaceMemberCandidate[];
+  next_cursor: string | null;
+};
+
 type KnowledgeSummary = {
   id: string;
   space_id: string;
@@ -33,6 +57,10 @@ type KnowledgeSummary = {
 type KnowledgeListResponse = {
   items: KnowledgeSummary[];
   next_cursor: string | null;
+};
+
+type KnowledgeDetail = KnowledgeSummary & {
+  content: string;
 };
 
 type RetrievalHit = {
@@ -125,9 +153,14 @@ type SessionListResponse = {
 };
 
 type RuntimeSettings = {
+  base_revision?: number;
+  id?: string | null;
   revision: number;
   state: string;
-  values: Record<string, unknown>;
+  values: {
+    retrieval: { limit: number; [key: string]: unknown };
+    [key: string]: unknown;
+  };
 };
 
 type IngestionJob = {
@@ -181,6 +214,14 @@ export function SpacesConsole() {
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [accessLoading, setAccessLoading] = useState(false);
+  const [selectedSpace, setSelectedSpace] = useState<Space | null>(null);
+  const [spaceMembers, setSpaceMembers] = useState<SpaceMember[]>([]);
+  const [memberCandidates, setMemberCandidates] = useState<SpaceMemberCandidate[]>([]);
+  const [candidateId, setCandidateId] = useState("");
+  const [candidateRole, setCandidateRole] = useState<SpaceMember["role"]>("reader");
+  const [pendingRemoval, setPendingRemoval] = useState<SpaceMember | null>(null);
+  const [confirmSpaceArchive, setConfirmSpaceArchive] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -199,6 +240,26 @@ export function SpacesConsole() {
     void load();
   }, [load]);
 
+  const loadAccess = useCallback(async (space: Space) => {
+    setAccessLoading(true);
+    setError(null);
+    try {
+      const [membersResponse, candidatesResponse] = await Promise.all([
+        apiRequest<SpaceMemberListResponse>(`/api/v1/spaces/${space.id}/members`),
+        apiRequest<SpaceMemberCandidateListResponse>(`/api/v1/spaces/${space.id}/member-candidates`),
+      ]);
+      setSelectedSpace(space);
+      setSpaceMembers(membersResponse.items);
+      setMemberCandidates(candidatesResponse.items);
+      setCandidateId(candidatesResponse.items[0]?.member_id || "");
+      setConfirmSpaceArchive(false);
+    } catch (loadError) {
+      setError(message(loadError));
+    } finally {
+      setAccessLoading(false);
+    }
+  }, []);
+
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const value = name.trim();
@@ -213,6 +274,88 @@ export function SpacesConsole() {
       await load();
     } catch (createError) {
       setError(message(createError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addMember = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedSpace || !candidateId || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/v1/spaces/${selectedSpace.id}/members/${candidateId}`, {
+        body: { role: candidateRole },
+        idempotent: true,
+        method: "PUT",
+      });
+      await loadAccess(selectedSpace);
+    } catch (updateError) {
+      setError(message(updateError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const changeRole = async (spaceMember: SpaceMember, role: SpaceMember["role"]) => {
+    if (!selectedSpace || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/v1/spaces/${selectedSpace.id}/members/${spaceMember.member_id}`, {
+        body: { role },
+        idempotent: true,
+        method: "PUT",
+      });
+      await loadAccess(selectedSpace);
+    } catch (updateError) {
+      setError(message(updateError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeMember = async () => {
+    if (!selectedSpace || !pendingRemoval || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/v1/spaces/${selectedSpace.id}/members/${pendingRemoval.member_id}`, {
+        idempotent: true,
+        method: "DELETE",
+      });
+      setPendingRemoval(null);
+      await loadAccess(selectedSpace);
+    } catch (removeError) {
+      setError(message(removeError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const archiveSelectedSpace = async () => {
+    if (!selectedSpace || selectedSpace.id === "global" || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/v1/spaces/${selectedSpace.id}`, {
+        idempotent: true,
+        method: "DELETE",
+      });
+      setSelectedSpace(null);
+      setConfirmSpaceArchive(false);
+      await load();
+    } catch (archiveError) {
+      setError(message(archiveError));
     } finally {
       setSaving(false);
     }
@@ -240,10 +383,66 @@ export function SpacesConsole() {
                 <div className={`space-card-mark accent-${index % 4}`}><FolderKanban aria-hidden="true" size={19} /></div>
                 <div><h3>{space.name}</h3><p>{space.id}</p></div>
                 <span className={`role-pill role-${space.role}`}>{space.role}</span>
-                <p className="space-card-note"><ShieldCheck aria-hidden="true" size={14} /> Search access follows this membership</p>
+                <div className="space-card-footer">
+                  <p className="space-card-note"><ShieldCheck aria-hidden="true" size={14} /> Search access follows this membership</p>
+                  {space.role === "owner" ? <button aria-label={`Manage access for ${space.name}`} className="space-manage-button" onClick={() => void loadAccess(space)} type="button"><UsersRound size={14} /> Manage access</button> : null}
+                </div>
               </article>
             ))}
           </div>
+          {accessLoading ? <div className="console-loading access-loading"><LoaderCircle className="spin" size={18} /> Loading space access…</div> : null}
+          {selectedSpace && !accessLoading ? (
+            <section className="space-access-panel" aria-label={`${selectedSpace.name} access`}>
+              <div className="space-access-heading">
+                <div><span>Owner controls</span><h2>{selectedSpace.name} access</h2></div>
+                <div className="space-access-actions">
+                  {selectedSpace.id !== "global" ? <button aria-label={`Archive ${selectedSpace.name}`} className="archive-button compact" onClick={() => setConfirmSpaceArchive(true)} type="button"><Archive size={14} /> Archive space</button> : null}
+                  <button aria-label="Close access manager" className="icon-button" onClick={() => setSelectedSpace(null)} type="button"><X size={16} /></button>
+                </div>
+              </div>
+              <form className="membership-add-form" onSubmit={addMember}>
+                <div>
+                  <label htmlFor="space-member-candidate">Family member</label>
+                  <select disabled={memberCandidates.length === 0} id="space-member-candidate" onChange={(event) => setCandidateId(event.target.value)} value={candidateId}>
+                    {memberCandidates.length === 0 ? <option value="">Everyone already has access</option> : null}
+                    {memberCandidates.map((candidate) => <option key={candidate.member_id} value={candidate.member_id}>{candidate.display_name} (@{candidate.username})</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="space-member-role">Role</label>
+                  <select id="space-member-role" onChange={(event) => setCandidateRole(event.target.value as SpaceMember["role"])} value={candidateRole}>
+                    <option value="reader">Reader</option>
+                    <option value="editor">Editor</option>
+                    <option value="owner">Owner</option>
+                  </select>
+                </div>
+                <button className="primary-button" disabled={!candidateId || saving} type="submit"><UserPlus size={15} /> Add member</button>
+              </form>
+              <div className="membership-list">
+                {spaceMembers.map((spaceMember) => (
+                  <article className="membership-row" key={spaceMember.member_id}>
+                    <span className="profile-avatar">{spaceMember.display_name.slice(0, 2).toUpperCase()}</span>
+                    <div className="row-copy"><h3>{spaceMember.display_name}</h3><p>@{spaceMember.username}</p></div>
+                    <label className="visually-hidden" htmlFor={`role-${spaceMember.member_id}`}>Role for {spaceMember.display_name}</label>
+                    <select disabled={saving} id={`role-${spaceMember.member_id}`} onChange={(event) => void changeRole(spaceMember, event.target.value as SpaceMember["role"])} value={spaceMember.role}>
+                      <option value="reader">Reader</option>
+                      <option value="editor">Editor</option>
+                      <option value="owner">Owner</option>
+                    </select>
+                    <button aria-label={`Remove ${spaceMember.display_name}`} className="membership-remove-button" disabled={saving} onClick={() => setPendingRemoval(spaceMember)} type="button"><UserMinus size={15} /></button>
+                  </article>
+                ))}
+              </div>
+              {pendingRemoval ? (
+                <div className="confirmation-strip" role="alertdialog" aria-label={`Remove ${pendingRemoval.display_name} from ${selectedSpace.name}`}>
+                  <div><strong>Remove {pendingRemoval.display_name}?</strong><span>They will immediately lose access to this space and its search results.</span></div>
+                  <button className="secondary-button" onClick={() => setPendingRemoval(null)} type="button">Keep member</button>
+                  <button className="danger-button" disabled={saving} onClick={() => void removeMember()} type="button">Confirm removal</button>
+                </div>
+              ) : null}
+              {confirmSpaceArchive ? <div className="confirmation-strip" role="alertdialog" aria-label={`Archive ${selectedSpace.name}`}><div><strong>Archive {selectedSpace.name}?</strong><span>Its knowledge will leave unified search immediately, while history remains preserved.</span></div><button className="secondary-button" onClick={() => setConfirmSpaceArchive(false)} type="button">Keep space</button><button className="danger-button" disabled={saving} onClick={() => void archiveSelectedSpace()} type="button">Confirm archive space</button></div> : null}
+            </section>
+          ) : null}
         </section>
         <aside className="console-panel action-panel">
           <span className="action-panel-icon"><Plus aria-hidden="true" size={20} /></span>
@@ -272,6 +471,11 @@ export function KnowledgeConsole() {
   const [tags, setTags] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState<KnowledgeDetail | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editContent, setEditContent] = useState("");
+  const [editTags, setEditTags] = useState("");
+  const [confirmArchive, setConfirmArchive] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadItems = useCallback(async () => {
@@ -335,6 +539,75 @@ export function KnowledgeConsole() {
     }
   };
 
+  const openEditor = async (item: KnowledgeSummary) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const detail = await apiRequest<KnowledgeDetail>(`/api/v1/knowledge/${item.id}`);
+      setEditing(detail);
+      setEditTitle(detail.title);
+      setEditContent(detail.content);
+      setEditTags(detail.tags.join(", "));
+      setConfirmArchive(false);
+    } catch (loadError) {
+      setError(message(loadError));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveRevision = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editing || !editTitle.trim() || !editContent.trim() || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await apiRequest<KnowledgeDetail>(`/api/v1/knowledge/${editing.id}`, {
+        body: {
+          change_summary: "Updated through the management console",
+          content: editContent.trim(),
+          expected_version: editing.version,
+          tags: editTags.split(",").map((value) => value.trim()).filter(Boolean),
+          title: editTitle.trim(),
+        },
+        idempotent: true,
+        method: "PUT",
+      });
+      setEditing(updated);
+      setEditTitle(updated.title);
+      setEditContent(updated.content);
+      setEditTags(updated.tags.join(", "));
+      await loadItems();
+    } catch (updateError) {
+      setError(message(updateError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const archiveKnowledge = async () => {
+    if (!editing || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/v1/knowledge/${editing.id}?expected_version=${editing.version}`, {
+        idempotent: true,
+        method: "DELETE",
+      });
+      setEditing(null);
+      setConfirmArchive(false);
+      await loadItems();
+    } catch (archiveError) {
+      setError(message(archiveError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <ConsoleShell
       description="Capture durable notes with immutable revisions, clear provenance, and permission-aware retrieval."
@@ -357,9 +630,38 @@ export function KnowledgeConsole() {
                 <span className="row-leading violet"><BookOpen aria-hidden="true" size={18} /></span>
                 <div className="row-copy"><h3>{item.title}</h3><p>{item.space_id} · version {item.version}</p></div>
                 <div className="tag-list">{item.tags.slice(0, 3).map((value) => <span key={value}><Tag size={11} />{value}</span>)}</div>
+                <button aria-label={`Edit ${item.title}`} className="row-action-button" onClick={() => void openEditor(item)} type="button">Edit</button>
               </article>
             ))}
           </div>
+          {editing ? (
+            <section className="knowledge-editor" aria-label={`Edit ${editing.title}`}>
+              <div className="space-access-heading">
+                <div><span>Immutable revision</span><h2>Edit knowledge</h2></div>
+                <button aria-label="Close knowledge editor" className="icon-button" onClick={() => setEditing(null)} type="button"><X size={16} /></button>
+              </div>
+              <p className="revision-state">Version {editing.version} is active</p>
+              <form className="console-form" onSubmit={saveRevision}>
+                <label htmlFor="edit-knowledge-title">Edit title</label>
+                <input id="edit-knowledge-title" maxLength={500} onChange={(event) => setEditTitle(event.target.value)} required value={editTitle} />
+                <label htmlFor="edit-knowledge-content">Edit content</label>
+                <textarea id="edit-knowledge-content" maxLength={1000000} onChange={(event) => setEditContent(event.target.value)} required rows={7} value={editContent} />
+                <label htmlFor="edit-knowledge-tags">Edit tags</label>
+                <input id="edit-knowledge-tags" onChange={(event) => setEditTags(event.target.value)} value={editTags} />
+                <div className="editor-actions">
+                  <button className="primary-button" disabled={saving} type="submit"><Save size={15} /> Save revision</button>
+                  <button aria-label={`Archive ${editing.title}`} className="archive-button" disabled={saving} onClick={() => setConfirmArchive(true)} type="button"><Archive size={15} /> Archive</button>
+                </div>
+              </form>
+              {confirmArchive ? (
+                <div className="confirmation-strip" role="alertdialog" aria-label={`Archive ${editing.title}`}>
+                  <div><strong>Archive {editing.title}?</strong><span>It will leave default retrieval but its revision history remains preserved.</span></div>
+                  <button className="secondary-button" onClick={() => setConfirmArchive(false)} type="button">Keep active</button>
+                  <button className="danger-button" disabled={saving} onClick={() => void archiveKnowledge()} type="button">Confirm archive</button>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
         </section>
         <aside className="console-panel action-panel capture-panel">
           <span className="action-panel-icon violet"><BookOpen aria-hidden="true" size={20} /></span>
@@ -747,8 +1049,13 @@ export function SettingsConsole() {
   const [keys, setKeys] = useState<APIKeySummary[]>([]);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
+  const [runtimeDraft, setRuntimeDraft] = useState<RuntimeSettings | null>(null);
+  const [runtimeLimit, setRuntimeLimit] = useState(20);
+  const [runtimeReason, setRuntimeReason] = useState("");
   const [keyName, setKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState<CreatedAPIKey | null>(null);
+  const [pendingKeyRevocation, setPendingKeyRevocation] = useState<APIKeySummary | null>(null);
+  const [pendingSessionRevocation, setPendingSessionRevocation] = useState<SessionSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -756,6 +1063,11 @@ export function SettingsConsole() {
   const loadKeys = useCallback(async () => {
     const response = await apiRequest<APIKeyListResponse>("/api/v1/api-keys");
     setKeys(response.items);
+  }, []);
+
+  const loadSessions = useCallback(async () => {
+    const response = await apiRequest<SessionListResponse>("/api/v1/sessions");
+    setSessions(response.items);
   }, []);
 
   useEffect(() => {
@@ -773,6 +1085,7 @@ export function SettingsConsole() {
       setKeys(keyResponse.items);
       setSessions(sessionResponse.items);
       setSettings(runtimeResponse);
+      setRuntimeLimit(runtimeResponse.values.retrieval.limit);
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
@@ -811,6 +1124,99 @@ export function SettingsConsole() {
     }
   };
 
+  const revokeKey = async () => {
+    if (!pendingKeyRevocation || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/v1/api-keys/${pendingKeyRevocation.id}`, {
+        idempotent: true,
+        method: "DELETE",
+      });
+      setPendingKeyRevocation(null);
+      await loadKeys();
+    } catch (revokeError) {
+      setError(message(revokeError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const revokeSession = async () => {
+    if (!pendingSessionRevocation || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/v1/sessions/${pendingSessionRevocation.id}`, {
+        idempotent: true,
+        method: "DELETE",
+      });
+      setPendingSessionRevocation(null);
+      await loadSessions();
+    } catch (revokeError) {
+      setError(message(revokeError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const createRuntimeDraft = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!settings || runtimeReason.trim().length < 5 || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const draft = await apiRequest<RuntimeSettings>("/api/v1/settings/drafts", {
+        body: {
+          base_revision: settings.revision,
+          reason: runtimeReason.trim(),
+          values: {
+            ...settings.values,
+            retrieval: { ...settings.values.retrieval, limit: runtimeLimit },
+          },
+        },
+        idempotent: true,
+        method: "POST",
+      });
+      setRuntimeDraft(draft);
+    } catch (draftError) {
+      setError(message(draftError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const activateRuntimeDraft = async () => {
+    if (!settings || !runtimeDraft?.id || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const activated = await apiRequest<RuntimeSettings>(`/api/v1/settings/drafts/${runtimeDraft.id}/activate`, {
+        body: {
+          expected_active_revision: settings.revision,
+          reason: runtimeReason.trim(),
+        },
+        idempotent: true,
+        method: "POST",
+      });
+      setSettings(activated);
+      setRuntimeLimit(activated.values.retrieval.limit);
+      setRuntimeDraft(null);
+    } catch (activationError) {
+      setError(message(activationError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <ConsoleShell
       description="Manage personal API credentials, active website sessions, and the safe runtime configuration boundary."
@@ -831,22 +1237,33 @@ export function SettingsConsole() {
             <button className="primary-button" disabled={saving} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <KeyRound size={16} />} Create API key</button>
           </form>
           <div className="data-list compact-list">
-            {keys.map((key) => <article className="data-row" key={key.id}><span className="row-leading violet"><KeyRound size={17} /></span><div className="row-copy"><h3>{key.name}</h3><p>{key.public_id} · {key.scopes.join(", ")}</p></div><span className={`status-pill status-${key.status}`}>{key.status}</span></article>)}
+            {keys.map((key) => <article className="data-row" key={key.id}><span className="row-leading violet"><KeyRound size={17} /></span><div className="row-copy"><h3>{key.name}</h3><p>{key.public_id} · {key.scopes.join(", ")}</p></div><span className={`status-pill status-${key.status}`}>{key.status}</span>{key.status === "active" ? <button aria-label={`Revoke ${key.name}`} className="membership-remove-button" onClick={() => setPendingKeyRevocation(key)} type="button"><X size={15} /></button> : null}</article>)}
           </div>
+          {pendingKeyRevocation ? <div className="confirmation-strip" role="alertdialog" aria-label={`Revoke ${pendingKeyRevocation.name}`}><div><strong>Revoke {pendingKeyRevocation.name}?</strong><span>Clients using this key will lose access immediately.</span></div><button className="secondary-button" onClick={() => setPendingKeyRevocation(null)} type="button">Keep key</button><button className="danger-button" disabled={saving} onClick={() => void revokeKey()} type="button">Confirm revoke API key</button></div> : null}
         </section>
 
         <section className="console-panel settings-section">
           <div className="panel-heading"><div><span>Website access</span><h2>Sessions</h2></div><MonitorSmartphone size={20} /></div>
           <div className="data-list compact-list">
-            {sessions.map((session) => <article className="data-row" key={session.id}><span className="row-leading cyan"><MonitorSmartphone size={17} /></span><div className="row-copy"><h3>{session.current ? "This session" : "Website session"}</h3><p>Last active {new Date(session.last_activity_at).toLocaleString()}</p></div><span className={`status-pill status-${session.status}`}>{session.status}</span></article>)}
+            {sessions.map((session) => <article className="data-row" key={session.id}><span className="row-leading cyan"><MonitorSmartphone size={17} /></span><div className="row-copy"><h3>{session.current ? "This session" : "Website session"}</h3><p>Last active {new Date(session.last_activity_at).toLocaleString()}</p></div><span className={`status-pill status-${session.status}`}>{session.status}</span>{!session.current && session.status === "active" ? <button aria-label="Sign out website session" className="membership-remove-button" onClick={() => setPendingSessionRevocation(session)} type="button"><X size={15} /></button> : null}</article>)}
             {sessions.length === 0 ? <div className="console-empty small"><MonitorSmartphone size={20} /><strong>No session records returned</strong></div> : null}
           </div>
+          {pendingSessionRevocation ? <div className="confirmation-strip" role="alertdialog" aria-label="Sign out website session"><div><strong>Sign out this device?</strong><span>The selected session and all of its credentials will be revoked.</span></div><button className="secondary-button" onClick={() => setPendingSessionRevocation(null)} type="button">Keep signed in</button><button className="danger-button" disabled={saving} onClick={() => void revokeSession()} type="button">Confirm sign out</button></div> : null}
         </section>
 
         <section className="console-panel settings-section runtime-section">
           <div className="panel-heading"><div><span>Production boundary</span><h2>Safe runtime settings</h2></div><Settings2 size={20} /></div>
           <div className="runtime-summary"><div><span>Active revision</span><strong>{settings?.revision ?? 0}</strong></div><div><span>State</span><strong>{settings?.state || "active"}</strong></div><div><span>Change mode</span><strong>{member.system_role === "super_admin" ? "Draft + activate" : "Read only"}</strong></div></div>
-          <pre>{JSON.stringify(settings?.values || {}, null, 2)}</pre>
+          {settings ? <p className="runtime-active-state">Revision {settings.revision} is active</p> : null}
+          {member.system_role === "super_admin" && settings ? (
+            <form className="runtime-settings-form" onSubmit={createRuntimeDraft}>
+              <div><label htmlFor="runtime-retrieval-limit">Retrieval result limit</label><input id="runtime-retrieval-limit" max={100} min={1} onChange={(event) => setRuntimeLimit(Number(event.target.value))} required type="number" value={runtimeLimit} /></div>
+              <div><label htmlFor="runtime-change-reason">Change reason</label><input id="runtime-change-reason" maxLength={500} minLength={5} onChange={(event) => setRuntimeReason(event.target.value)} required value={runtimeReason} /></div>
+              <button className="primary-button" disabled={saving || runtimeReason.trim().length < 5} type="submit">Create validated draft</button>
+            </form>
+          ) : null}
+          {runtimeDraft ? <div className="runtime-draft-review"><div><strong>Draft revision {runtimeDraft.revision} ready</strong><span>Validated against the typed safe-setting schema. Activation remains a separate audited step.</span></div><button className="primary-button" disabled={saving} onClick={() => void activateRuntimeDraft()} type="button">Activate settings</button></div> : null}
+          <pre>{JSON.stringify(runtimeDraft?.values || settings?.values || {}, null, 2)}</pre>
         </section>
       </div>
       {error ? <p className="inline-error wide" role="alert">{error}</p> : null}

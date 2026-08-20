@@ -51,6 +51,87 @@ describe("management console", () => {
     expect(await screen.findByText("Travel plans")).toBeInTheDocument();
   });
 
+  it("lets a space owner add and remove family members with explicit confirmation", async () => {
+    let added = false;
+    let removed = false;
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path === "/api/v1/spaces?limit=100") {
+        return { items: [{ id: "travel", name: "Travel plans", role: "owner", revision: 1 }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/spaces/travel/member-candidates") {
+        return { items: added ? [] : [{ member_id: "member-2", username: "nana", display_name: "Nana" }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/spaces/travel/members") {
+        return {
+          items: [
+            { member_id: "member-1", username: "mai", display_name: "Mai", status: "active", role: "owner" },
+            ...(!removed && added ? [{ member_id: "member-2", username: "nana", display_name: "Nana", status: "active", role: "reader" }] : []),
+          ],
+          next_cursor: null,
+        } as never;
+      }
+      if (path === "/api/v1/spaces/travel/members/member-2" && options?.method === "PUT") {
+        added = true;
+        return { member_id: "member-2", role: "reader", space_id: "travel" } as never;
+      }
+      if (path === "/api/v1/spaces/travel/members/member-2" && options?.method === "DELETE") {
+        removed = true;
+        return undefined as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<SpacesConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Manage access for Travel plans" }));
+    expect(await screen.findByRole("option", { name: "Nana (@nana)" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add member" }));
+
+    expect(await screen.findByText("@nana")).toBeInTheDocument();
+    expect(apiRequest).toHaveBeenCalledWith("/api/v1/spaces/travel/members/member-2", {
+      body: { role: "reader" },
+      idempotent: true,
+      method: "PUT",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove Nana" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm removal" }));
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/spaces/travel/members/member-2", {
+      idempotent: true,
+      method: "DELETE",
+    }));
+    await waitFor(() => expect(screen.queryByText("@nana")).not.toBeInTheDocument());
+  });
+
+  it("archives an owned space only after showing its impact", async () => {
+    let archived = false;
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path === "/api/v1/spaces?limit=100") {
+        return { items: archived ? [] : [{ id: "travel", name: "Travel plans", role: "owner", revision: 1 }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/spaces/travel/members") {
+        return { items: [{ member_id: "member-1", username: "mai", display_name: "Mai", status: "active", role: "owner" }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/spaces/travel/member-candidates") {
+        return { items: [], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/spaces/travel" && options?.method === "DELETE") {
+        archived = true;
+        return undefined as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<SpacesConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Manage access for Travel plans" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Archive Travel plans" }));
+    expect(screen.getByText(/leave unified search immediately/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm archive space" }));
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/spaces/travel", { idempotent: true, method: "DELETE" }));
+    await waitFor(() => expect(screen.queryByText("Travel plans")).not.toBeInTheDocument());
+  });
+
   it("captures a versioned knowledge item in the selected space", async () => {
     let created = false;
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
@@ -85,6 +166,58 @@ describe("management console", () => {
       method: "POST",
     }));
     expect(await screen.findByText("Water valve")).toBeInTheDocument();
+  });
+
+  it("edits and archives knowledge with optimistic concurrency and confirmation", async () => {
+    let version = 1;
+    let archived = false;
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/knowledge?limit=100") {
+        return { items: archived ? [] : [{ id: "note-1", space_id: "global", title: "Water valve", tags: ["home"], version, updated_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/knowledge/note-1" && !options?.method) {
+        return { id: "note-1", space_id: "global", title: "Water valve", content: "Turn clockwise.", tags: ["home"], version, updated_at: "2026-08-20T12:00:00Z" } as never;
+      }
+      if (path === "/api/v1/knowledge/note-1" && options?.method === "PUT") {
+        version = 2;
+        return { id: "note-1", space_id: "global", title: "Water valve", content: "Turn clockwise, then close the main tap.", tags: ["home"], version, updated_at: "2026-08-20T12:05:00Z" } as never;
+      }
+      if (path === "/api/v1/knowledge/note-1?expected_version=2" && options?.method === "DELETE") {
+        archived = true;
+        return undefined as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<KnowledgeConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Water valve" }));
+    fireEvent.change(await screen.findByLabelText("Edit content"), { target: { value: "Turn clockwise, then close the main tap." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save revision" }));
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/knowledge/note-1", {
+      body: {
+        change_summary: "Updated through the management console",
+        content: "Turn clockwise, then close the main tap.",
+        expected_version: 1,
+        tags: ["home"],
+        title: "Water valve",
+      },
+      idempotent: true,
+      method: "PUT",
+    }));
+    expect(await screen.findByText("Version 2 is active")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Archive Water valve" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm archive" }));
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/knowledge/note-1?expected_version=2", {
+      idempotent: true,
+      method: "DELETE",
+    }));
+    await waitFor(() => expect(screen.queryByText("Version 2 is active")).not.toBeInTheDocument());
   });
 
   it("searches every accessible space and exposes degraded semantic health", async () => {
@@ -196,6 +329,98 @@ describe("management console", () => {
 
     expect(await screen.findByText("aigw_v1_once_only")).toBeInTheDocument();
     expect(screen.getByText(/copy this key now/i)).toBeInTheDocument();
+  });
+
+  it("revokes API keys and other website sessions only after confirmation", async () => {
+    let keyRevoked = false;
+    let sessionRevoked = false;
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/api-keys" && !options?.method) {
+        return { items: keyRevoked ? [] : [{ id: "key-1", public_id: "pk_live_1", name: "Laptop", status: "active", scopes: ["knowledge:read"], created_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/api-keys/key-1" && options?.method === "DELETE") {
+        keyRevoked = true;
+        return undefined as never;
+      }
+      if (path === "/api/v1/sessions" && !options?.method) {
+        return { items: [
+          { id: "session-current", current: true, status: "active", created_at: "2026-08-20T12:00:00Z", last_activity_at: "2026-08-20T12:00:00Z" },
+          ...(!sessionRevoked ? [{ id: "session-other", current: false, status: "active", created_at: "2026-08-19T12:00:00Z", last_activity_at: "2026-08-19T13:00:00Z" }] : []),
+        ], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/sessions/session-other" && options?.method === "DELETE") {
+        sessionRevoked = true;
+        return undefined as never;
+      }
+      if (path === "/api/v1/settings") {
+        return { revision: 0, state: "active", values: { retrieval: { limit: 20 } } } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<SettingsConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Revoke Laptop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm revoke API key" }));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/api-keys/key-1", { idempotent: true, method: "DELETE" }));
+    await waitFor(() => expect(screen.queryByText("pk_live_1 · knowledge:read")).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign out website session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm sign out" }));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/sessions/session-other", { idempotent: true, method: "DELETE" }));
+    expect(screen.getByText("This session")).toBeInTheDocument();
+  });
+
+  it("creates and activates a validated safe runtime settings draft", async () => {
+    currentMember.system_role = "super_admin";
+    const activeValues = { retrieval: { limit: 20, lexical_weight: 1, vector_weight: 1 } };
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/api-keys") {
+        return { items: [], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/sessions") {
+        return { items: [], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/settings" && !options?.method) {
+        return { id: null, revision: 0, base_revision: 0, state: "active", values: activeValues } as never;
+      }
+      if (path === "/api/v1/settings/drafts" && options?.method === "POST") {
+        return { id: "draft-1", revision: 1, base_revision: 0, state: "draft", values: { retrieval: { ...activeValues.retrieval, limit: 15 } } } as never;
+      }
+      if (path === "/api/v1/settings/drafts/draft-1/activate" && options?.method === "POST") {
+        return { id: "draft-1", revision: 1, base_revision: 0, state: "active", values: { retrieval: { ...activeValues.retrieval, limit: 15 } } } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<SettingsConsole />);
+
+    fireEvent.change(await screen.findByLabelText("Retrieval result limit"), { target: { value: "15" } });
+    fireEvent.change(screen.getByLabelText("Change reason"), { target: { value: "Improve focused family search" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create validated draft" }));
+
+    expect(await screen.findByText("Draft revision 1 ready")).toBeInTheDocument();
+    expect(apiRequest).toHaveBeenCalledWith("/api/v1/settings/drafts", {
+      body: {
+        base_revision: 0,
+        reason: "Improve focused family search",
+        values: { retrieval: { limit: 15, lexical_weight: 1, vector_weight: 1 } },
+      },
+      idempotent: true,
+      method: "POST",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Activate settings" }));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/settings/drafts/draft-1/activate", {
+      body: { expected_active_revision: 0, reason: "Improve focused family search" },
+      idempotent: true,
+      method: "POST",
+    }));
+    expect(await screen.findByText("Revision 1 is active")).toBeInTheDocument();
   });
 
   it("shows durable ingestion state without inventing progress", async () => {
