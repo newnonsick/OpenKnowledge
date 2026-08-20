@@ -1,0 +1,740 @@
+from __future__ import annotations
+
+import base64
+from datetime import datetime, timezone
+import json
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import and_, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.gateway.application.security.passwords import PasswordService
+from src.gateway.application.security.tokens import APIKeyCodec, SecretValue
+from src.gateway.application.services.api_key_service import APIKeyService
+from src.gateway.application.services.idempotency_service import IdempotencyService, ReservationStatus
+from src.gateway.application.services.member_administration_service import MemberAdministrationService
+from src.gateway.application.services.runtime_settings_service import RuntimeSettingsService, RuntimeSettingsRevision, RuntimeSettingsValues
+from src.gateway.application.services.session_service import SessionService
+from src.gateway.application.services.space_service import SpaceService
+from src.gateway.config import get_settings
+from src.gateway.domain.exceptions import AuthenticationException, AuthorizationException, ResourceConflictException, ValidationException
+from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SpaceRole, SystemRole
+from src.gateway.infrastructure.database import get_db_session
+from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeModel, AuditEventModel, MemberModel, PersonalAPIKeyModel, SessionCredentialModel, SessionFamilyModel, SpaceMembershipModel
+from src.gateway.infrastructure.persistence.models import Workspace
+from src.gateway.infrastructure.persistence.runtime_settings_models import RuntimeSettingRevisionModel
+from src.gateway.presentation.authorization import require_scope
+from src.gateway.presentation.request_context import get_request_id
+
+
+router = APIRouter(prefix="/api/v1", tags=["Management"])
+
+
+class SpaceCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=255)
+
+
+class MembershipRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: SpaceRole
+
+
+class APIKeyCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    scopes: list[str] = Field(min_length=1, max_length=16)
+    expires_at: datetime | None = None
+
+
+class MemberCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(min_length=1, max_length=255)
+    display_name: str = Field(min_length=1, max_length=255)
+
+
+class RuntimeSettingsDraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    base_revision: int = Field(ge=0)
+    reason: str = Field(min_length=5, max_length=500)
+    values: RuntimeSettingsValues
+
+
+class RuntimeSettingsActivationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_active_revision: int = Field(ge=0)
+    reason: str = Field(min_length=5, max_length=500)
+
+
+def _actor_id(principal: Principal) -> UUID:
+    try:
+        return UUID(principal.subject_id)
+    except ValueError as exc:
+        raise AuthorizationException() from exc
+
+
+async def _family_id(session: AsyncSession, principal: Principal) -> UUID:
+    if principal.kind is not PrincipalKind.SESSION or principal.credential_id is None:
+        raise AuthenticationException("A website session is required.")
+    try:
+        credential_id = UUID(principal.credential_id)
+    except ValueError as exc:
+        raise AuthenticationException("A website session is required.") from exc
+    credential = await session.get(SessionCredentialModel, credential_id)
+    if credential is None or credential.revoked_at is not None:
+        raise AuthenticationException("A website session is required.")
+    return credential.family_id
+
+
+def _cursor_encode(value: str) -> str:
+    return base64.urlsafe_b64encode(
+        json.dumps({"after": value}, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii").rstrip("=")
+
+
+def _cursor_decode(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        padding = "=" * (-len(value) % 4)
+        payload = json.loads(
+            base64.urlsafe_b64decode((value + padding).encode("ascii")).decode("utf-8")
+        )
+        after = payload["after"]
+        if not isinstance(after, str) or not after:
+            raise ValueError
+        return after
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ValidationException("Invalid pagination cursor.") from exc
+
+
+async def _reserve(
+    session: AsyncSession,
+    principal: Principal,
+    operation: str,
+    key: str,
+    payload: dict,
+):
+    reservation = await IdempotencyService(session).reserve(
+        actor_id=principal.subject_id,
+        operation=operation,
+        idempotency_key=key,
+        payload=payload,
+    )
+    if reservation.status is ReservationStatus.IN_PROGRESS:
+        raise ResourceConflictException("An identical request is still in progress.")
+    return reservation
+
+
+def _key_codec() -> APIKeyCodec:
+    gateway = get_settings().gateway
+    if not gateway.api_key_peppers:
+        raise RuntimeError("API key peppers are unavailable")
+    return APIKeyCodec(
+        {
+            version: SecretValue(value)
+            for version, value in gateway.api_key_peppers.items()
+        },
+        active_pepper_version=gateway.active_api_key_pepper_version,
+    )
+
+
+def _settings_payload(revision: RuntimeSettingsRevision) -> dict:
+    return {
+        "id": str(revision.id) if revision.id else None,
+        "revision": revision.revision,
+        "base_revision": revision.base_revision,
+        "state": revision.state,
+        "values": revision.values.model_dump(mode="json"),
+        "created_at": revision.created_at.isoformat() if revision.created_at else None,
+        "activated_at": revision.activated_at.isoformat() if revision.activated_at else None,
+    }
+
+
+@router.get("/me")
+async def me(
+    principal: Principal = Depends(require_scope("spaces:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    member = await session.get(MemberModel, _actor_id(principal))
+    if member is None or member.status == MemberStatus.DISABLED.value:
+        raise AuthorizationException()
+    return {
+        "id": str(member.id),
+        "username": member.username,
+        "display_name": member.display_name,
+        "status": member.status,
+        "system_role": member.system_role,
+        "requires_password_change": member.force_password_change,
+    }
+
+
+@router.get("/spaces")
+async def list_spaces(
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None),
+    principal: Principal = Depends(require_scope("spaces:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    member_id = _actor_id(principal)
+    after = _cursor_decode(cursor)
+    query = (
+        select(Workspace, SpaceMembershipModel.role)
+        .join(SpaceMembershipModel, SpaceMembershipModel.space_id == Workspace.id)
+        .where(
+            SpaceMembershipModel.member_id == member_id,
+            Workspace.archived_at.is_(None),
+        )
+        .order_by(Workspace.id)
+        .limit(limit + 1)
+    )
+    if after is not None:
+        query = query.where(Workspace.id > after)
+    rows = (await session.execute(query)).all()
+    page = rows[:limit]
+    return {
+        "items": [
+            {
+                "id": space.id,
+                "name": space.name,
+                "role": role,
+                "personal": role == SpaceRole.OWNER.value and space.id != "global",
+                "revision": space.revision,
+                "created_at": space.created_at.isoformat(),
+            }
+            for space, role in page
+        ],
+        "next_cursor": _cursor_encode(page[-1][0].id) if len(rows) > limit else None,
+    }
+
+
+@router.post("/spaces", status_code=status.HTTP_201_CREATED)
+async def create_space(
+    payload: SpaceCreateRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("spaces:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    reservation = await _reserve(
+        session,
+        principal,
+        "space.create",
+        idempotency_key,
+        payload.model_dump(mode="json"),
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        if not reservation.resource_ids:
+            raise ResourceConflictException()
+        space = await session.get(Workspace, reservation.resource_ids[0])
+        if space is None:
+            raise ResourceConflictException()
+        return {
+            "id": space.id,
+            "name": space.name,
+            "role": SpaceRole.OWNER.value,
+            "revision": space.revision,
+        }
+    try:
+        created = await SpaceService(session).create(
+            principal,
+            name=payload.name,
+            request_id=get_request_id(request),
+        )
+    except ValueError as exc:
+        raise ValidationException(str(exc)) from exc
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=201,
+        resource_ids=[created.space_id],
+    )
+    return {
+        "id": created.space_id,
+        "name": created.name,
+        "role": SpaceRole.OWNER.value,
+        "revision": created.revision,
+    }
+
+
+@router.get("/spaces/{space_id}/members")
+async def list_space_members(
+    space_id: str,
+    principal: Principal = Depends(require_scope("spaces:members")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    actor_membership = await session.scalar(
+        select(SpaceMembershipModel).where(
+            SpaceMembershipModel.space_id == space_id,
+            SpaceMembershipModel.member_id == _actor_id(principal),
+        )
+    )
+    if actor_membership is None or actor_membership.role != SpaceRole.OWNER.value:
+        raise AuthorizationException()
+    rows = (
+        await session.execute(
+            select(SpaceMembershipModel, MemberModel)
+            .join(MemberModel, MemberModel.id == SpaceMembershipModel.member_id)
+            .where(SpaceMembershipModel.space_id == space_id)
+            .order_by(MemberModel.username_normalized)
+        )
+    ).all()
+    return {
+        "items": [
+            {
+                "member_id": str(member.id),
+                "username": member.username,
+                "display_name": member.display_name,
+                "status": member.status,
+                "role": membership.role,
+                "updated_at": membership.updated_at.isoformat(),
+            }
+            for membership, member in rows
+        ],
+        "next_cursor": None,
+    }
+
+
+@router.put("/spaces/{space_id}/members/{member_id}")
+async def set_space_membership(
+    space_id: str,
+    member_id: UUID,
+    payload: MembershipRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("spaces:members")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    reservation = await _reserve(
+        session,
+        principal,
+        "space.membership.set",
+        idempotency_key,
+        {"space_id": space_id, "member_id": str(member_id), "role": payload.role.value},
+    )
+    if reservation.status is not ReservationStatus.REPLAY:
+        await SpaceService(session).set_membership(
+            principal,
+            space_id,
+            member_id,
+            role=payload.role,
+            request_id=get_request_id(request),
+        )
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=200,
+            resource_ids=[space_id, str(member_id)],
+        )
+    return {"space_id": space_id, "member_id": str(member_id), "role": payload.role.value}
+
+
+@router.delete("/spaces/{space_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def archive_space(
+    space_id: str,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("spaces:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> Response:
+    reservation = await _reserve(
+        session,
+        principal,
+        "space.archive",
+        idempotency_key,
+        {"space_id": space_id},
+    )
+    if reservation.status is not ReservationStatus.REPLAY:
+        await SpaceService(session).archive(
+            principal,
+            space_id,
+            request_id=get_request_id(request),
+        )
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=204,
+            resource_ids=[space_id],
+        )
+    return Response(status_code=204)
+
+
+@router.get("/api-keys")
+async def list_api_keys(
+    principal: Principal = Depends(require_scope("api_keys:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    member_id = _actor_id(principal)
+    keys = list(
+        await session.scalars(
+            select(PersonalAPIKeyModel)
+            .where(PersonalAPIKeyModel.member_id == member_id)
+            .order_by(PersonalAPIKeyModel.created_at.desc(), PersonalAPIKeyModel.id.desc())
+            .limit(100)
+        )
+    )
+    key_ids = [key.id for key in keys]
+    scope_rows = (
+        (
+            await session.execute(
+                select(APIKeyScopeModel.api_key_id, APIKeyScopeModel.scope).where(
+                    APIKeyScopeModel.api_key_id.in_(key_ids)
+                )
+            )
+        ).all()
+        if key_ids
+        else []
+    )
+    scopes: dict[UUID, list[str]] = {key_id: [] for key_id in key_ids}
+    for key_id, scope in scope_rows:
+        scopes[key_id].append(scope)
+    return {
+        "items": [
+            {
+                "id": str(key.id),
+                "public_id": key.public_id,
+                "name": key.name,
+                "status": key.status,
+                "scopes": sorted(scopes[key.id]),
+                "created_at": key.created_at.isoformat(),
+                "last_used_at": key.last_used_at.isoformat() if key.last_used_at else None,
+                "expires_at": key.expires_at.isoformat() if key.expires_at else None,
+                "revoked_at": key.revoked_at.isoformat() if key.revoked_at else None,
+            }
+            for key in keys
+        ],
+        "next_cursor": None,
+    }
+
+
+@router.post("/api-keys", status_code=status.HTTP_201_CREATED)
+async def create_api_key(
+    payload: APIKeyCreateRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("api_keys:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> JSONResponse:
+    reservation = await _reserve(
+        session,
+        principal,
+        "api_key.create",
+        idempotency_key,
+        payload.model_dump(mode="json"),
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        raise ResourceConflictException("The API key secret was already revealed and cannot be replayed.")
+    try:
+        created = await APIKeyService(session, _key_codec()).create(
+            _actor_id(principal),
+            family_id=await _family_id(session, principal),
+            name=payload.name,
+            scopes=set(payload.scopes),
+            expires_at=payload.expires_at,
+            request_id=get_request_id(request),
+        )
+    except ValueError as exc:
+        raise ValidationException(str(exc)) from exc
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=201,
+        resource_ids=[str(created.key_id)],
+    )
+    response = JSONResponse(
+        status_code=201,
+        content={
+            "id": str(created.key_id),
+            "public_id": created.public_id,
+            "secret": created.secret.reveal(),
+            "scopes": sorted(created.scopes),
+            "expires_at": created.expires_at.isoformat() if created.expires_at else None,
+        },
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_api_key(
+    key_id: UUID,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("api_keys:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> Response:
+    reservation = await _reserve(
+        session,
+        principal,
+        "api_key.revoke",
+        idempotency_key,
+        {"key_id": str(key_id)},
+    )
+    if reservation.status is not ReservationStatus.REPLAY:
+        await APIKeyService(session, _key_codec()).revoke(
+            principal,
+            key_id,
+            request_id=get_request_id(request),
+        )
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=204,
+            resource_ids=[str(key_id)],
+        )
+    return Response(status_code=204)
+
+
+@router.get("/members")
+async def list_members(
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None),
+    principal: Principal = Depends(require_scope("members:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    if principal.system_role is not SystemRole.SUPER_ADMIN:
+        raise AuthorizationException()
+    after = _cursor_decode(cursor)
+    query = select(MemberModel).order_by(MemberModel.username_normalized).limit(limit + 1)
+    if after is not None:
+        query = query.where(MemberModel.username_normalized > after)
+    rows = list(await session.scalars(query))
+    page = rows[:limit]
+    return {
+        "items": [
+            {
+                "id": str(member.id),
+                "username": member.username,
+                "display_name": member.display_name,
+                "status": member.status,
+                "system_role": member.system_role,
+                "requires_password_change": member.force_password_change,
+                "created_at": member.created_at.isoformat(),
+                "updated_at": member.updated_at.isoformat(),
+            }
+            for member in page
+        ],
+        "next_cursor": _cursor_encode(page[-1].username_normalized) if len(rows) > limit else None,
+    }
+
+
+@router.post("/members", status_code=status.HTTP_201_CREATED)
+async def create_member(
+    payload: MemberCreateRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("members:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> JSONResponse:
+    reservation = await _reserve(
+        session,
+        principal,
+        "member.create",
+        idempotency_key,
+        payload.model_dump(mode="json"),
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        raise ResourceConflictException("The temporary password was already revealed and cannot be replayed.")
+    try:
+        created = await MemberAdministrationService(session, PasswordService()).create(
+            principal,
+            family_id=await _family_id(session, principal),
+            username=payload.username,
+            display_name=payload.display_name,
+            request_id=get_request_id(request),
+        )
+    except ValueError as exc:
+        raise ValidationException(str(exc)) from exc
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=201,
+        resource_ids=[str(created.member_id)],
+    )
+    response = JSONResponse(
+        status_code=201,
+        content={
+            "id": str(created.member_id),
+            "username": created.username,
+            "display_name": created.display_name,
+            "temporary_password": created.temporary_password.reveal(),
+            "temporary_password_expires_at": created.expires_at.isoformat(),
+            "requires_password_change": True,
+        },
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.get("/sessions")
+async def list_sessions(
+    principal: Principal = Depends(require_scope("sessions:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    current_family = await _family_id(session, principal)
+    rows = list(
+        await session.scalars(
+            select(SessionFamilyModel)
+            .where(SessionFamilyModel.member_id == _actor_id(principal))
+            .order_by(SessionFamilyModel.created_at.desc())
+            .limit(100)
+        )
+    )
+    current_time = datetime.now(timezone.utc)
+    return {
+        "items": [
+            {
+                "id": str(family.id),
+                "current": family.id == current_family,
+                "status": "revoked" if family.revoked_at else ("expired" if current_time >= family.absolute_expires_at or current_time >= family.idle_expires_at else "active"),
+                "created_at": family.created_at.isoformat(),
+                "last_activity_at": family.last_activity_at.isoformat(),
+                "idle_expires_at": family.idle_expires_at.isoformat(),
+                "absolute_expires_at": family.absolute_expires_at.isoformat(),
+                "revoked_at": family.revoked_at.isoformat() if family.revoked_at else None,
+            }
+            for family in rows
+        ],
+        "next_cursor": None,
+    }
+
+
+@router.delete("/sessions/{family_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_session(
+    family_id: UUID,
+    principal: Principal = Depends(require_scope("sessions:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> Response:
+    family = await session.get(SessionFamilyModel, family_id)
+    if family is None or family.member_id != _actor_id(principal):
+        raise AuthorizationException()
+    await SessionService(session).revoke_family(family_id, reason="member_revoked")
+    return Response(status_code=204)
+
+
+@router.get("/audit-events")
+async def list_audit_events(
+    limit: int = Query(default=50, ge=1, le=100),
+    principal: Principal = Depends(require_scope("members:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    if principal.system_role is not SystemRole.SUPER_ADMIN:
+        raise AuthorizationException()
+    rows = list(
+        await session.scalars(
+            select(AuditEventModel)
+            .order_by(AuditEventModel.occurred_at.desc(), AuditEventModel.id.desc())
+            .limit(limit)
+        )
+    )
+    return {
+        "items": [
+            {
+                "id": str(event.id),
+                "occurred_at": event.occurred_at.isoformat(),
+                "actor_member_id": str(event.actor_member_id) if event.actor_member_id else None,
+                "actor_kind": event.actor_kind,
+                "action": event.action,
+                "resource_type": event.resource_type,
+                "resource_id": event.resource_id,
+                "outcome": event.outcome,
+                "request_id": event.request_id,
+            }
+            for event in rows
+        ],
+        "next_cursor": None,
+    }
+
+
+@router.get("/settings")
+async def active_runtime_settings(
+    principal: Principal = Depends(require_scope("settings:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    return _settings_payload(await RuntimeSettingsService(session).active())
+
+
+@router.post("/settings/drafts", status_code=status.HTTP_201_CREATED)
+async def create_runtime_settings_draft(
+    payload: RuntimeSettingsDraftRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("settings:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    reservation = await _reserve(
+        session,
+        principal,
+        "runtime_settings.draft",
+        idempotency_key,
+        payload.model_dump(mode="json"),
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        if not reservation.resource_ids:
+            raise ResourceConflictException()
+        model = await session.get(RuntimeSettingRevisionModel, UUID(reservation.resource_ids[0]))
+        if model is None:
+            raise ResourceConflictException()
+        return _settings_payload(RuntimeSettingsService._to_domain(model))
+    try:
+        draft = await RuntimeSettingsService(session).create_draft(
+            principal,
+            family_id=await _family_id(session, principal),
+            base_revision=payload.base_revision,
+            values=payload.values,
+            reason=payload.reason,
+            request_id=get_request_id(request),
+        )
+    except ValueError as exc:
+        raise ValidationException(str(exc)) from exc
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=201,
+        resource_ids=[str(draft.id)],
+    )
+    return _settings_payload(draft)
+
+
+@router.post("/settings/drafts/{draft_id}/activate")
+async def activate_runtime_settings_draft(
+    draft_id: UUID,
+    payload: RuntimeSettingsActivationRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("settings:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    reservation = await _reserve(
+        session,
+        principal,
+        "runtime_settings.activate",
+        idempotency_key,
+        {"draft_id": str(draft_id), **payload.model_dump(mode="json")},
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        if not reservation.resource_ids:
+            raise ResourceConflictException()
+        model = await session.get(RuntimeSettingRevisionModel, UUID(reservation.resource_ids[0]))
+        if model is None:
+            raise ResourceConflictException()
+        return _settings_payload(RuntimeSettingsService._to_domain(model))
+    try:
+        activated = await RuntimeSettingsService(session).activate(
+            principal,
+            family_id=await _family_id(session, principal),
+            draft_id=draft_id,
+            expected_active_revision=payload.expected_active_revision,
+            reason=payload.reason,
+            request_id=get_request_id(request),
+        )
+    except ValueError as exc:
+        raise ValidationException(str(exc)) from exc
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=200,
+        resource_ids=[str(activated.id)],
+    )
+    return _settings_payload(activated)

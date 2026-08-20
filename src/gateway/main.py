@@ -31,6 +31,8 @@ from src.gateway.presentation.routers import (
     chat_completions_router,
     files_router,
     health_router,
+    management_auth_router,
+    management_router,
     messages_router,
     models_router,
 )
@@ -157,6 +159,8 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
     app.add_middleware(SettingsContextMiddleware)
 
     app.include_router(health_router)
+    app.include_router(management_auth_router)
+    app.include_router(management_router)
     app.include_router(models_router)
     app.include_router(chat_completions_router)
     app.include_router(messages_router)

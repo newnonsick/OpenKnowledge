@@ -53,8 +53,7 @@ KNOWLEDGE_SEARCH_SCHEMA: Dict[str, Any] = {
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of search results to return (default: 5, min: 1, max: 20).",
-                    "default": 5,
+                    "description": "Optional maximum number of search results to return. The active safe runtime default is used when omitted (min: 1, max: 20).",
                     "minimum": 1,
                     "maximum": 20
                 },

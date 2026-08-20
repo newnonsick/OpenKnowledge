@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.gateway.application.security.tokens import OpaqueTokenCodec, SecretValue
 from src.gateway.application.services.audit_service import AuditService
-from src.gateway.domain.exceptions import AuthenticationException
+from src.gateway.domain.exceptions import AuthenticationException, CSRFException
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SystemRole
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, SessionCredentialModel, SessionFamilyModel
@@ -141,6 +141,8 @@ class SessionService:
         *,
         now: datetime | None = None,
         request_id: str,
+        csrf_token: str | None = None,
+        require_csrf: bool = False,
     ) -> RefreshRotation:
         current_time = now or datetime.now(timezone.utc)
         token_digest = self._tokens.digest(raw_refresh_token)
@@ -160,6 +162,12 @@ class SessionService:
         )
         if family is None or family.revoked_at is not None:
             raise AuthenticationException("Invalid session.")
+        if require_csrf and (
+            not csrf_token
+            or family.csrf_token_digest is None
+            or not self._tokens.verify(csrf_token, family.csrf_token_digest)
+        ):
+            raise CSRFException()
         credential = await self._session.scalar(
             select(SessionCredentialModel)
             .where(

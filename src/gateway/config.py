@@ -1,6 +1,7 @@
 
 
 from contextvars import ContextVar, Token
+import base64
 from functools import lru_cache
 from enum import Enum
 from ipaddress import ip_network
@@ -250,6 +251,22 @@ class GatewaySettings(BaseSettings):
             "active_api_key_pepper_version",
         ),
     )
+    mfa_encryption_keys: dict[int, str] = Field(
+        default_factory=dict,
+        repr=False,
+        validation_alias=AliasChoices(
+            "MFA_ENCRYPTION_KEYS",
+            "mfa_encryption_keys",
+        ),
+    )
+    active_mfa_encryption_key_version: int = Field(
+        default=1,
+        ge=1,
+        validation_alias=AliasChoices(
+            "ACTIVE_MFA_ENCRYPTION_KEY_VERSION",
+            "active_mfa_encryption_key_version",
+        ),
+    )
     max_request_body_bytes: int = Field(
         default=16 * 1024 * 1024,
         gt=0,
@@ -496,6 +513,26 @@ class GatewaySettings(BaseSettings):
             add_error(
                 ("gateway", "active_api_key_pepper_version"),
                 "the active API key pepper version must exist",
+            )
+        valid_mfa_keys = bool(self.mfa_encryption_keys)
+        for value in self.mfa_encryption_keys.values():
+            try:
+                decoded = base64.b64decode(value, altchars=b"-_", validate=True)
+            except (ValueError, TypeError):
+                valid_mfa_keys = False
+                break
+            if len(decoded) != 32:
+                valid_mfa_keys = False
+                break
+        if not valid_mfa_keys:
+            add_error(
+                ("gateway", "mfa_encryption_keys"),
+                "at least one valid Fernet MFA encryption key is required in production",
+            )
+        elif self.active_mfa_encryption_key_version not in self.mfa_encryption_keys:
+            add_error(
+                ("gateway", "active_mfa_encryption_key_version"),
+                "the active MFA encryption key version must exist",
             )
         if database and database.echo:
             add_error(("database", "echo"), "database echo is forbidden in production")

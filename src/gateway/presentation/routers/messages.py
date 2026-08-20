@@ -44,6 +44,7 @@ from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbedd
 from src.gateway.infrastructure.adapters.http_llm_client import HttpLLMClient
 from src.gateway.infrastructure.persistence.knowledge_repository import KnowledgeRepository
 from src.gateway.infrastructure.persistence.retrieval_unit_repository import PostgresRetrievalUnitRepository
+from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings
 from src.gateway.presentation.converters.anthropic_converter import (
     anthropic_request_to_canonical,
     canonical_response_to_anthropic,
@@ -159,6 +160,7 @@ def get_retrieval_service(
     return AuthorizedRetrievalService(
         PostgresRetrievalUnitRepository(),
         embedding_client,
+        runtime_settings_provider=load_active_retrieval_settings,
     )
 
 def get_chat_orchestrator(

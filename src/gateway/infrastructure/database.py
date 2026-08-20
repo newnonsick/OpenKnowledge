@@ -226,6 +226,7 @@ async def _validate_runtime_database_connection(connection) -> None:
         "personal_api_keys",
         "provenance_links",
         "retrieval_units",
+        "runtime_setting_revisions",
         "session_credentials",
         "session_families",
         "space_memberships",
@@ -268,6 +269,7 @@ async def _validate_runtime_database_connection(connection) -> None:
                     "gateway_has_space_role",
                     "gateway_is_initial_space_owner",
                     "gateway_can_change_membership",
+                    "gateway_actor_super_admin",
                 ]
             },
         )
@@ -291,6 +293,7 @@ async def _validate_runtime_database_connection(connection) -> None:
                     "gateway_has_space_role",
                     "gateway_is_initial_space_owner",
                     "gateway_can_change_membership",
+                    "gateway_actor_super_admin",
                 ]
             },
         )
@@ -317,6 +320,7 @@ async def _validate_runtime_database_connection(connection) -> None:
                     "gateway_has_space_role",
                     "gateway_is_initial_space_owner",
                     "gateway_can_change_membership",
+                    "gateway_actor_super_admin",
                 ],
             },
         )
@@ -346,6 +350,7 @@ async def _validate_runtime_database_connection(connection) -> None:
         "personal_api_keys": ("SELECT", "INSERT", "UPDATE"),
         "provenance_links": ("SELECT", "INSERT"),
         "retrieval_units": ("SELECT", "INSERT"),
+        "runtime_setting_revisions": ("SELECT", "INSERT"),
         "session_credentials": ("SELECT", "INSERT", "UPDATE"),
         "session_families": ("SELECT", "INSERT", "UPDATE"),
         "space_memberships": ("SELECT", "INSERT", "DELETE"),
@@ -414,6 +419,7 @@ async def _validate_runtime_database_connection(connection) -> None:
         "public.gateway_has_space_role(text,text[])",
         "public.gateway_is_initial_space_owner(text,uuid)",
         "public.gateway_can_change_membership(text,uuid,text)",
+        "public.gateway_actor_super_admin()",
     )
     for function_name in required_functions:
         allowed = await connection.scalar(
@@ -443,6 +449,12 @@ async def _validate_runtime_database_connection(connection) -> None:
             "updated_at",
         ),
         "retrieval_units": ("active", "deactivated_at"),
+        "runtime_setting_revisions": (
+            "state",
+            "activation_reason",
+            "activated_by_member_id",
+            "activated_at",
+        ),
         "space_memberships": ("role", "updated_at"),
         "workspaces": ("name", "archived_at", "revision"),
     }

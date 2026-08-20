@@ -29,6 +29,8 @@ def production_settings(**gateway_overrides) -> Settings:
         "legacy_api_keys_enabled": False,
         "api_key_peppers": {1: "p" * 32},
         "active_api_key_pepper_version": 1,
+        "mfa_encryption_keys": {1: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="},
+        "active_mfa_encryption_key_version": 1,
     }
     gateway.update(gateway_overrides)
     return Settings(gateway=gateway, database={"echo": False})
@@ -48,6 +50,9 @@ def production_settings(**gateway_overrides) -> Settings:
         ({"api_key_peppers": {}}, "api_key_peppers"),
         ({"api_key_peppers": {1: "short"}}, "api_key_peppers"),
         ({"active_api_key_pepper_version": 2}, "active_api_key_pepper_version"),
+        ({"mfa_encryption_keys": {}}, "mfa_encryption_keys"),
+        ({"mfa_encryption_keys": {1: "invalid"}}, "mfa_encryption_keys"),
+        ({"active_mfa_encryption_key_version": 2}, "active_mfa_encryption_key_version"),
     ],
 )
 def test_production_rejects_unsafe_gateway_configuration(overrides, field_name):
@@ -77,6 +82,11 @@ def test_valid_production_profile_composes_application():
     app = create_app(settings)
 
     assert app.state.settings is settings
+    assert "/api/v1/auth/login" in app.openapi()["paths"]
+    assert "/api/v1/auth/refresh" in app.openapi()["paths"]
+    assert "/api/v1/me" in app.openapi()["paths"]
+    assert "/api/v1/spaces" in app.openapi()["paths"]
+    assert "/api/v1/members" in app.openapi()["paths"]
 
 
 @pytest.mark.asyncio
@@ -129,6 +139,7 @@ def test_secret_values_are_redacted_from_settings_repr():
         DatabaseSettings(migration_url=f"postgresql+asyncpg://migrator:{sentinel}@db/gateway"),
         GatewaySettings(api_keys=[sentinel]),
         GatewaySettings(api_key_peppers={1: sentinel}),
+        GatewaySettings(mfa_encryption_keys={1: sentinel}),
     ]
 
     assert all(sentinel not in repr(value) for value in values)

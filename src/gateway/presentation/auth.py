@@ -35,6 +35,8 @@ PUBLIC_PATHS: Set[str] = {
     "/openapi.json",
     "/redoc",
     "/favicon.ico",
+    "/api/v1/auth/login",
+    "/api/v1/auth/refresh",
 }
 
 def is_public_path(path: str) -> bool:

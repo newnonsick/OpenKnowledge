@@ -275,8 +275,9 @@ class ChatOrchestratorService(IChatOrchestrator):
                         ),
                         is_error=True,
                     )
-                limit = int(args.get("limit", 5))
-                if limit < 1 or limit > 20:
+                raw_limit = args.get("limit")
+                limit = int(raw_limit) if raw_limit is not None else None
+                if limit is not None and (limit < 1 or limit > 20):
                     raise ValidationException("Search limit must be between 1 and 20.")
                 try:
                     if isinstance(self.retrieval_service, AuthorizedRetrievalService):
@@ -320,7 +321,7 @@ class ChatOrchestratorService(IChatOrchestrator):
                         results = await self.retrieval_service.hybrid_search(
                             query=query,
                             workspace_id=ws_id,
-                            limit=limit,
+                            limit=limit or 5,
                         )
                         content_payload = [
                             {

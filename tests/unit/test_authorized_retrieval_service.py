@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from src.gateway.application.services.authorized_retrieval_service import AuthorizedRetrievalService
+from src.gateway.application.services.runtime_settings_service import RetrievalRuntimeSettings
 from src.gateway.domain.exceptions import EmbeddingException
 from src.gateway.domain.identity import Principal, PrincipalKind, SystemRole
 from src.gateway.domain.retrieval import RetrievalCandidate
@@ -17,6 +18,7 @@ class FakeRepository:
         self.vector: list[RetrievalCandidate] = []
         self.lexical_calls = 0
         self.vector_calls = 0
+        self.last_lexical_parameters = None
 
     async def active_generation(self, principal):
         return self.generation_id
@@ -26,6 +28,7 @@ class FakeRepository:
 
     async def lexical_search(self, principal, space_ids, query, generation_id, limit, minimum_score):
         self.lexical_calls += 1
+        self.last_lexical_parameters = (limit, minimum_score)
         return self.lexical[:limit]
 
     async def vector_search(self, principal, space_ids, query_vector, generation_id, limit, minimum_similarity, exact, hnsw_ef_search):
@@ -195,3 +198,31 @@ async def test_invalid_inputs_and_required_semantic_configuration_are_rejected()
         await service.search(principal(), "query", semantic_policy="required", vector_weight=0.0)
     with pytest.raises(EmbeddingException):
         await service.search(principal(), "query", semantic_policy="required")
+
+
+@pytest.mark.asyncio
+async def test_active_safe_runtime_settings_supply_retrieval_defaults():
+    repository = FakeRepository()
+    repository.lexical = [candidate("first"), candidate("second")]
+
+    async def runtime_settings(_principal):
+        return RetrievalRuntimeSettings(
+            limit=1,
+            branch_limit=7,
+            lexical_weight=1,
+            vector_weight=0,
+            minimum_lexical_score=0.2,
+            semantic_policy="disabled",
+        )
+
+    service = AuthorizedRetrievalService(
+        repository,
+        None,
+        scope_resolver=scope_resolver,
+        runtime_settings_provider=runtime_settings,
+    )
+    response = await service.search(principal(), "query")
+
+    assert [hit.candidate.title for hit in response.hits] == ["first"]
+    assert repository.last_lexical_parameters == (7, 0.2)
+    assert response.health.semantic_status == "disabled"

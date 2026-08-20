@@ -76,6 +76,24 @@ class IdentityService:
             temporary_credential=credential.temporary,
         )
 
+    async def verify_totp_login(self, member_id: UUID, code: str) -> bool:
+        if not code:
+            return False
+        factor = await self._session.scalar(
+            select(MFAFactorModel).where(
+                MFAFactorModel.member_id == member_id,
+                MFAFactorModel.confirmed_at.is_not(None),
+                MFAFactorModel.retired_at.is_(None),
+            )
+        )
+        if factor is None:
+            return False
+        return self._mfa.verify_totp(
+            factor.secret_ciphertext,
+            code,
+            key_version=factor.encryption_key_version,
+        )
+
     async def change_password(
         self,
         member_id: UUID,

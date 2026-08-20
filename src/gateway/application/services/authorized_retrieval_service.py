@@ -10,6 +10,7 @@ from uuid import UUID
 from src.gateway.application.ports.clients import IEmbeddingClient
 from src.gateway.application.ports.retrieval import RetrievalUnitRepository
 from src.gateway.application.services.authorization_service import AuthorizationService
+from src.gateway.application.services.runtime_settings_service import RetrievalRuntimeSettings
 from src.gateway.domain.exceptions import AuthorizationException, EmbeddingException
 from src.gateway.domain.identity import Principal
 from src.gateway.domain.retrieval import RetrievalCandidate, RetrievalExplanation, RetrievalHealth, RetrievalHit, RetrievalResponse, SemanticPolicy
@@ -18,6 +19,7 @@ from src.gateway.infrastructure.persistence.principal_context import bind_princi
 
 
 ScopeResolver = Callable[[Principal, set[str] | None], Awaitable[tuple[str, ...]]]
+RuntimeSettingsProvider = Callable[[Principal], Awaitable[RetrievalRuntimeSettings]]
 
 
 class AuthorizedRetrievalService:
@@ -27,10 +29,12 @@ class AuthorizedRetrievalService:
         embedding_client: IEmbeddingClient | None,
         *,
         scope_resolver: ScopeResolver | None = None,
+        runtime_settings_provider: RuntimeSettingsProvider | None = None,
     ) -> None:
         self._repository = repository
         self._embedding_client = embedding_client
         self._scope_resolver = scope_resolver or self._resolve_scope
+        self._runtime_settings_provider = runtime_settings_provider
 
     async def search(
         self,
@@ -39,20 +43,37 @@ class AuthorizedRetrievalService:
         *,
         requested_space_ids: set[str] | None = None,
         active_space_id: str | None = None,
-        semantic_policy: SemanticPolicy = "prefer",
-        limit: int = 10,
+        semantic_policy: SemanticPolicy | None = None,
+        limit: int | None = None,
         branch_limit: int | None = None,
-        lexical_weight: float = 1.0,
-        vector_weight: float = 1.0,
-        rrf_k: int = 60,
-        minimum_lexical_score: float = 0.01,
-        minimum_vector_similarity: float = 0.55,
-        max_hits_per_source: int = 2,
-        active_space_boost: float = 0.08,
+        lexical_weight: float | None = None,
+        vector_weight: float | None = None,
+        rrf_k: int | None = None,
+        minimum_lexical_score: float | None = None,
+        minimum_vector_similarity: float | None = None,
+        max_hits_per_source: int | None = None,
+        active_space_boost: float | None = None,
         exact_vector: bool = False,
-        hnsw_ef_search: int = 100,
+        hnsw_ef_search: int | None = None,
     ) -> RetrievalResponse:
         normalized_query = query.strip()
+        defaults = (
+            await self._runtime_settings_provider(principal)
+            if self._runtime_settings_provider is not None
+            else RetrievalRuntimeSettings()
+        )
+        semantic_policy = semantic_policy or defaults.semantic_policy
+        limit = limit if limit is not None else defaults.limit
+        if branch_limit is None and self._runtime_settings_provider is not None:
+            branch_limit = defaults.branch_limit
+        lexical_weight = defaults.lexical_weight if lexical_weight is None else lexical_weight
+        vector_weight = defaults.vector_weight if vector_weight is None else vector_weight
+        rrf_k = defaults.rrf_k if rrf_k is None else rrf_k
+        minimum_lexical_score = defaults.minimum_lexical_score if minimum_lexical_score is None else minimum_lexical_score
+        minimum_vector_similarity = defaults.minimum_vector_similarity if minimum_vector_similarity is None else minimum_vector_similarity
+        max_hits_per_source = defaults.max_hits_per_source if max_hits_per_source is None else max_hits_per_source
+        active_space_boost = defaults.active_space_boost if active_space_boost is None else active_space_boost
+        hnsw_ef_search = defaults.hnsw_ef_search if hnsw_ef_search is None else hnsw_ef_search
         self._validate(
             principal,
             normalized_query,

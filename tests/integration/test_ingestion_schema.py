@@ -11,7 +11,7 @@ async def test_configured_postgres_has_durable_ingestion_schema() -> None:
     await run_migrations_async()
     status = await get_schema_status_async(expected_embedding_dimension=1024)
     assert status.compatible is True
-    assert status.current_revision == "015"
+    assert status.current_revision == "016"
 
     engine = create_async_engine(
         normalize_database_url(get_settings().database.url),

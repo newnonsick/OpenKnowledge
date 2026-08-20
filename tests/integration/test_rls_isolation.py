@@ -71,7 +71,7 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                         "login_throttle_buckets, members, mfa_factors, mfa_recovery_codes, "
                         "password_credentials, personal_api_keys, session_credentials, "
                         "provenance_links, retrieval_units, session_families, "
-                        f'space_memberships, workspaces TO "{runtime_role}"'
+                        f'runtime_setting_revisions, space_memberships, workspaces TO "{runtime_role}"'
                     )
                 )
                 await connection.execute(
@@ -82,7 +82,7 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                         "knowledge_revisions, login_throttle_buckets, members, mfa_factors, "
                         "mfa_recovery_codes, password_credentials, personal_api_keys, "
                         "provenance_links, retrieval_units, session_credentials, session_families, "
-                        "space_memberships, workspaces "
+                        "runtime_setting_revisions, space_memberships, workspaces "
                         f'TO "{runtime_role}"'
                     )
                 )
@@ -129,6 +129,12 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                     )
                 )
                 await connection.execute(
+                    text(
+                        "GRANT UPDATE (state, activation_reason, activated_by_member_id, activated_at) "
+                        f'ON runtime_setting_revisions TO "{runtime_role}"'
+                    )
+                )
+                await connection.execute(
                     text(f'GRANT UPDATE (role, updated_at) ON space_memberships TO "{runtime_role}"')
                 )
                 await connection.execute(
@@ -142,7 +148,8 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                         "GRANT EXECUTE ON FUNCTION gateway_actor_active(), "
                         "gateway_has_space_role(text, text[]), "
                         "gateway_is_initial_space_owner(text, uuid), "
-                        "gateway_can_change_membership(text, uuid, text) "
+                        "gateway_can_change_membership(text, uuid, text), "
+                        "gateway_actor_super_admin() "
                         f'TO "{runtime_role}"'
                     )
                 )

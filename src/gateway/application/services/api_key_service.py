@@ -25,6 +25,8 @@ ALLOWED_API_KEY_SCOPES = frozenset(
         "spaces:members",
         "spaces:read",
         "spaces:write",
+        "settings:read",
+        "settings:write",
     }
 )
 
