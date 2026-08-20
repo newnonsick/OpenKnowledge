@@ -13,6 +13,7 @@ from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, 
 from src.gateway.infrastructure.database import set_session_factory
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, PasswordCredentialModel, SpaceMembershipModel
 from src.gateway.infrastructure.persistence.models import Workspace
+from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGenerationModel
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
 from src.gateway.presentation.errors import register_exception_handlers
 from src.gateway.presentation.routers.management import router
@@ -29,7 +30,7 @@ def principal(member_id, system_role=SystemRole.MEMBER):
     )
 
 
-async def test_management_resources_enforce_membership_and_one_time_secret_boundaries() -> None:
+async def test_management_resources_enforce_membership_and_one_time_secret_boundaries(tmp_path) -> None:
     now = datetime.now(timezone.utc)
     admin_id = uuid4()
     member_id = uuid4()
@@ -42,6 +43,7 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
             "active_api_key_pepper_version": 1,
             "mfa_encryption_keys": {1: mfa_key},
             "active_mfa_encryption_key_version": 1,
+            "storage_dir": str(tmp_path / "storage"),
         }
     )
 
@@ -68,6 +70,14 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                         force_password_change=False,
                     ),
                     Workspace(id="global", name="Family Shared", created_by_member_id=admin_id),
+                    EmbeddingGenerationModel(
+                        id=uuid4(),
+                        purpose="retrieval",
+                        model_id="offline-test-generation",
+                        dimensions=1024,
+                        status="active",
+                        activated_at=now,
+                    ),
                 ]
             )
             await session.flush()
@@ -155,6 +165,71 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 members = await member_client.get(f"/api/v1/spaces/{private_space_id}/members")
                 assert members.status_code == 200
                 assert {item["role"] for item in members.json()["items"]} == {"owner", "reader"}
+
+                created_knowledge = await member_client.post(
+                    "/api/v1/knowledge",
+                    headers={**member_headers, "Idempotency-Key": "create-family-note"},
+                    json={
+                        "space_id": "global",
+                        "title": "Emergency contacts",
+                        "content": "Call the family coordinator before the building manager.",
+                        "tags": ["home", "contact"],
+                    },
+                )
+                assert created_knowledge.status_code == 201
+                knowledge_id = created_knowledge.json()["id"]
+                knowledge = await member_client.get("/api/v1/knowledge?space_id=global")
+                assert knowledge.status_code == 200
+                assert knowledge.json()["items"][0]["id"] == knowledge_id
+
+                search = await member_client.post(
+                    "/api/v1/retrieval/search",
+                    headers=member_headers,
+                    json={"query": "building manager", "space_ids": ["global"], "limit": 10},
+                )
+                assert search.status_code == 200
+                assert search.json()["hits"][0]["canonical_id"] == knowledge_id
+                assert search.json()["health"]["semantic_status"] == "degraded"
+
+                updated_knowledge = await member_client.put(
+                    f"/api/v1/knowledge/{knowledge_id}",
+                    headers={**member_headers, "Idempotency-Key": "update-family-note"},
+                    json={
+                        "expected_version": 1,
+                        "title": "Emergency contacts",
+                        "content": "Call the family coordinator, then the building manager.",
+                        "tags": ["home", "contact"],
+                        "change_summary": "Clarified call order",
+                    },
+                )
+                assert updated_knowledge.status_code == 200
+                assert updated_knowledge.json()["version"] == 2
+                detail = await member_client.get(f"/api/v1/knowledge/{knowledge_id}")
+                assert detail.status_code == 200
+                assert detail.json()["content"].startswith("Call the family coordinator")
+
+                upload = await member_client.post(
+                    "/api/v1/sources/upload",
+                    headers={**member_headers, "Idempotency-Key": "upload-family-source"},
+                    data={"space_id": "global", "display_name": "Family procedures"},
+                    files={"file": ("procedures.txt", b"Turn off the water valve before repairs.", "text/plain")},
+                )
+                assert upload.status_code == 202
+                assert upload.json()["job_state"] == "queued"
+                sources = await member_client.get("/api/v1/sources?space_id=global")
+                assert sources.status_code == 200
+                assert sources.json()["items"][0]["id"] == upload.json()["document_id"]
+                jobs = await member_client.get("/api/v1/ingestion-jobs?space_id=global")
+                assert jobs.status_code == 200
+                assert jobs.json()["items"][0]["id"] == upload.json()["job_id"]
+
+                deleted_knowledge = await member_client.delete(
+                    f"/api/v1/knowledge/{knowledge_id}?expected_version=2",
+                    headers={**member_headers, "Idempotency-Key": "delete-family-note"},
+                )
+                assert deleted_knowledge.status_code == 204
+                missing_knowledge = await member_client.get(f"/api/v1/knowledge/{knowledge_id}")
+                assert missing_knowledge.status_code == 404
 
                 created_key = await member_client.post(
                     "/api/v1/api-keys",

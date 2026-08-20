@@ -3,9 +3,10 @@ from __future__ import annotations
 import base64
 from datetime import datetime, timezone
 import json
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
+from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, Response, UploadFile, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, or_, select
@@ -14,7 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.gateway.application.security.passwords import PasswordService
 from src.gateway.application.security.tokens import APIKeyCodec, SecretValue
 from src.gateway.application.services.api_key_service import APIKeyService
+from src.gateway.application.services.authorized_retrieval_service import AuthorizedRetrievalService
+from src.gateway.application.services.document_upload_service import DocumentUploadService
 from src.gateway.application.services.idempotency_service import IdempotencyService, ReservationStatus
+from src.gateway.application.services.knowledge_management_service import KnowledgeManagementService
 from src.gateway.application.services.member_administration_service import MemberAdministrationService
 from src.gateway.application.services.runtime_settings_service import RuntimeSettingsService, RuntimeSettingsRevision, RuntimeSettingsValues
 from src.gateway.application.services.session_service import SessionService
@@ -22,15 +26,22 @@ from src.gateway.application.services.space_service import SpaceService
 from src.gateway.config import get_settings
 from src.gateway.domain.exceptions import AuthenticationException, AuthorizationException, ResourceConflictException, ValidationException
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SpaceRole, SystemRole
-from src.gateway.infrastructure.database import get_db_session
+from src.gateway.domain.entities import KnowledgeItem as DomainKnowledgeItem
+from src.gateway.infrastructure.database import get_db_session, get_session_factory
+from src.gateway.infrastructure.persistence.ingestion_models import DocumentModel, DocumentRevisionModel, IngestionJobModel
+from src.gateway.infrastructure.persistence.models import KnowledgeItem as KnowledgeItemModel, KnowledgeRevision as KnowledgeRevisionModel
+from src.gateway.infrastructure.persistence.retrieval_unit_repository import PostgresRetrievalUnitRepository
 from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeModel, AuditEventModel, MemberModel, PersonalAPIKeyModel, SessionCredentialModel, SessionFamilyModel, SpaceMembershipModel
 from src.gateway.infrastructure.persistence.models import Workspace
 from src.gateway.infrastructure.persistence.runtime_settings_models import RuntimeSettingRevisionModel
+from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings
+from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
 from src.gateway.presentation.authorization import require_scope
 from src.gateway.presentation.request_context import get_request_id
 
 
 router = APIRouter(prefix="/api/v1", tags=["Management"])
+KnowledgeTag = Annotated[str, Field(min_length=1, max_length=80)]
 
 
 class SpaceCreateRequest(BaseModel):
@@ -58,6 +69,35 @@ class MemberCreateRequest(BaseModel):
 
     username: str = Field(min_length=1, max_length=255)
     display_name: str = Field(min_length=1, max_length=255)
+
+
+class KnowledgeCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    space_id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=500)
+    content: str = Field(min_length=1, max_length=1_000_000)
+    tags: list[KnowledgeTag] = Field(default_factory=list, max_length=32)
+
+
+class KnowledgeUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=500)
+    content: str = Field(min_length=1, max_length=1_000_000)
+    tags: list[KnowledgeTag] = Field(default_factory=list, max_length=32)
+    change_summary: str | None = Field(default=None, max_length=500)
+
+
+class RetrievalSearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=1000)
+    space_ids: list[str] | None = Field(default=None, max_length=100)
+    active_space_id: str | None = Field(default=None, max_length=64)
+    semantic_policy: Literal["prefer", "required", "disabled"] = "prefer"
+    limit: int = Field(default=20, ge=1, le=50)
 
 
 class RuntimeSettingsDraftRequest(BaseModel):
@@ -158,6 +198,49 @@ def _settings_payload(revision: RuntimeSettingsRevision) -> dict:
         "created_at": revision.created_at.isoformat() if revision.created_at else None,
         "activated_at": revision.activated_at.isoformat() if revision.activated_at else None,
     }
+
+
+def _knowledge_payload(item: DomainKnowledgeItem, *, include_content: bool = True) -> dict:
+    revision = item.current_revision
+    content = revision.content if revision else item.content or ""
+    payload = {
+        "id": str(item.id),
+        "space_id": item.workspace_id,
+        "title": item.title,
+        "content_excerpt": content[:320],
+        "tags": list(revision.tags if revision else item.tags),
+        "version": revision.version if revision else item.version,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+    if include_content:
+        payload["content"] = content
+    return payload
+
+
+def _orm_knowledge_payload(item: KnowledgeItemModel, revision: KnowledgeRevisionModel | None, *, include_content: bool) -> dict:
+    content = revision.content if revision else item.content
+    payload = {
+        "id": str(item.id),
+        "space_id": item.workspace_id,
+        "title": item.title,
+        "content_excerpt": content[:320],
+        "tags": list(revision.tags if revision else item.tags),
+        "version": revision.version if revision else item.revision,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+    if include_content:
+        payload["content"] = content
+    return payload
+
+
+async def _upload_chunks(file: UploadFile):
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            return
+        yield chunk
 
 
 @router.get("/me")
@@ -363,6 +446,317 @@ async def archive_space(
             resource_ids=[space_id],
         )
     return Response(status_code=204)
+
+
+@router.get("/knowledge")
+async def list_knowledge(
+    space_id: str | None = Query(default=None, max_length=64),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None),
+    principal: Principal = Depends(require_scope("knowledge:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    after = _cursor_decode(cursor)
+    query = (
+        select(KnowledgeItemModel, KnowledgeRevisionModel)
+        .outerjoin(KnowledgeRevisionModel, KnowledgeRevisionModel.id == KnowledgeItemModel.current_revision_id)
+        .where(KnowledgeItemModel.is_deleted.is_(False))
+        .order_by(KnowledgeItemModel.id)
+        .limit(limit + 1)
+    )
+    if space_id is not None:
+        query = query.where(KnowledgeItemModel.workspace_id == space_id)
+    if after is not None:
+        try:
+            query = query.where(KnowledgeItemModel.id > UUID(after))
+        except ValueError as exc:
+            raise ValidationException("Invalid pagination cursor.") from exc
+    rows = (await session.execute(query)).all()
+    page = rows[:limit]
+    return {
+        "items": [_orm_knowledge_payload(item, revision, include_content=False) for item, revision in page],
+        "next_cursor": _cursor_encode(str(page[-1][0].id)) if len(rows) > limit else None,
+    }
+
+
+@router.post("/knowledge", status_code=status.HTTP_201_CREATED)
+async def create_knowledge(
+    payload: KnowledgeCreateRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    reservation = await _reserve(
+        session,
+        principal,
+        "knowledge.create",
+        idempotency_key,
+        payload.model_dump(mode="json"),
+    )
+    knowledge = KnowledgeManagementService(session)
+    if reservation.status is ReservationStatus.REPLAY:
+        if not reservation.resource_ids:
+            raise ResourceConflictException()
+        existing = await knowledge.get(UUID(reservation.resource_ids[0]))
+        if existing is None:
+            raise ResourceConflictException()
+        return _knowledge_payload(existing)
+    created = await knowledge.create(
+        principal,
+        space_id=payload.space_id,
+        title=payload.title.strip(),
+        content=payload.content,
+        tags=[tag.strip() for tag in payload.tags if tag.strip()],
+        request_id=get_request_id(request),
+    )
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=201,
+        resource_ids=[str(created.id)],
+    )
+    return _knowledge_payload(created)
+
+
+@router.get("/knowledge/{item_id}")
+async def get_knowledge(
+    item_id: UUID,
+    principal: Principal = Depends(require_scope("knowledge:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    item = await KnowledgeManagementService(session).get(item_id)
+    if item is None:
+        raise AuthorizationException()
+    return _knowledge_payload(item)
+
+
+@router.put("/knowledge/{item_id}")
+async def update_knowledge(
+    item_id: UUID,
+    payload: KnowledgeUpdateRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    reservation = await _reserve(
+        session,
+        principal,
+        "knowledge.update",
+        idempotency_key,
+        {"item_id": str(item_id), **payload.model_dump(mode="json")},
+    )
+    knowledge = KnowledgeManagementService(session)
+    if reservation.status is ReservationStatus.REPLAY:
+        current = await knowledge.get(item_id)
+        if current is None:
+            raise ResourceConflictException()
+        return _knowledge_payload(current)
+    updated = await knowledge.update(
+        principal,
+        item_id,
+        expected_version=payload.expected_version,
+        title=payload.title.strip(),
+        content=payload.content,
+        tags=[tag.strip() for tag in payload.tags if tag.strip()],
+        change_summary=payload.change_summary,
+        request_id=get_request_id(request),
+    )
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=200,
+        resource_ids=[str(item_id)],
+    )
+    return _knowledge_payload(updated)
+
+
+@router.delete("/knowledge/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_knowledge(
+    item_id: UUID,
+    request: Request,
+    expected_version: int = Query(ge=1),
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> Response:
+    reservation = await _reserve(
+        session,
+        principal,
+        "knowledge.delete",
+        idempotency_key,
+        {"item_id": str(item_id), "expected_version": expected_version},
+    )
+    if reservation.status is not ReservationStatus.REPLAY:
+        await KnowledgeManagementService(session).delete(
+            principal,
+            item_id,
+            expected_version=expected_version,
+            request_id=get_request_id(request),
+        )
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=204,
+            resource_ids=[str(item_id)],
+        )
+    return Response(status_code=204)
+
+
+@router.post("/retrieval/search")
+async def search_retrieval(
+    payload: RetrievalSearchRequest,
+    principal: Principal = Depends(require_scope("knowledge:read")),
+) -> dict:
+    result = await AuthorizedRetrievalService(
+        PostgresRetrievalUnitRepository(get_session_factory()),
+        None,
+        runtime_settings_provider=load_active_retrieval_settings,
+    ).search(
+        principal,
+        payload.query,
+        requested_space_ids=set(payload.space_ids) if payload.space_ids is not None else None,
+        active_space_id=payload.active_space_id,
+        semantic_policy=payload.semantic_policy,
+        limit=payload.limit,
+    )
+    return {
+        "query": result.query,
+        "hits": [
+            {
+                "rank": hit.rank,
+                "rank_score": hit.rank_score,
+                "source_type": hit.candidate.source_type,
+                "space_id": hit.candidate.space_id,
+                "canonical_id": str(hit.candidate.canonical_id),
+                "revision_id": str(hit.candidate.revision_id),
+                "title": hit.candidate.title,
+                "content_excerpt": hit.candidate.content[:600],
+                "citation_uri": hit.candidate.citation_uri,
+                "language": hit.candidate.language,
+                "source_filename": hit.candidate.source_filename,
+                "version": hit.candidate.version,
+            }
+            for hit in result.hits
+        ],
+        "health": {
+            "semantic_status": result.health.semantic_status,
+            "degraded_reasons": list(result.health.degraded_reasons),
+            "embedding_generation_id": str(result.health.embedding_generation_id) if result.health.embedding_generation_id else None,
+            "embedding_coverage": result.health.embedding_coverage,
+        },
+        "explanation": {
+            "effective_space_ids": list(result.explanation.effective_space_ids),
+            "abstained": result.explanation.abstained,
+            "active_space_id": result.explanation.active_space_id,
+        },
+    }
+
+
+@router.post("/sources/upload", status_code=status.HTTP_202_ACCEPTED)
+async def upload_source(
+    file: UploadFile = File(...),
+    space_id: str = Form(min_length=1, max_length=64),
+    display_name: str | None = Form(default=None, max_length=500),
+    idempotency_key: str = Header(min_length=1, max_length=255, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+) -> dict:
+    filename = file.filename or "uploaded-source"
+    gateway = get_settings().gateway
+    receipt = await DocumentUploadService(
+        get_session_factory(),
+        LocalVersionedObjectStorage(gateway.storage_dir),
+        max_upload_bytes=gateway.max_upload_bytes,
+    ).upload_new(
+        principal=principal,
+        space_id=space_id,
+        display_name=(display_name or filename).strip(),
+        original_filename=filename,
+        mime_type=file.content_type or "application/octet-stream",
+        chunks=_upload_chunks(file),
+        idempotency_key=idempotency_key,
+    )
+    return {
+        "document_id": str(receipt.document_id),
+        "revision_id": str(receipt.revision_id),
+        "job_id": str(receipt.job_id),
+        "job_state": receipt.job_state,
+        "duplicate_candidate_revision_id": str(receipt.duplicate_candidate_revision_id) if receipt.duplicate_candidate_revision_id else None,
+    }
+
+
+@router.get("/sources")
+async def list_sources(
+    space_id: str | None = Query(default=None, max_length=64),
+    limit: int = Query(default=50, ge=1, le=100),
+    principal: Principal = Depends(require_scope("knowledge:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    query = select(DocumentModel).where(DocumentModel.archived_at.is_(None)).order_by(DocumentModel.created_at.desc()).limit(limit)
+    if space_id is not None:
+        query = query.where(DocumentModel.space_id == space_id)
+    documents = list(await session.scalars(query))
+    document_ids = [document.id for document in documents]
+    revisions = list(
+        await session.scalars(
+            select(DocumentRevisionModel)
+            .where(DocumentRevisionModel.document_id.in_(document_ids))
+            .order_by(DocumentRevisionModel.document_id, DocumentRevisionModel.version.desc())
+        )
+    ) if document_ids else []
+    latest: dict[UUID, DocumentRevisionModel] = {}
+    for revision in revisions:
+        latest.setdefault(revision.document_id, revision)
+    return {
+        "items": [
+            {
+                "id": str(document.id),
+                "space_id": document.space_id,
+                "display_name": document.display_name,
+                "revision": document.revision,
+                "status": latest[document.id].status if document.id in latest else "pending",
+                "original_filename": latest[document.id].original_filename if document.id in latest else None,
+                "mime_type": latest[document.id].mime_type if document.id in latest else None,
+                "size_bytes": latest[document.id].size_bytes if document.id in latest else None,
+                "created_at": document.created_at.isoformat(),
+                "updated_at": document.updated_at.isoformat(),
+            }
+            for document in documents
+        ],
+        "next_cursor": None,
+    }
+
+
+@router.get("/ingestion-jobs")
+async def list_ingestion_jobs(
+    space_id: str | None = Query(default=None, max_length=64),
+    limit: int = Query(default=50, ge=1, le=100),
+    principal: Principal = Depends(require_scope("knowledge:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    query = select(IngestionJobModel).order_by(IngestionJobModel.created_at.desc()).limit(limit)
+    if space_id is not None:
+        query = query.where(IngestionJobModel.space_id == space_id)
+    jobs = list(await session.scalars(query))
+    return {
+        "items": [
+            {
+                "id": str(job.id),
+                "space_id": job.space_id,
+                "document_id": str(job.document_id),
+                "document_revision_id": str(job.document_revision_id),
+                "state": job.state,
+                "progress": job.progress,
+                "attempt_count": job.attempt_count,
+                "max_attempts": job.max_attempts,
+                "last_error_code": job.last_error_code,
+                "created_at": job.created_at.isoformat(),
+                "updated_at": job.updated_at.isoformat(),
+                "started_at": job.started_at.isoformat() if job.started_at else None,
+                "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+            }
+            for job in jobs
+        ],
+        "next_cursor": None,
+    }
 
 
 @router.get("/api-keys")
