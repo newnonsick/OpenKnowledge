@@ -13,7 +13,6 @@ from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.gateway.application.security.passwords import PasswordService
-from src.gateway.application.security.tokens import APIKeyCodec, SecretValue
 from src.gateway.application.services.api_key_service import APIKeyService
 from src.gateway.application.services.ai_management_service import AIManagementService
 from src.gateway.application.services.audit_service import AuditService
@@ -33,6 +32,7 @@ from src.gateway.domain.authorization import Action
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SpaceRole, SystemRole
 from src.gateway.domain.entities import KnowledgeItem as DomainKnowledgeItem
 from src.gateway.infrastructure.database import get_db_session, get_session_factory
+from src.gateway.presentation.api_keys import configured_api_key_codec
 from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.persistence.ingestion_models import DocumentModel, DocumentRevisionChunkModel, DocumentRevisionModel, EmbeddingGenerationModel, IngestionJobModel, RetrievalUnitModel
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
@@ -407,19 +407,6 @@ async def _reserve(
     if reservation.status is ReservationStatus.IN_PROGRESS:
         raise ResourceConflictException("An identical request is still in progress.")
     return reservation
-
-
-def _key_codec() -> APIKeyCodec:
-    gateway = get_settings().gateway
-    if not gateway.api_key_peppers:
-        raise RuntimeError("API key peppers are unavailable")
-    return APIKeyCodec(
-        {
-            version: SecretValue(value)
-            for version, value in gateway.api_key_peppers.items()
-        },
-        active_pepper_version=gateway.active_api_key_pepper_version,
-    )
 
 
 def _settings_payload(revision: RuntimeSettingsRevision) -> dict:
@@ -1737,7 +1724,7 @@ async def create_api_key(
     if reservation.status is ReservationStatus.REPLAY:
         raise ResourceConflictException("The API key secret was already revealed and cannot be replayed.")
     try:
-        created = await APIKeyService(session, _key_codec()).create(
+        created = await APIKeyService(session, configured_api_key_codec()).create(
             _actor_id(principal),
             family_id=await _family_id(session, principal),
             name=payload.name,
@@ -1782,7 +1769,7 @@ async def revoke_api_key(
         {"key_id": str(key_id)},
     )
     if reservation.status is not ReservationStatus.REPLAY:
-        await APIKeyService(session, _key_codec()).revoke(
+        await APIKeyService(session, configured_api_key_codec()).revoke(
             principal,
             key_id,
             request_id=get_request_id(request),

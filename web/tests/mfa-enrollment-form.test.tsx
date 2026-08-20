@@ -22,6 +22,13 @@ describe("MfaEnrollmentForm", () => {
               requires_mfa_enrollment: false,
               access_expires_at: "2026-08-20T12:15:00Z",
               recovery_codes: ["code-one", "code-two"],
+              initial_api_key: {
+                id: "key-1",
+                public_id: "public-1",
+                name: "First device",
+                secret: "aigw_v1_public-1_secret",
+                scopes: ["chat:write", "knowledge:read"],
+              },
             }),
             { status: 200 },
           ),
@@ -35,6 +42,7 @@ describe("MfaEnrollmentForm", () => {
 
     await waitFor(() => expect(screen.getByText("code-one")).toBeInTheDocument());
     expect(screen.getByText("code-two")).toBeInTheDocument();
+    expect(screen.getByText("aigw_v1_public-1_secret")).toBeInTheDocument();
     expect(screen.getByText(/shown only once/i)).toBeInTheDocument();
   });
 });

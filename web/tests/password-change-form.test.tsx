@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { PasswordChangeForm } from "@/components/auth/password-change-form";
@@ -19,5 +19,27 @@ describe("PasswordChangeForm", () => {
     expect(screen.getByText("At least 15 characters")).toHaveAttribute("data-valid", "false");
     expect(screen.getByText("Passwords match")).toHaveAttribute("data-valid", "false");
     expect(submit).toBeDisabled();
+  });
+
+  it("reveals the first personal API key once before entering the console", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      requires_mfa_enrollment: false,
+      initial_api_key: {
+        id: "key-1",
+        public_id: "public-1",
+        name: "First device",
+        secret: "aigw_v1_public-1_secret",
+        scopes: ["chat:write", "knowledge:read"],
+      },
+    }), { status: 200 })));
+    render(<PasswordChangeForm />);
+
+    fireEvent.change(screen.getByLabelText("New password"), { target: { value: "a permanent family password" } });
+    fireEvent.change(screen.getByLabelText("Confirm password"), { target: { value: "a permanent family password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Set new password" }));
+
+    await waitFor(() => expect(screen.getByText("aigw_v1_public-1_secret")).toBeInTheDocument());
+    expect(screen.getByText(/shown only once/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "I have saved this API key" })).toBeInTheDocument();
   });
 });

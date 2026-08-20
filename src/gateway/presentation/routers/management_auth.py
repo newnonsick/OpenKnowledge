@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.gateway.application.security.passwords import PasswordService
 from src.gateway.application.security.tokens import SecretValue
 from src.gateway.application.security.totp import MFASecretService
+from src.gateway.application.services.api_key_service import APIKeyService, CreatedAPIKey
 from src.gateway.application.services.identity_service import IdentityService
 from src.gateway.application.services.login_throttle_service import LoginThrottleService, request_client_ip
 from src.gateway.application.services.session_service import RefreshStatus, SessionSecrets, SessionService
@@ -20,6 +21,7 @@ from src.gateway.domain.exceptions import AuthenticationException, CSRFException
 from src.gateway.domain.identity import Principal, PrincipalKind, SystemRole
 from src.gateway.infrastructure.database import get_db_session, get_session_factory
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, SessionCredentialModel
+from src.gateway.presentation.api_keys import configured_api_key_codec
 from src.gateway.presentation.request_context import get_request_id
 
 
@@ -128,18 +130,31 @@ def _session_response(
     *,
     requires_password_change: bool,
     requires_mfa_enrollment: bool,
+    initial_api_key: CreatedAPIKey | None = None,
 ) -> JSONResponse:
-    response = JSONResponse(
-        {
-            "member_id": principal.subject_id,
-            "system_role": principal.system_role.value,
-            "requires_password_change": requires_password_change,
-            "requires_mfa_enrollment": requires_mfa_enrollment,
-            "access_expires_at": secrets.access_expires_at.isoformat(),
-        }
-    )
+    payload = {
+        "member_id": principal.subject_id,
+        "system_role": principal.system_role.value,
+        "requires_password_change": requires_password_change,
+        "requires_mfa_enrollment": requires_mfa_enrollment,
+        "access_expires_at": secrets.access_expires_at.isoformat(),
+    }
+    if initial_api_key is not None:
+        payload["initial_api_key"] = _initial_api_key_payload(initial_api_key)
+    response = JSONResponse(payload)
     _apply_session_cookies(response, secrets)
     return response
+
+
+def _initial_api_key_payload(created: CreatedAPIKey) -> dict:
+    return {
+        "id": str(created.key_id),
+        "public_id": created.public_id,
+        "name": "First device",
+        "secret": created.secret.reveal(),
+        "scopes": sorted(created.scopes),
+        "expires_at": created.expires_at.isoformat() if created.expires_at else None,
+    }
 
 
 @router.post("/login")
@@ -249,11 +264,23 @@ async def change_password(
         now=current_time,
         step_up_at=current_time,
     )
+    initial_api_key = None
+    if not requires_mfa:
+        initial_api_key = await APIKeyService(
+            session,
+            configured_api_key_codec(),
+        ).create_initial(
+            member_id,
+            family_id=secrets.family_id,
+            request_id=get_request_id(request),
+            now=current_time,
+        )
     return _session_response(
         next_principal,
         secrets,
         requires_password_change=False,
         requires_mfa_enrollment=requires_mfa,
+        initial_api_key=initial_api_key,
     )
 
 
@@ -305,6 +332,15 @@ async def confirm_totp(
         now=current_time,
         step_up_at=current_time,
     )
+    initial_api_key = await APIKeyService(
+        session,
+        configured_api_key_codec(),
+    ).create_initial(
+        member_id,
+        family_id=secrets.family_id,
+        request_id=get_request_id(request),
+        now=current_time,
+    )
     response = JSONResponse(
         {
             "member_id": str(member_id),
@@ -313,6 +349,7 @@ async def confirm_totp(
             "requires_mfa_enrollment": False,
             "access_expires_at": secrets.access_expires_at.isoformat(),
             "recovery_codes": [value.reveal() for value in recovery_codes],
+            "initial_api_key": _initial_api_key_payload(initial_api_key) if initial_api_key else None,
         }
     )
     _apply_session_cookies(response, secrets)

@@ -13,6 +13,15 @@ type Enrollment = {
 
 type Confirmation = {
   recovery_codes: string[];
+  initial_api_key?: InitialAPIKey | null;
+};
+
+type InitialAPIKey = {
+  id: string;
+  public_id: string;
+  name: string;
+  secret: string;
+  scopes: string[];
 };
 
 export function MfaEnrollmentForm() {
@@ -21,6 +30,7 @@ export function MfaEnrollmentForm() {
   const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [code, setCode] = useState("");
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [initialKey, setInitialKey] = useState<InitialAPIKey | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -51,6 +61,7 @@ export function MfaEnrollmentForm() {
         retryAuthentication: false,
       });
       setRecoveryCodes(confirmation.recovery_codes);
+      setInitialKey(confirmation.initial_api_key ?? null);
     } catch (requestError) {
       setError(requestError instanceof ApiError ? requestError.message : "The authentication code was not accepted.");
     } finally {
@@ -71,13 +82,14 @@ export function MfaEnrollmentForm() {
       <section className="first-use-card recovery-card">
         <span className="first-use-step">Final security step</span>
         <span className="first-use-icon mint"><Check aria-hidden="true" size={22} /></span>
-        <h1>Save your recovery codes.</h1>
-        <p>Each code works once and is shown only once. Keep them somewhere separate from your authenticator.</p>
+        <h1>Save your recovery secrets.</h1>
+        <p>Your recovery codes and first API key are shown only once. Keep them somewhere separate from your authenticator.</p>
         <div className="recovery-codes" aria-label="Recovery codes">
           {recoveryCodes.map((recoveryCode) => <code key={recoveryCode}>{recoveryCode}</code>)}
         </div>
         <button className="secondary-action" onClick={copyCodes} type="button"><Copy aria-hidden="true" size={15} />{copied ? "Copied" : "Copy all codes"}</button>
-        <button className="auth-submit" onClick={() => router.replace("/")} type="button">I have saved these codes</button>
+        {initialKey ? <><div className="secret-value"><code>{initialKey.secret}</code><button aria-label="Copy API key" onClick={() => navigator.clipboard.writeText(initialKey.secret)} type="button"><Copy aria-hidden="true" size={15} /></button></div><p className="secret-scope-summary">API access: {initialKey.scopes.join(", ")}</p></> : null}
+        <button className="auth-submit" onClick={() => router.replace("/")} type="button">I have saved these secrets</button>
       </section>
     );
   }

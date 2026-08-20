@@ -1,13 +1,22 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { Check, Eye, EyeOff, KeyRound, LoaderCircle } from "lucide-react";
+import { Check, Copy, Eye, EyeOff, KeyRound, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { ApiError, apiRequest } from "@/lib/api-client";
 
 type PasswordResponse = {
   requires_mfa_enrollment: boolean;
+  initial_api_key?: InitialAPIKey | null;
+};
+
+type InitialAPIKey = {
+  id: string;
+  public_id: string;
+  name: string;
+  secret: string;
+  scopes: string[];
 };
 
 export function PasswordChangeForm() {
@@ -16,6 +25,8 @@ export function PasswordChangeForm() {
   const [confirmation, setConfirmation] = useState("");
   const [visible, setVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [initialKey, setInitialKey] = useState<InitialAPIKey | null>(null);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lengthValid = password.length >= 15 && password.length <= 128;
   const matchValid = password.length > 0 && password === confirmation;
@@ -34,12 +45,33 @@ export function PasswordChangeForm() {
         method: "POST",
         retryAuthentication: false,
       });
-      router.replace(session.requires_mfa_enrollment ? "/first-use/mfa" : "/");
+      if (session.requires_mfa_enrollment) {
+        router.replace("/first-use/mfa");
+      } else if (session.initial_api_key) {
+        setInitialKey(session.initial_api_key);
+      } else {
+        router.replace("/");
+      }
     } catch (requestError) {
       setError(requestError instanceof ApiError ? requestError.message : "The password could not be changed.");
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (initialKey) {
+    return (
+      <section className="first-use-card recovery-card">
+        <span className="first-use-step">Your first integration</span>
+        <span className="first-use-icon mint"><Check aria-hidden="true" size={22} /></span>
+        <h1>Save your personal API key.</h1>
+        <p>This secret is shown only once. Keep it in a password manager and never place it in browser storage.</p>
+        <div className="secret-value"><code>{initialKey.secret}</code><button aria-label="Copy API key" onClick={async () => { await navigator.clipboard.writeText(initialKey.secret); setCopied(true); }} type="button"><Copy aria-hidden="true" size={15} /></button></div>
+        <p className="secret-scope-summary">Access: {initialKey.scopes.join(", ")}</p>
+        {copied ? <span className="copy-confirmation" role="status">API key copied</span> : null}
+        <button className="auth-submit" onClick={() => router.replace("/")} type="button">I have saved this API key</button>
+      </section>
+    );
   }
 
   return (

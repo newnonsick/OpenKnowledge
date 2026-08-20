@@ -30,6 +30,10 @@ ALLOWED_API_KEY_SCOPES = frozenset(
     }
 )
 
+INITIAL_API_KEY_SCOPES = frozenset(
+    {"chat:write", "knowledge:read", "knowledge:write", "spaces:read"}
+)
+
 
 @dataclass(frozen=True, slots=True)
 class CreatedAPIKey:
@@ -52,6 +56,30 @@ class APIKeyService:
         self._codec = codec
         self._step_up_window = step_up_window
         self._audit = AuditService(AuditRepository(session))
+
+    async def create_initial(
+        self,
+        member_id: UUID,
+        *,
+        family_id: UUID,
+        request_id: str,
+        now: datetime | None = None,
+    ) -> CreatedAPIKey | None:
+        existing = await self._session.scalar(
+            select(PersonalAPIKeyModel.id)
+            .where(PersonalAPIKeyModel.member_id == member_id)
+            .limit(1)
+        )
+        if existing is not None:
+            return None
+        return await self.create(
+            member_id,
+            family_id=family_id,
+            name="First device",
+            scopes=INITIAL_API_KEY_SCOPES,
+            request_id=request_id,
+            now=now,
+        )
 
     async def create(
         self,

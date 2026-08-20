@@ -1,16 +1,20 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import httpx
 import pyotp
 from cryptography.fernet import Fernet
 from fastapi import FastAPI
+from sqlalchemy import select
 
 from src.gateway.application.security.passwords import PasswordService
 from src.gateway.application.security.tokens import SecretValue
 from src.gateway.application.security.totp import MFASecretService
 from src.gateway.application.services.bootstrap_service import BootstrapService
 from src.gateway.config import Settings
+from src.gateway.domain.identity import MemberStatus, SystemRole
 from src.gateway.infrastructure.database import set_session_factory
+from src.gateway.infrastructure.persistence.identity_models import MemberModel, PasswordCredentialModel, PersonalAPIKeyModel
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
 from src.gateway.presentation.errors import register_exception_handlers
 from src.gateway.presentation.routers.management_auth import router
@@ -24,6 +28,8 @@ async def test_login_throttling_is_enforced_in_postgresql() -> None:
         gateway={
             "environment": "test",
             "public_base_url": "https://gateway.test",
+            "api_key_peppers": {1: "test-api-key-pepper-with-adequate-length"},
+            "active_api_key_pepper_version": 1,
             "mfa_encryption_keys": {1: mfa_key},
             "active_mfa_encryption_key_version": 1,
         }
@@ -63,6 +69,8 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
         gateway={
             "environment": "test",
             "public_base_url": "https://gateway.test",
+            "api_key_peppers": {1: "test-api-key-pepper-with-adequate-length"},
+            "active_api_key_pepper_version": 1,
             "mfa_encryption_keys": {1: mfa_key},
             "active_mfa_encryption_key_version": 1,
         }
@@ -142,7 +150,16 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                 )
                 assert confirmation.status_code == 200
                 assert len(confirmation.json()["recovery_codes"]) == 10
+                initial_key = confirmation.json()["initial_api_key"]
+                assert initial_key["secret"].startswith("aigw_v1_")
+                assert initial_key["name"] == "First device"
+                assert initial_key["scopes"] == ["chat:write", "knowledge:read", "knowledge:write", "spaces:read"]
                 assert confirmation.headers["Cache-Control"] == "no-store"
+
+                async with factory() as verification_session:
+                    stored_keys = list(await verification_session.scalars(select(PersonalAPIKeyModel)))
+                    assert len(stored_keys) == 1
+                    assert initial_key["secret"] not in stored_keys[0].key_digest
 
                 missing_totp = await client.post(
                     "/api/v1/auth/login",
@@ -164,6 +181,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                 assert authenticated_login.status_code == 200
                 assert authenticated_login.json()["requires_password_change"] is False
                 assert authenticated_login.json()["requires_mfa_enrollment"] is False
+                assert "initial_api_key" not in authenticated_login.json()
 
                 old_refresh = client.cookies.get("__Secure-aigw-refresh")
                 csrf = client.cookies.get("aigw-csrf")
@@ -175,5 +193,96 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                 assert refreshed.status_code == 200
                 assert client.cookies.get("__Secure-aigw-refresh") != old_refresh
                 assert client.cookies.get("aigw-csrf") != csrf
+        finally:
+            set_session_factory(None)
+
+
+async def test_member_receives_exactly_one_personal_api_key_after_first_password_change() -> None:
+    now = datetime.now(timezone.utc)
+    mfa_key = Fernet.generate_key().decode("ascii")
+    settings = Settings(
+        gateway={
+            "environment": "test",
+            "public_base_url": "https://gateway.test",
+            "api_key_peppers": {1: "test-api-key-pepper-with-adequate-length"},
+            "active_api_key_pepper_version": 1,
+            "mfa_encryption_keys": {1: mfa_key},
+            "active_mfa_encryption_key_version": 1,
+        }
+    )
+    password_service = PasswordService(memory_cost=8192, time_cost=2, parallelism=1)
+    member_id = uuid4()
+    temporary_password = "one-time-family-secret"
+
+    async with isolated_postgres_database() as (_, factory):
+        async with factory.begin() as session:
+            session.add(
+                MemberModel(
+                    id=member_id,
+                    username="member",
+                    username_normalized="member",
+                    display_name="Member",
+                    status=MemberStatus.PENDING.value,
+                    system_role=SystemRole.MEMBER.value,
+                    force_password_change=True,
+                )
+            )
+            session.add(
+                PasswordCredentialModel(
+                    id=uuid4(),
+                    member_id=member_id,
+                    password_hash=password_service.hash(temporary_password, username="member"),
+                    temporary=True,
+                    expires_at=now + timedelta(hours=1),
+                )
+            )
+
+        app = FastAPI()
+        app.state.settings = settings
+        register_exception_handlers(app)
+        app.add_middleware(APIKeyAuthMiddleware, allowed_keys=[], session_factory=factory)
+        app.add_middleware(SettingsContextMiddleware)
+        app.include_router(router)
+        set_session_factory(factory)
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="https://gateway.test") as client:
+                login = await client.post(
+                    "/api/v1/auth/login",
+                    json={"username": "member", "password": temporary_password},
+                )
+                assert login.status_code == 200
+                csrf = client.cookies.get("aigw-csrf")
+                changed = await client.post(
+                    "/api/v1/auth/password",
+                    headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
+                    json={
+                        "password": "a permanent family password",
+                        "confirmation": "a permanent family password",
+                    },
+                )
+                assert changed.status_code == 200
+                assert changed.json()["requires_mfa_enrollment"] is False
+                assert changed.json()["initial_api_key"]["secret"].startswith("aigw_v1_")
+
+                csrf = client.cookies.get("aigw-csrf")
+                changed_again = await client.post(
+                    "/api/v1/auth/password",
+                    headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
+                    json={
+                        "password": "a second permanent family secret",
+                        "confirmation": "a second permanent family secret",
+                    },
+                )
+                assert changed_again.status_code == 200
+                assert "initial_api_key" not in changed_again.json()
+
+            async with factory() as verification_session:
+                stored_keys = list(
+                    await verification_session.scalars(
+                        select(PersonalAPIKeyModel).where(PersonalAPIKeyModel.member_id == member_id)
+                    )
+                )
+                assert len(stored_keys) == 1
         finally:
             set_session_factory(None)
