@@ -410,6 +410,7 @@ button { color: inherit; }
 .data-row { min-height: 68px; display: flex; align-items: center; gap: 12px; padding: 12px 4px; border-top: 1px solid var(--line); }
 .row-action-button { padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: #625c69; font-size: 8px; font-weight: 750; cursor: pointer; }
 .row-action-button:hover { border-color: #c8c1dd; background: #faf8ff; color: #5e48b5; }
+.pagination-button { width: 100%; justify-content: center; margin-top: 13px; }
 .knowledge-editor { margin-top: 18px; padding: 21px; border: 1px solid #ded9ea; border-radius: 16px; background: linear-gradient(145deg, #fff, #fbfaff); animation: reveal .18s ease-out; }
 .revision-state { width: fit-content; margin: 12px 0 4px; padding: 6px 8px; border-radius: 8px; background: var(--mint-soft); color: #39795f; font-size: 8px; font-weight: 750; }
 .editor-actions { display: grid; grid-template-columns: minmax(0, 1fr) 125px; gap: 10px; }

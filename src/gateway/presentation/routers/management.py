@@ -360,6 +360,37 @@ def _cursor_decode(value: str | None) -> str | None:
         raise ValidationException("Invalid pagination cursor.") from exc
 
 
+def _position_cursor_encode(created_at: datetime, identifier: UUID) -> str:
+    return _cursor_encode(f"{created_at.isoformat()}|{identifier}")
+
+
+def _position_cursor_decode(value: str | None) -> tuple[datetime, UUID] | None:
+    decoded = _cursor_decode(value)
+    if decoded is None:
+        return None
+    try:
+        timestamp_value, identifier_value = decoded.rsplit("|", 1)
+        timestamp = datetime.fromisoformat(timestamp_value)
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            raise ValueError
+        return timestamp, UUID(identifier_value)
+    except (ValueError, TypeError) as exc:
+        raise ValidationException("Invalid pagination cursor.") from exc
+
+
+def _revision_cursor_decode(value: str | None) -> int | None:
+    decoded = _cursor_decode(value)
+    if decoded is None:
+        return None
+    try:
+        revision = int(decoded)
+        if revision < 1 or str(revision) != decoded:
+            raise ValueError
+        return revision
+    except ValueError as exc:
+        raise ValidationException("Invalid pagination cursor.") from exc
+
+
 async def _reserve(
     session: AsyncSession,
     principal: Principal,
@@ -1402,13 +1433,24 @@ async def upload_source(
 async def list_sources(
     space_id: str | None = Query(default=None, max_length=64),
     limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None),
     principal: Principal = Depends(require_scope("knowledge:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    query = select(DocumentModel).where(DocumentModel.archived_at.is_(None)).order_by(DocumentModel.created_at.desc()).limit(limit)
+    position = _position_cursor_decode(cursor)
+    query = select(DocumentModel).where(DocumentModel.archived_at.is_(None)).order_by(DocumentModel.created_at.desc(), DocumentModel.id.desc()).limit(limit + 1)
     if space_id is not None:
         query = query.where(DocumentModel.space_id == space_id)
-    documents = list(await session.scalars(query))
+    if position is not None:
+        created_at, identifier = position
+        query = query.where(
+            or_(
+                DocumentModel.created_at < created_at,
+                and_(DocumentModel.created_at == created_at, DocumentModel.id < identifier),
+            )
+        )
+    rows = list(await session.scalars(query))
+    documents = rows[:limit]
     document_ids = [document.id for document in documents]
     revisions = list(
         await session.scalars(
@@ -1436,7 +1478,7 @@ async def list_sources(
             }
             for document in documents
         ],
-        "next_cursor": None,
+        "next_cursor": _position_cursor_encode(documents[-1].created_at, documents[-1].id) if len(rows) > limit else None,
     }
 
 
@@ -1503,13 +1545,24 @@ async def archive_source(
 async def list_ingestion_jobs(
     space_id: str | None = Query(default=None, max_length=64),
     limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None),
     principal: Principal = Depends(require_scope("knowledge:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    query = select(IngestionJobModel).order_by(IngestionJobModel.created_at.desc()).limit(limit)
+    position = _position_cursor_decode(cursor)
+    query = select(IngestionJobModel).order_by(IngestionJobModel.created_at.desc(), IngestionJobModel.id.desc()).limit(limit + 1)
     if space_id is not None:
         query = query.where(IngestionJobModel.space_id == space_id)
-    jobs = list(await session.scalars(query))
+    if position is not None:
+        created_at, identifier = position
+        query = query.where(
+            or_(
+                IngestionJobModel.created_at < created_at,
+                and_(IngestionJobModel.created_at == created_at, IngestionJobModel.id < identifier),
+            )
+        )
+    rows = list(await session.scalars(query))
+    jobs = rows[:limit]
     return {
         "items": [
             {
@@ -1529,7 +1582,7 @@ async def list_ingestion_jobs(
             }
             for job in jobs
         ],
-        "next_cursor": None,
+        "next_cursor": _position_cursor_encode(jobs[-1].created_at, jobs[-1].id) if len(rows) > limit else None,
     }
 
 
@@ -1605,18 +1658,33 @@ async def retry_ingestion_job(
 
 @router.get("/api-keys")
 async def list_api_keys(
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None),
     principal: Principal = Depends(require_scope("api_keys:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     member_id = _actor_id(principal)
-    keys = list(
+    position = _position_cursor_decode(cursor)
+    query = (
+        select(PersonalAPIKeyModel)
+        .where(PersonalAPIKeyModel.member_id == member_id)
+        .order_by(PersonalAPIKeyModel.created_at.desc(), PersonalAPIKeyModel.id.desc())
+        .limit(limit + 1)
+    )
+    if position is not None:
+        created_at, identifier = position
+        query = query.where(
+            or_(
+                PersonalAPIKeyModel.created_at < created_at,
+                and_(PersonalAPIKeyModel.created_at == created_at, PersonalAPIKeyModel.id < identifier),
+            )
+        )
+    rows = list(
         await session.scalars(
-            select(PersonalAPIKeyModel)
-            .where(PersonalAPIKeyModel.member_id == member_id)
-            .order_by(PersonalAPIKeyModel.created_at.desc(), PersonalAPIKeyModel.id.desc())
-            .limit(100)
+            query
         )
     )
+    keys = rows[:limit]
     key_ids = [key.id for key in keys]
     scope_rows = (
         (
@@ -1647,7 +1715,7 @@ async def list_api_keys(
             }
             for key in keys
         ],
-        "next_cursor": None,
+        "next_cursor": _position_cursor_encode(keys[-1].created_at, keys[-1].id) if len(rows) > limit else None,
     }
 
 
@@ -1896,18 +1964,33 @@ async def reset_member_password(
 
 @router.get("/sessions")
 async def list_sessions(
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None),
     principal: Principal = Depends(require_scope("sessions:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     current_family = await _family_id(session, principal)
-    rows = list(
+    position = _position_cursor_decode(cursor)
+    query = (
+        select(SessionFamilyModel)
+        .where(SessionFamilyModel.member_id == _actor_id(principal))
+        .order_by(SessionFamilyModel.created_at.desc(), SessionFamilyModel.id.desc())
+        .limit(limit + 1)
+    )
+    if position is not None:
+        created_at, identifier = position
+        query = query.where(
+            or_(
+                SessionFamilyModel.created_at < created_at,
+                and_(SessionFamilyModel.created_at == created_at, SessionFamilyModel.id < identifier),
+            )
+        )
+    all_rows = list(
         await session.scalars(
-            select(SessionFamilyModel)
-            .where(SessionFamilyModel.member_id == _actor_id(principal))
-            .order_by(SessionFamilyModel.created_at.desc())
-            .limit(100)
+            query
         )
     )
+    rows = all_rows[:limit]
     current_time = datetime.now(timezone.utc)
     return {
         "items": [
@@ -1923,7 +2006,7 @@ async def list_sessions(
             }
             for family in rows
         ],
-        "next_cursor": None,
+        "next_cursor": _position_cursor_encode(rows[-1].created_at, rows[-1].id) if len(all_rows) > limit else None,
     }
 
 
@@ -1966,18 +2049,28 @@ async def revoke_session(
 @router.get("/audit-events")
 async def list_audit_events(
     limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None),
     principal: Principal = Depends(require_scope("members:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     if principal.system_role is not SystemRole.SUPER_ADMIN:
         raise AuthorizationException()
-    rows = list(
+    position = _position_cursor_decode(cursor)
+    query = select(AuditEventModel).order_by(AuditEventModel.occurred_at.desc(), AuditEventModel.id.desc()).limit(limit + 1)
+    if position is not None:
+        occurred_at, identifier = position
+        query = query.where(
+            or_(
+                AuditEventModel.occurred_at < occurred_at,
+                and_(AuditEventModel.occurred_at == occurred_at, AuditEventModel.id < identifier),
+            )
+        )
+    all_rows = list(
         await session.scalars(
-            select(AuditEventModel)
-            .order_by(AuditEventModel.occurred_at.desc(), AuditEventModel.id.desc())
-            .limit(limit)
+            query
         )
     )
+    rows = all_rows[:limit]
     return {
         "items": [
             {
@@ -1993,7 +2086,7 @@ async def list_audit_events(
             }
             for event in rows
         ],
-        "next_cursor": None,
+        "next_cursor": _position_cursor_encode(rows[-1].occurred_at, rows[-1].id) if len(all_rows) > limit else None,
     }
 
 
@@ -2008,11 +2101,19 @@ async def active_runtime_settings(
 @router.get("/settings/history")
 async def runtime_settings_history(
     limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None),
     principal: Principal = Depends(require_scope("settings:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    history = await RuntimeSettingsService(session).history(limit=limit)
-    return {"items": [_settings_payload(revision) for revision in history], "next_cursor": None}
+    history = await RuntimeSettingsService(session).history(
+        limit=limit + 1,
+        before_revision=_revision_cursor_decode(cursor),
+    )
+    page = history[:limit]
+    return {
+        "items": [_settings_payload(revision) for revision in page],
+        "next_cursor": _cursor_encode(str(page[-1].revision)) if len(history) > limit else None,
+    }
 
 
 @router.post("/settings/drafts", status_code=status.HTTP_201_CREATED)

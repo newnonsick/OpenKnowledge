@@ -244,17 +244,36 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 )
                 assert upload.status_code == 202
                 assert upload.json()["job_state"] == "queued"
-                sources = await member_client.get("/api/v1/sources?space_id=global")
+                second_upload = await member_client.post(
+                    "/api/v1/sources/upload",
+                    headers={**member_headers, "Idempotency-Key": "upload-second-source"},
+                    data={"space_id": "global", "display_name": "Valve label"},
+                    files={"file": ("label.txt", b"Blue valve", "text/plain")},
+                )
+                assert second_upload.status_code == 202
+                sources = await member_client.get("/api/v1/sources?space_id=global&limit=1")
                 assert sources.status_code == 200
-                assert sources.json()["items"][0]["id"] == upload.json()["document_id"]
-                jobs = await member_client.get("/api/v1/ingestion-jobs?space_id=global")
+                assert sources.json()["next_cursor"]
+                next_sources = await member_client.get(
+                    f"/api/v1/sources?space_id=global&limit=1&cursor={sources.json()['next_cursor']}"
+                )
+                assert {sources.json()["items"][0]["id"], next_sources.json()["items"][0]["id"]} == {
+                    upload.json()["document_id"], second_upload.json()["document_id"]
+                }
+                jobs = await member_client.get("/api/v1/ingestion-jobs?space_id=global&limit=1")
                 assert jobs.status_code == 200
-                assert jobs.json()["items"][0]["id"] == upload.json()["job_id"]
+                assert jobs.json()["next_cursor"]
+                next_jobs = await member_client.get(
+                    f"/api/v1/ingestion-jobs?space_id=global&limit=1&cursor={jobs.json()['next_cursor']}"
+                )
+                assert {jobs.json()["items"][0]["id"], next_jobs.json()["items"][0]["id"]} == {
+                    upload.json()["job_id"], second_upload.json()["job_id"]
+                }
                 operations = await member_client.get("/api/v1/operations/summary")
                 assert operations.status_code == 200
                 assert operations.json()["scope"] == "accessible_spaces"
-                assert operations.json()["ingestion"]["queued"] == 1
-                assert operations.json()["storage"]["referenced_bytes"] == len(b"Turn off the water valve before repairs.")
+                assert operations.json()["ingestion"]["queued"] == 2
+                assert operations.json()["storage"]["referenced_bytes"] == len(b"Turn off the water valve before repairs.Blue valve")
                 assert operations.json()["retrieval"]["embedding_generation_active"] is True
                 assert operations.json()["settings_revision"] == 0
                 cancelled_job = await member_client.post(
@@ -269,7 +288,9 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 )
                 assert archived_source.status_code == 204
                 sources_after_archive = await member_client.get("/api/v1/sources?space_id=global")
-                assert sources_after_archive.json()["items"] == []
+                assert [item["id"] for item in sources_after_archive.json()["items"]] == [
+                    second_upload.json()["document_id"]
+                ]
 
                 deleted_knowledge = await member_client.delete(
                     f"/api/v1/knowledge/{knowledge_id}?expected_version=2",
@@ -304,6 +325,12 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                     headers={**member_headers, "Idempotency-Key": "revoke-other-session"},
                 )
                 assert replayed_session_revoke.status_code == 204
+                sessions_page = await member_client.get("/api/v1/sessions?limit=1")
+                assert sessions_page.json()["next_cursor"]
+                sessions_next = await member_client.get(
+                    f"/api/v1/sessions?limit=1&cursor={sessions_page.json()['next_cursor']}"
+                )
+                assert sessions_page.json()["items"][0]["id"] != sessions_next.json()["items"][0]["id"]
 
                 archived = await member_client.delete(
                     f"/api/v1/spaces/{private_space_id}",
@@ -422,9 +449,21 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                     },
                 )
                 assert second_settings_activation.status_code == 200
-                settings_history = await admin_client.get("/api/v1/settings/history?limit=10")
+                settings_history = await admin_client.get("/api/v1/settings/history?limit=1")
                 assert settings_history.status_code == 200
-                assert [item["revision"] for item in settings_history.json()["items"]] == [2, 1]
+                assert [item["revision"] for item in settings_history.json()["items"]] == [2]
+                assert settings_history.json()["next_cursor"]
+                settings_history_next = await admin_client.get(
+                    f"/api/v1/settings/history?limit=1&cursor={settings_history.json()['next_cursor']}"
+                )
+                assert [item["revision"] for item in settings_history_next.json()["items"]] == [1]
+                audit_page = await admin_client.get("/api/v1/audit-events?limit=1")
+                assert audit_page.status_code == 200
+                assert audit_page.json()["next_cursor"]
+                audit_next = await admin_client.get(
+                    f"/api/v1/audit-events?limit=1&cursor={audit_page.json()['next_cursor']}"
+                )
+                assert audit_page.json()["items"][0]["id"] != audit_next.json()["items"][0]["id"]
                 settings_rollback = await admin_client.post(
                     "/api/v1/settings/rollback/1",
                     headers={

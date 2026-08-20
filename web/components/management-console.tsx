@@ -830,6 +830,7 @@ export function SourcesConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [sources, setSources] = useState<SourceSummary[]>([]);
+  const [sourceCursor, setSourceCursor] = useState<string | null>(null);
   const [spaceId, setSpaceId] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -842,7 +843,24 @@ export function SourcesConsole() {
   const loadSources = useCallback(async () => {
     const response = await apiRequest<SourceListResponse>("/api/v1/sources?limit=100");
     setSources(response.items);
+    setSourceCursor(response.next_cursor);
   }, []);
+
+  const loadMoreSources = async () => {
+    if (!sourceCursor || loading) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await apiRequest<SourceListResponse>(`/api/v1/sources?limit=100&cursor=${encodeURIComponent(sourceCursor)}`);
+      setSources((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setSourceCursor(response.next_cursor);
+    } catch (loadError) {
+      setError(message(loadError));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -856,6 +874,7 @@ export function SourcesConsole() {
       setSpaces(spaceResponse.items);
       setSpaceId(spaceResponse.items[0]?.id || "");
       setSources(sourceResponse.items);
+      setSourceCursor(sourceResponse.next_cursor);
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
@@ -938,6 +957,7 @@ export function SourcesConsole() {
               </article>
             ))}
           </div>
+          {sourceCursor ? <button className="secondary-button pagination-button" disabled={loading} onClick={() => void loadMoreSources()} type="button">{loading ? <LoaderCircle className="spin" size={15} /> : null} Load more sources</button> : null}
           {pendingArchive ? <div aria-label={`Archive ${pendingArchive.display_name}`} className="confirmation-strip" role="alertdialog"><div><strong>Archive {pendingArchive.display_name}?</strong><span>The source leaves unified search immediately while its original bytes, revisions, and audit history remain preserved.</span></div><button className="secondary-button" onClick={() => setPendingArchive(null)} type="button">Keep source</button><button className="danger-button" disabled={saving} onClick={() => void archiveSource()} type="button">Confirm archive source</button></div> : null}
         </section>
         <aside className="console-panel action-panel upload-panel">
@@ -1166,6 +1186,9 @@ export function SettingsConsole() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
   const [settingsHistory, setSettingsHistory] = useState<RuntimeSettings[]>([]);
+  const [keyCursor, setKeyCursor] = useState<string | null>(null);
+  const [sessionCursor, setSessionCursor] = useState<string | null>(null);
+  const [settingsHistoryCursor, setSettingsHistoryCursor] = useState<string | null>(null);
   const [runtimeDraft, setRuntimeDraft] = useState<RuntimeSettings | null>(null);
   const [pendingSettingsRestore, setPendingSettingsRestore] = useState<RuntimeSettings | null>(null);
   const [runtimeLimit, setRuntimeLimit] = useState(20);
@@ -1182,11 +1205,13 @@ export function SettingsConsole() {
   const loadKeys = useCallback(async () => {
     const response = await apiRequest<APIKeyListResponse>("/api/v1/api-keys");
     setKeys(response.items);
+    setKeyCursor(response.next_cursor);
   }, []);
 
   const loadSessions = useCallback(async () => {
     const response = await apiRequest<SessionListResponse>("/api/v1/sessions");
     setSessions(response.items);
+    setSessionCursor(response.next_cursor);
   }, []);
 
   const loadSettingsHistory = useCallback(async () => {
@@ -1195,7 +1220,56 @@ export function SettingsConsole() {
     }
     const response = await apiRequest<RuntimeSettingsHistoryResponse>("/api/v1/settings/history?limit=20");
     setSettingsHistory(response.items);
+    setSettingsHistoryCursor(response.next_cursor);
   }, [member.system_role]);
+
+  const loadMoreKeys = async () => {
+    if (!keyCursor || saving) {
+      return;
+    }
+    setSaving(true);
+    try {
+      const response = await apiRequest<APIKeyListResponse>(`/api/v1/api-keys?cursor=${encodeURIComponent(keyCursor)}`);
+      setKeys((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setKeyCursor(response.next_cursor);
+    } catch (loadError) {
+      setError(message(loadError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const loadMoreSessions = async () => {
+    if (!sessionCursor || saving) {
+      return;
+    }
+    setSaving(true);
+    try {
+      const response = await apiRequest<SessionListResponse>(`/api/v1/sessions?cursor=${encodeURIComponent(sessionCursor)}`);
+      setSessions((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setSessionCursor(response.next_cursor);
+    } catch (loadError) {
+      setError(message(loadError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const loadMoreSettingsHistory = async () => {
+    if (!settingsHistoryCursor || saving) {
+      return;
+    }
+    setSaving(true);
+    try {
+      const response = await apiRequest<RuntimeSettingsHistoryResponse>(`/api/v1/settings/history?limit=20&cursor=${encodeURIComponent(settingsHistoryCursor)}`);
+      setSettingsHistory((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.revision === item.revision))]);
+      setSettingsHistoryCursor(response.next_cursor);
+    } catch (loadError) {
+      setError(message(loadError));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -1214,6 +1288,9 @@ export function SettingsConsole() {
       setSessions(sessionResponse.items);
       setSettings(runtimeResponse);
       setSettingsHistory(historyResponse.items);
+      setKeyCursor(keyResponse.next_cursor);
+      setSessionCursor(sessionResponse.next_cursor);
+      setSettingsHistoryCursor(historyResponse.next_cursor);
       setRuntimeLimit(runtimeResponse.values.retrieval.limit);
     }).catch((loadError) => {
       if (active) {
@@ -1412,6 +1489,7 @@ export function SettingsConsole() {
           <div className="data-list compact-list">
             {keys.map((key) => <article className="data-row" key={key.id}><span className="row-leading violet"><KeyRound size={17} /></span><div className="row-copy"><h3>{key.name}</h3><p>{key.public_id} · {key.scopes.join(", ")}</p></div><span className={`status-pill status-${key.status}`}>{key.status}</span>{key.status === "active" ? <button aria-label={`Revoke ${key.name}`} className="membership-remove-button" onClick={() => setPendingKeyRevocation(key)} type="button"><X size={15} /></button> : null}</article>)}
           </div>
+          {keyCursor ? <button className="secondary-button pagination-button" disabled={saving} onClick={() => void loadMoreKeys()} type="button">Load more API keys</button> : null}
           {pendingKeyRevocation ? <div className="confirmation-strip" role="alertdialog" aria-label={`Revoke ${pendingKeyRevocation.name}`}><div><strong>Revoke {pendingKeyRevocation.name}?</strong><span>Clients using this key will lose access immediately.</span></div><button className="secondary-button" onClick={() => setPendingKeyRevocation(null)} type="button">Keep key</button><button className="danger-button" disabled={saving} onClick={() => void revokeKey()} type="button">Confirm revoke API key</button></div> : null}
         </section>
 
@@ -1421,6 +1499,7 @@ export function SettingsConsole() {
             {sessions.map((session) => <article className="data-row" key={session.id}><span className="row-leading cyan"><MonitorSmartphone size={17} /></span><div className="row-copy"><h3>{session.current ? "This session" : "Website session"}</h3><p>Last active {new Date(session.last_activity_at).toLocaleString()}</p></div><span className={`status-pill status-${session.status}`}>{session.status}</span>{!session.current && session.status === "active" ? <button aria-label="Sign out website session" className="membership-remove-button" onClick={() => setPendingSessionRevocation(session)} type="button"><X size={15} /></button> : null}</article>)}
             {sessions.length === 0 ? <div className="console-empty small"><MonitorSmartphone size={20} /><strong>No session records returned</strong></div> : null}
           </div>
+          {sessionCursor ? <button className="secondary-button pagination-button" disabled={saving} onClick={() => void loadMoreSessions()} type="button">Load more sessions</button> : null}
           {pendingSessionRevocation ? <div className="confirmation-strip" role="alertdialog" aria-label="Sign out website session"><div><strong>Sign out this device?</strong><span>The selected session and all of its credentials will be revoked.</span></div><button className="secondary-button" onClick={() => setPendingSessionRevocation(null)} type="button">Keep signed in</button><button className="danger-button" disabled={saving} onClick={() => void revokeSession()} type="button">Confirm sign out</button></div> : null}
         </section>
 
@@ -1437,6 +1516,7 @@ export function SettingsConsole() {
           ) : null}
           {runtimeDraft ? <div className="runtime-draft-review"><div><strong>Draft revision {runtimeDraft.revision} ready</strong><span>Validated against the typed safe-setting schema. Activation remains a separate audited step.</span></div><button className="primary-button" disabled={saving} onClick={() => void activateRuntimeDraft()} type="button">Activate settings</button></div> : null}
           {settingsHistory.length > 0 ? <div className="data-list compact-list">{settingsHistory.map((revision) => <article className="data-row" key={revision.id || revision.revision}><span className="row-leading violet"><Settings2 size={16} /></span><div className="row-copy"><h3>Revision {revision.revision}</h3><p>Retrieval limit {revision.values.retrieval.limit} · {revision.state}</p></div>{revision.state === "superseded" ? <button aria-label={`Restore revision ${revision.revision}`} className="row-action-button" disabled={saving} onClick={() => setPendingSettingsRestore(revision)} type="button">Restore</button> : <span className="status-pill status-active">active</span>}</article>)}</div> : null}
+          {settingsHistoryCursor ? <button className="secondary-button pagination-button" disabled={saving} onClick={() => void loadMoreSettingsHistory()} type="button">Load more settings history</button> : null}
           {pendingSettingsRestore ? <div aria-label={`Restore revision ${pendingSettingsRestore.revision}`} className="confirmation-strip" role="alertdialog"><div><strong>Restore revision {pendingSettingsRestore.revision}?</strong><span>This creates a new active revision from the historical values. The current revision remains preserved for audit and future recovery.</span></div><button className="secondary-button" onClick={() => setPendingSettingsRestore(null)} type="button">Keep current</button><button className="danger-button" disabled={saving || runtimeReason.trim().length < 5} onClick={() => void restoreRuntimeSettings()} type="button">Confirm restore revision {pendingSettingsRestore.revision}</button></div> : null}
           <pre>{JSON.stringify(runtimeDraft?.values || settings?.values || {}, null, 2)}</pre>
         </section>
@@ -1450,6 +1530,7 @@ export function IngestionConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [jobs, setJobs] = useState<IngestionJob[]>([]);
+  const [jobCursor, setJobCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [pendingJobAction, setPendingJobAction] = useState<{ job: IngestionJob; operation: "cancel" | "retry" } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1459,6 +1540,7 @@ export function IngestionConsole() {
     try {
       const response = await apiRequest<IngestionListResponse>("/api/v1/ingestion-jobs?limit=100");
       setJobs(response.items);
+      setJobCursor(response.next_cursor);
       setError(null);
     } catch (loadError) {
       setError(message(loadError));
@@ -1466,6 +1548,22 @@ export function IngestionConsole() {
       setLoading(false);
     }
   }, []);
+
+  const loadMoreJobs = async () => {
+    if (!jobCursor || saving) {
+      return;
+    }
+    setSaving(true);
+    try {
+      const response = await apiRequest<IngestionListResponse>(`/api/v1/ingestion-jobs?limit=100&cursor=${encodeURIComponent(jobCursor)}`);
+      setJobs((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setJobCursor(response.next_cursor);
+    } catch (loadError) {
+      setError(message(loadError));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -1529,6 +1627,7 @@ export function IngestionConsole() {
             </article>
           ))}
         </div>
+        {jobCursor ? <button className="secondary-button pagination-button" disabled={saving} onClick={() => void loadMoreJobs()} type="button">Load more ingestion jobs</button> : null}
         {pendingJobAction ? <div aria-label={`${pendingJobAction.operation === "cancel" ? "Cancel" : "Retry"} job ${pendingJobAction.job.id}`} className="confirmation-strip" role="alertdialog"><div><strong>{pendingJobAction.operation === "cancel" ? "Cancel this ingestion job?" : "Retry this ingestion job?"}</strong><span>{pendingJobAction.operation === "cancel" ? "The worker will stop at a safe boundary; completed durable stages and audit history remain preserved." : "This starts a new durable attempt from the preserved original source and records the request in the audit trail."}</span></div><button className="secondary-button" onClick={() => setPendingJobAction(null)} type="button">Not now</button><button className={pendingJobAction.operation === "cancel" ? "danger-button" : "primary-button"} disabled={saving} onClick={() => void mutateJob()} type="button">Confirm {pendingJobAction.operation} job</button></div> : null}
       </section>
       {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
@@ -1540,6 +1639,7 @@ export function ActivityConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [eventCursor, setEventCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isAdmin = member.system_role === "super_admin";
@@ -1555,6 +1655,7 @@ export function ActivityConsole() {
       }
       setSpaces(spaceResponse.items);
       setEvents(auditResponse?.items || []);
+      setEventCursor(auditResponse?.next_cursor || null);
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
@@ -1568,6 +1669,22 @@ export function ActivityConsole() {
       active = false;
     };
   }, [isAdmin]);
+
+  const loadMoreEvents = async () => {
+    if (!eventCursor || loading) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await apiRequest<AuditListResponse>(`/api/v1/audit-events?limit=100&cursor=${encodeURIComponent(eventCursor)}`);
+      setEvents((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setEventCursor(response.next_cursor);
+    } catch (loadError) {
+      setError(message(loadError));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <ConsoleShell
@@ -1585,6 +1702,7 @@ export function ActivityConsole() {
             {events.map((event) => <article className="audit-row" key={event.id}><span className={`audit-outcome outcome-${event.outcome}`} /><time>{new Date(event.occurred_at).toLocaleString()}</time><div><h3>{event.action}</h3><p>{event.resource_type}{event.resource_id ? ` · ${event.resource_id}` : ""}</p></div><code>{event.request_id}</code><span className="status-pill">{event.outcome}</span></article>)}
             {!loading && events.length === 0 ? <div className="console-empty"><Activity size={23} /><strong>No audit events returned</strong></div> : null}
           </div>
+          {eventCursor ? <button className="secondary-button pagination-button" disabled={loading} onClick={() => void loadMoreEvents()} type="button">Load more audit events</button> : null}
         </section>
       )}
       {error ? <p className="inline-error wide" role="alert">{error}</p> : null}

@@ -130,15 +130,25 @@ class RuntimeSettingsService:
             )
         return self._to_domain(model)
 
-    async def history(self, *, limit: int = 50) -> list[RuntimeSettingsRevision]:
-        if limit < 1 or limit > 100:
-            raise ValueError("Runtime settings history limit must be between 1 and 100")
+    async def history(
+        self,
+        *,
+        limit: int = 50,
+        before_revision: int | None = None,
+    ) -> list[RuntimeSettingsRevision]:
+        if limit < 1 or limit > 101:
+            raise ValueError("Runtime settings history limit must be between 1 and 101")
+        query = (
+            select(RuntimeSettingRevisionModel)
+            .where(RuntimeSettingRevisionModel.state.in_(("active", "superseded")))
+            .order_by(RuntimeSettingRevisionModel.revision.desc())
+            .limit(limit)
+        )
+        if before_revision is not None:
+            query = query.where(RuntimeSettingRevisionModel.revision < before_revision)
         models = list(
             await self._session.scalars(
-                select(RuntimeSettingRevisionModel)
-                .where(RuntimeSettingRevisionModel.state.in_(("active", "superseded")))
-                .order_by(RuntimeSettingRevisionModel.revision.desc())
-                .limit(limit)
+                query
             )
         )
         return [self._to_domain(model) for model in models]

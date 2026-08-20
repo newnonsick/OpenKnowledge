@@ -299,6 +299,29 @@ describe("management console", () => {
     await waitFor(() => expect(screen.queryByText("Procedures")).not.toBeInTheDocument());
   });
 
+  it("loads the next cursor page of sources without replacing the first page", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/sources?limit=100") {
+        return { items: [{ id: "source-2", space_id: "global", display_name: "Second", status: "active", original_filename: "second.txt", size_bytes: 12, revision: 1, updated_at: "2026-08-20T12:00:00Z" }], next_cursor: "source-cursor" } as never;
+      }
+      if (path === "/api/v1/sources?limit=100&cursor=source-cursor") {
+        return { items: [{ id: "source-1", space_id: "global", display_name: "First", status: "active", original_filename: "first.txt", size_bytes: 10, revision: 1, updated_at: "2026-08-20T11:00:00Z" }], next_cursor: null } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<SourcesConsole />);
+
+    expect(await screen.findByText("Second")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Load more sources" }));
+
+    expect(await screen.findByText("First")).toBeInTheDocument();
+    expect(screen.getByText("Second")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load more sources" })).not.toBeInTheDocument();
+  });
+
   it("reveals a generated member password exactly in the creation result", async () => {
     currentMember.system_role = "super_admin";
     let created = false;
