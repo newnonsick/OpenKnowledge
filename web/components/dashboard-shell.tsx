@@ -24,26 +24,33 @@ import {
 } from "lucide-react";
 
 const navigation = [
-  { label: "For you", icon: Grid2X2, active: true },
-  { label: "Explore", icon: Search },
-  { label: "Spaces", icon: FolderKanban },
-  { label: "Knowledge", icon: BookOpen },
-  { label: "Sources", icon: FileStack },
-  { label: "Ingestion", icon: Layers3, count: 2 },
-  { label: "AI actions", icon: WandSparkles },
+  { label: "For you", icon: Grid2X2, active: true, href: "/" },
+  { label: "Explore", icon: Search, href: "/explore" },
+  { label: "Spaces", icon: FolderKanban, href: "/spaces" },
+  { label: "Knowledge", icon: BookOpen, href: "/knowledge" },
+  { label: "Sources", icon: FileStack, href: "/sources" },
+  { label: "Ingestion", icon: Layers3, href: "/ingestion" },
+  { label: "AI actions", icon: WandSparkles, href: "/ai-actions" },
 ];
 
 const administration = [
-  { label: "People & access", icon: UsersRound },
-  { label: "Activity", icon: Activity },
-  { label: "Settings", icon: Settings2 },
+  { label: "People & access", icon: UsersRound, href: "/people" },
+  { label: "Activity", icon: Activity, href: "/activity" },
+  { label: "Settings", icon: Settings2, href: "/settings" },
 ];
 
-const recentItems = [
-  { title: "Family travel playbook", meta: "Family Shared · 12 min ago", color: "violet" },
-  { title: "Home network inventory", meta: "Home Systems · Yesterday", color: "cyan" },
-  { title: "Annual health checklist", meta: "Private · 3 days ago", color: "mint" },
-];
+export type DashboardSpace = {
+  createdAt: string;
+  id: string;
+  name: string;
+  role: string;
+};
+
+type DashboardShellProps = {
+  member: { displayName: string; role: string };
+  ready: boolean;
+  spaces: DashboardSpace[];
+};
 
 function NavigationGroup({ label, items }: { label: string; items: typeof navigation }) {
   return (
@@ -53,10 +60,9 @@ function NavigationGroup({ label, items }: { label: string; items: typeof naviga
         {items.map((item) => {
           const Icon = item.icon;
           return (
-            <Link className={`navigation-item${item.active ? " is-active" : ""}`} href="#" key={item.label}>
+            <Link className={`navigation-item${item.active ? " is-active" : ""}`} href={item.href} key={item.label}>
               <Icon aria-hidden="true" size={18} strokeWidth={1.8} />
               <span>{item.label}</span>
-              {item.count ? <span className="navigation-count">{item.count}</span> : null}
             </Link>
           );
         })}
@@ -65,7 +71,8 @@ function NavigationGroup({ label, items }: { label: string; items: typeof naviga
   );
 }
 
-export function DashboardShell() {
+export function DashboardShell({ member, ready, spaces }: DashboardShellProps) {
+  const initials = member.displayName.split(/\s+/).map((value) => value[0]).join("").slice(0, 2).toUpperCase();
   return (
     <div className="app-frame">
       <aside className="sidebar">
@@ -78,8 +85,8 @@ export function DashboardShell() {
         <button className="family-switcher" type="button">
           <span className="family-avatar">K</span>
           <span className="family-copy">
-            <strong>Kittivath family</strong>
-            <small>4 members · 6 spaces</small>
+            <strong>Family knowledge</strong>
+            <small>{spaces.length} accessible {spaces.length === 1 ? "space" : "spaces"}</small>
           </span>
           <ChevronDown aria-hidden="true" size={16} />
         </button>
@@ -91,13 +98,13 @@ export function DashboardShell() {
 
         <div className="sidebar-footer">
           <div className="storage-meter">
-            <div className="storage-heading"><span>Storage</span><span>38%</span></div>
-            <div className="storage-track"><span /></div>
-            <p>7.6 GB of 20 GB</p>
+            <div className="storage-heading"><span>Access</span><span>Scoped</span></div>
+            <div className="storage-track"><span className="access-track" /></div>
+            <p>{spaces.length} spaces available to this account</p>
           </div>
           <button className="profile-card" type="button">
-            <span className="profile-avatar">NT</span>
-            <span><strong>Nok Thitivath</strong><small>Super admin</small></span>
+            <span className="profile-avatar">{initials || "M"}</span>
+            <span><strong>{member.displayName}</strong><small>{member.role}</small></span>
             <ChevronDown aria-hidden="true" size={15} />
           </button>
         </div>
@@ -118,9 +125,9 @@ export function DashboardShell() {
             <h1>Everything your family knows.<br /><span>Ready when you need it.</span></h1>
             <p className="hero-description">Find a detail, return to a project, or add something worth remembering.</p>
 
-            <form className="knowledge-search" role="search">
+            <form action="/explore" className="knowledge-search" method="get" role="search">
               <Search aria-hidden="true" size={23} strokeWidth={1.8} />
-              <input aria-label="Search family knowledge" placeholder="Search across every space…" type="search" />
+              <input aria-label="Search family knowledge" name="q" placeholder="Search across every space…" type="search" />
               <button type="submit">Search <ArrowRight aria-hidden="true" size={16} /></button>
             </form>
 
@@ -136,38 +143,39 @@ export function DashboardShell() {
             <article className="continue-panel">
               <div className="section-heading">
                 <div><p className="section-kicker">PICK UP THE THREAD</p><h2>Continue where you left off</h2></div>
-                <Link href="#">View all <ArrowRight aria-hidden="true" size={15} /></Link>
+                <Link href="/spaces">View all <ArrowRight aria-hidden="true" size={15} /></Link>
               </div>
               <div className="recent-list">
-                {recentItems.map((item) => (
-                  <Link className="recent-row" href="#" key={item.title}>
-                    <span className={`document-glyph ${item.color}`}><BookOpen aria-hidden="true" size={18} /></span>
-                    <span className="recent-copy"><strong>{item.title}</strong><small>{item.meta}</small></span>
+                {spaces.slice(0, 3).map((space, index) => (
+                  <Link className="recent-row" href={`/spaces/${encodeURIComponent(space.id)}`} key={space.id}>
+                    <span className={`document-glyph ${["violet", "cyan", "mint"][index]}`}><BookOpen aria-hidden="true" size={18} /></span>
+                    <span className="recent-copy"><strong>{space.name}</strong><small>{space.role} · available now</small></span>
                     <ArrowRight aria-hidden="true" className="row-arrow" size={17} />
                   </Link>
                 ))}
+                {spaces.length === 0 ? <div className="dashboard-empty"><FolderKanban aria-hidden="true" size={19} /><span><strong>No spaces yet</strong><small>Create the first private working space.</small></span></div> : null}
               </div>
             </article>
 
             <article className="pulse-panel">
-              <div className="pulse-topline"><span><span className="live-dot" /> System pulse</span><span className="pulse-status">All systems normal</span></div>
-              <div className="pulse-score"><strong>98.7</strong><span>%</span></div>
-              <p>Search readiness across your active knowledge</p>
+              <div className="pulse-topline"><span><span className={`live-dot${ready ? "" : " is-down"}`} /> System pulse</span><span className={`pulse-status${ready ? "" : " is-down"}`}>{ready ? "Ready" : "Needs attention"}</span></div>
+              <div className="pulse-score"><strong>{ready ? "100" : "0"}</strong><span>%</span></div>
+              <p>Gateway readiness reported by the live production boundary</p>
               <div className="pulse-bars" aria-hidden="true">
-                {[62, 78, 70, 91, 83, 94, 87, 96, 92, 98].map((height, index) => <span key={index} style={{ height: `${height}%` }} />)}
+                {[62, 78, 70, 91, 83, 94, 87, 96, 92, 98].map((height) => <span className={`pulse-bar-${height}`} key={height} />)}
               </div>
               <div className="pulse-metrics">
-                <div><small>Indexed</small><strong>1,842</strong></div>
-                <div><small>Coverage</small><strong>96%</strong></div>
-                <div><small>Queue</small><strong>2</strong></div>
+                <div><small>Spaces</small><strong>{spaces.length}</strong></div>
+                <div><small>Access</small><strong>Scoped</strong></div>
+                <div><small>Gateway</small><strong>{ready ? "Ready" : "Check"}</strong></div>
               </div>
             </article>
           </section>
 
           <section className="attention-strip">
             <div className="attention-icon"><Clock3 aria-hidden="true" size={19} /></div>
-            <div><strong>2 sources need your attention</strong><p>One import is waiting for review and one source is ready to retry.</p></div>
-            <button type="button">Review now</button>
+            <div><strong>{ready ? "Permission-aware search is active" : "The gateway is not ready"}</strong><p>{ready ? "Every search is limited to spaces this account can access." : "Check database readiness and schema compatibility before continuing."}</p></div>
+            <Link href={ready ? "/spaces" : "/activity"}>{ready ? "Review access" : "View activity"}</Link>
           </section>
         </div>
       </main>

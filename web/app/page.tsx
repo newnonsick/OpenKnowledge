@@ -1,5 +1,6 @@
-import { DashboardShell } from "@/components/dashboard-shell";
+import { SessionGate } from "@/components/auth/session-gate";
+import { DashboardController } from "@/components/dashboard-controller";
 
 export default function HomePage() {
-  return <DashboardShell />;
+  return <SessionGate><DashboardController /></SessionGate>;
 }
