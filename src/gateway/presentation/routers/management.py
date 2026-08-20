@@ -43,7 +43,7 @@ from src.gateway.infrastructure.persistence.models import Workspace
 from src.gateway.infrastructure.persistence.runtime_settings_models import RuntimeSettingRevisionModel
 from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings
 from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
-from src.gateway.presentation.authorization import require_scope
+from src.gateway.presentation.authorization import require_principal, require_scope
 from src.gateway.presentation.request_context import get_request_id
 
 
@@ -156,10 +156,116 @@ class AICreateSpaceArguments(BaseModel):
     name: str = Field(min_length=1, max_length=255)
 
 
+class AIListSpaceMembersArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    space_id: str = Field(min_length=1, max_length=64)
+    limit: int = Field(default=50, ge=1, le=100)
+
+
+class AISetSpaceMembershipArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    space_id: str = Field(min_length=1, max_length=64)
+    member_id: UUID
+    role: SpaceRole | None
+    expected_space_revision: int = Field(ge=1)
+
+
+class AIKnowledgeSearchArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=4000)
+    space_ids: list[Annotated[str, Field(min_length=1, max_length=64)]] | None = Field(default=None, max_length=100)
+    active_space_id: str | None = Field(default=None, max_length=64)
+    semantic_policy: Literal["prefer", "required", "disabled"] = "prefer"
+    limit: int = Field(default=20, ge=1, le=50)
+
+
+class AIKnowledgeReadArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: UUID
+
+
+class AIKnowledgeCreateArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    space_id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=500)
+    content: str = Field(min_length=1, max_length=1_000_000)
+    tags: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(default_factory=list, max_length=50)
+
+
+class AIKnowledgeUpdateArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: UUID
+    expected_version: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=500)
+    content: str = Field(min_length=1, max_length=1_000_000)
+    tags: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(default_factory=list, max_length=50)
+    change_summary: str | None = Field(default=None, max_length=500)
+
+
+class AIKnowledgeArchiveArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: UUID
+    expected_version: int = Field(ge=1)
+
+
+class AIListResourcesArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    space_id: str | None = Field(default=None, max_length=64)
+    limit: int = Field(default=50, ge=1, le=100)
+
+
+class AIIngestionJobActionArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: UUID
+    expected_state: Literal["queued", "running", "retry_wait", "failed", "cancelled"]
+
+
+class AISettingsInspectArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class AISettingsProposeArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    base_revision: int = Field(ge=0)
+    values: RuntimeSettingsValues
+    reason: str = Field(min_length=5, max_length=500)
+
+
 class AIToolExecutionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     arguments: dict
+
+
+AI_TOOL_DEFINITIONS = {
+    "spaces.list.v1": ("spaces:read", "none", "List only active spaces accessible to the current member.", AIListSpacesArguments),
+    "spaces.create.v1": ("spaces:write", "none", "Create a private space owned by the current member.", AICreateSpaceArguments),
+    "spaces.archive.v1": ("spaces:write", "required", "Propose archiving an owned non-global space.", AIArchiveSpaceArguments),
+    "spaces.members.list.v1": ("spaces:members", "none", "List members of an authorized space.", AIListSpaceMembersArguments),
+    "spaces.members.set.v1": ("spaces:members", "required", "Propose adding, changing, or removing a space membership.", AISetSpaceMembershipArguments),
+    "knowledge.search.v1": ("knowledge:read", "none", "Search knowledge across effective authorized spaces.", AIKnowledgeSearchArguments),
+    "knowledge.read.v1": ("knowledge:read", "none", "Read an authorized knowledge item.", AIKnowledgeReadArguments),
+    "knowledge.create.v1": ("knowledge:write", "none", "Create a versioned knowledge item in an authorized space.", AIKnowledgeCreateArguments),
+    "knowledge.update.v1": ("knowledge:write", "none", "Update knowledge with optimistic concurrency.", AIKnowledgeUpdateArguments),
+    "knowledge.archive.v1": ("knowledge:write", "required", "Propose archiving an authorized knowledge item.", AIKnowledgeArchiveArguments),
+    "sources.list.v1": ("knowledge:read", "none", "List authorized source documents.", AIListResourcesArguments),
+    "ingestion_jobs.list.v1": ("knowledge:read", "none", "List authorized durable ingestion jobs.", AIListResourcesArguments),
+    "ingestion_jobs.cancel.v1": ("knowledge:write", "required", "Propose cancellation of an authorized ingestion job.", AIIngestionJobActionArguments),
+    "ingestion_jobs.retry.v1": ("knowledge:write", "required", "Propose retry of an authorized terminal ingestion job.", AIIngestionJobActionArguments),
+    "retrieval.explain.v1": ("knowledge:read", "none", "Inspect authorized retrieval results and bounded health explanations.", AIKnowledgeSearchArguments),
+    "settings.inspect.v1": ("settings:read", "none", "Inspect the active allowlisted runtime settings.", AISettingsInspectArguments),
+    "settings.propose.v1": ("settings:write", "required", "Propose a validated safe runtime settings draft.", AISettingsProposeArguments),
+}
 
 
 def _actor_id(principal: Principal) -> UUID:
@@ -295,38 +401,143 @@ async def _upload_chunks(file: UploadFile):
         yield chunk
 
 
+async def _ai_retrieval_result(principal: Principal, arguments: AIKnowledgeSearchArguments) -> dict:
+    result = await AuthorizedRetrievalService(
+        PostgresRetrievalUnitRepository(get_session_factory()),
+        None,
+        runtime_settings_provider=load_active_retrieval_settings,
+    ).search(
+        principal,
+        arguments.query,
+        requested_space_ids=set(arguments.space_ids) if arguments.space_ids is not None else None,
+        active_space_id=arguments.active_space_id,
+        semantic_policy=arguments.semantic_policy,
+        limit=arguments.limit,
+    )
+    return {
+        "query": result.query,
+        "hits": [
+            {
+                "rank": hit.rank,
+                "rank_score": hit.rank_score,
+                "source_type": hit.candidate.source_type,
+                "space_id": hit.candidate.space_id,
+                "canonical_id": str(hit.candidate.canonical_id),
+                "revision_id": str(hit.candidate.revision_id),
+                "title": hit.candidate.title,
+                "content_excerpt": hit.candidate.content[:600],
+                "citation_uri": hit.candidate.citation_uri,
+                "language": hit.candidate.language,
+                "source_filename": hit.candidate.source_filename,
+                "version": hit.candidate.version,
+            }
+            for hit in result.hits
+        ],
+        "health": {
+            "semantic_status": result.health.semantic_status,
+            "degraded_reasons": list(result.health.degraded_reasons),
+            "embedding_generation_id": str(result.health.embedding_generation_id) if result.health.embedding_generation_id else None,
+            "embedding_coverage": result.health.embedding_coverage,
+        },
+        "explanation": {
+            "effective_space_ids": list(result.explanation.effective_space_ids),
+            "abstained": result.explanation.abstained,
+            "active_space_id": result.explanation.active_space_id,
+        },
+    }
+
+
+async def _ai_resource_space_ids(
+    session: AsyncSession,
+    principal: Principal,
+    arguments: AIListResourcesArguments,
+) -> tuple[str, ...]:
+    if arguments.space_id is not None:
+        await AuthorizationService(session).authorize_space(principal, arguments.space_id, Action.CONTENT_READ)
+        return (arguments.space_id,)
+    return await AuthorizationService(session).effective_space_ids(_actor_id(principal))
+
+
+async def _ai_source_items(session: AsyncSession, principal: Principal, arguments: AIListResourcesArguments) -> list[dict]:
+    space_ids = await _ai_resource_space_ids(session, principal, arguments)
+    if not space_ids:
+        return []
+    query = select(DocumentModel).where(
+        DocumentModel.archived_at.is_(None),
+        DocumentModel.space_id.in_(space_ids),
+    ).order_by(DocumentModel.created_at.desc()).limit(arguments.limit)
+    if arguments.space_id is not None:
+        query = query.where(DocumentModel.space_id == arguments.space_id)
+    documents = list(await session.scalars(query))
+    document_ids = [document.id for document in documents]
+    revisions = list(
+        await session.scalars(
+            select(DocumentRevisionModel)
+            .where(DocumentRevisionModel.document_id.in_(document_ids))
+            .order_by(DocumentRevisionModel.document_id, DocumentRevisionModel.version.desc())
+        )
+    ) if document_ids else []
+    latest: dict[UUID, DocumentRevisionModel] = {}
+    for revision in revisions:
+        latest.setdefault(revision.document_id, revision)
+    return [
+        {
+            "id": str(document.id),
+            "space_id": document.space_id,
+            "display_name": document.display_name,
+            "revision": document.revision,
+            "status": latest[document.id].status if document.id in latest else "pending",
+            "original_filename": latest[document.id].original_filename if document.id in latest else None,
+            "size_bytes": latest[document.id].size_bytes if document.id in latest else None,
+            "updated_at": document.updated_at.isoformat(),
+        }
+        for document in documents
+    ]
+
+
+async def _ai_job_items(session: AsyncSession, principal: Principal, arguments: AIListResourcesArguments) -> list[dict]:
+    space_ids = await _ai_resource_space_ids(session, principal, arguments)
+    if not space_ids:
+        return []
+    query = select(IngestionJobModel).where(
+        IngestionJobModel.space_id.in_(space_ids)
+    ).order_by(IngestionJobModel.created_at.desc()).limit(arguments.limit)
+    if arguments.space_id is not None:
+        query = query.where(IngestionJobModel.space_id == arguments.space_id)
+    jobs = list(await session.scalars(query))
+    return [
+        {
+            "id": str(job.id),
+            "space_id": job.space_id,
+            "document_id": str(job.document_id),
+            "state": job.state,
+            "progress": job.progress,
+            "attempt_count": job.attempt_count,
+            "max_attempts": job.max_attempts,
+            "last_error_code": job.last_error_code,
+            "updated_at": job.updated_at.isoformat(),
+        }
+        for job in jobs
+    ]
+
+
 @router.get("/ai-tools")
 async def list_ai_tools(
-    principal: Principal = Depends(require_scope("spaces:read")),
+    principal: Principal = Depends(require_principal),
 ) -> dict:
-    tools = []
-    if "*" in principal.scopes or "spaces:read" in principal.scopes:
-        tools.append(
+    return {
+        "items": [
             {
-                "name": "spaces.list.v1",
-                "description": "List only active spaces accessible to the current member.",
-                "confirmation": "none",
-                "parameters": AIListSpacesArguments.model_json_schema(),
+                "name": name,
+                "description": description,
+                "confirmation": confirmation,
+                "parameters": argument_model.model_json_schema(),
             }
-        )
-    if "*" in principal.scopes or "spaces:write" in principal.scopes:
-        tools.extend(
-            [
-                {
-                    "name": "spaces.create.v1",
-                    "description": "Create a private space owned by the current member.",
-                    "confirmation": "none",
-                    "parameters": AICreateSpaceArguments.model_json_schema(),
-                },
-                {
-                    "name": "spaces.archive.v1",
-                    "description": "Propose archiving an owned non-global space. A website confirmation is required before execution.",
-                    "confirmation": "required",
-                    "parameters": AIArchiveSpaceArguments.model_json_schema(),
-                },
-            ]
-        )
-    return {"items": tools}
+            for name, (scope, confirmation, description, argument_model) in AI_TOOL_DEFINITIONS.items()
+            if ("*" in principal.scopes or scope in principal.scopes)
+            and (name != "settings.propose.v1" or principal.system_role is SystemRole.SUPER_ADMIN)
+        ]
+    }
 
 
 @router.post("/ai-tools/{tool_name}", status_code=status.HTTP_202_ACCEPTED)
@@ -335,18 +546,17 @@ async def execute_ai_tool(
     payload: AIToolExecutionRequest,
     request: Request,
     idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
-    principal: Principal = Depends(require_scope("spaces:write")),
+    principal: Principal = Depends(require_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> JSONResponse:
-    if tool_name not in {"spaces.list.v1", "spaces.create.v1", "spaces.archive.v1"}:
+    definition = AI_TOOL_DEFINITIONS.get(tool_name)
+    if definition is None:
         raise ValidationException("Unknown or unavailable AI tool.")
+    scope, confirmation, _, argument_model = definition
+    if "*" not in principal.scopes and scope not in principal.scopes:
+        raise AuthorizationException()
     try:
-        if tool_name == "spaces.list.v1":
-            arguments = AIListSpacesArguments.model_validate(payload.arguments)
-        elif tool_name == "spaces.create.v1":
-            arguments = AICreateSpaceArguments.model_validate(payload.arguments)
-        else:
-            arguments = AIArchiveSpaceArguments.model_validate(payload.arguments)
+        arguments = argument_model.model_validate(payload.arguments)
     except PydanticValidationError as exc:
         raise ValidationException("Invalid AI tool arguments.") from exc
     normalized = arguments.model_dump(mode="json")
@@ -357,6 +567,38 @@ async def execute_ai_tool(
         idempotency_key,
         normalized,
     )
+    if confirmation == "required":
+        if reservation.status is ReservationStatus.REPLAY:
+            if not reservation.resource_ids:
+                raise ResourceConflictException()
+            action = await session.get(PendingAIActionModel, UUID(reservation.resource_ids[0]))
+            if action is None:
+                raise ResourceConflictException("The pending AI action is unavailable.")
+            pending_id = action.id
+            expires_at = action.expires_at
+        else:
+            pending = await AIManagementService(session).propose(
+                principal,
+                tool_name=tool_name,
+                command=normalized,
+                request_id=get_request_id(request),
+            )
+            pending_id = pending.action_id
+            expires_at = pending.expires_at
+            await IdempotencyService(session).complete(
+                reservation.record_id,
+                response_status=202,
+                resource_ids=[str(pending_id)],
+            )
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "confirmation_required",
+                "pending_action_id": str(pending_id),
+                "tool_name": tool_name,
+                "expires_at": expires_at.isoformat(),
+            },
+        )
     if tool_name == "spaces.list.v1":
         rows = list(
             await session.execute(
@@ -374,11 +616,12 @@ async def execute_ai_tool(
             {"id": space.id, "name": space.name, "role": role, "revision": space.revision}
             for space, role in rows
         ]
-        await IdempotencyService(session).complete(
-            reservation.record_id,
-            response_status=200,
-            resource_ids=[space["id"] for space in result],
-        )
+        if reservation.status is not ReservationStatus.REPLAY:
+            await IdempotencyService(session).complete(
+                reservation.record_id,
+                response_status=200,
+                resource_ids=[space["id"] for space in result],
+            )
         return JSONResponse(content={"items": result, "next_cursor": None})
     if tool_name == "spaces.create.v1":
         if reservation.status is ReservationStatus.REPLAY:
@@ -399,33 +642,111 @@ async def execute_ai_tool(
                 resource_ids=[created.space_id],
             )
         return JSONResponse(status_code=201, content={"status": "executed", "tool_name": tool_name, "result": result})
-    if reservation.status is ReservationStatus.REPLAY:
-        action = await session.get(PendingAIActionModel, UUID(reservation.resource_ids[0]))
-        if action is None:
-            raise ResourceConflictException("The pending AI action is unavailable.")
-        pending_id = action.id
-        expires_at = action.expires_at
+    result: dict
+    response_status = 200
+    resource_ids: list[str] = []
+    if tool_name == "spaces.members.list.v1":
+        role = await AuthorizationService(session).authorize_space(principal, arguments.space_id, Action.MEMBERSHIP_MANAGE)
+        if role is not SpaceRole.OWNER:
+            raise AuthorizationException()
+        rows = (
+            await session.execute(
+                select(SpaceMembershipModel, MemberModel)
+                .join(MemberModel, MemberModel.id == SpaceMembershipModel.member_id)
+                .where(SpaceMembershipModel.space_id == arguments.space_id)
+                .order_by(MemberModel.username_normalized)
+                .limit(arguments.limit)
+            )
+        ).all()
+        items = [
+            {
+                "member_id": str(member.id),
+                "username": member.username,
+                "display_name": member.display_name,
+                "status": member.status,
+                "role": membership.role,
+            }
+            for membership, member in rows
+        ]
+        result = {"items": items, "next_cursor": None}
+        resource_ids = [item["member_id"] for item in items]
+    elif tool_name in {"knowledge.search.v1", "retrieval.explain.v1"}:
+        result = await _ai_retrieval_result(principal, arguments)
+        resource_ids = [hit["canonical_id"] for hit in result["hits"]]
+    elif tool_name == "knowledge.read.v1":
+        item = await KnowledgeManagementService(session).get(arguments.item_id)
+        if item is None:
+            raise AuthorizationException()
+        await AuthorizationService(session).authorize_space(principal, item.workspace_id, Action.CONTENT_READ)
+        result = _knowledge_payload(item)
+        resource_ids = [str(item.id)]
+    elif tool_name == "knowledge.create.v1":
+        knowledge = KnowledgeManagementService(session)
+        if reservation.status is ReservationStatus.REPLAY:
+            if not reservation.resource_ids:
+                raise ResourceConflictException()
+            item = await knowledge.get(UUID(reservation.resource_ids[0]))
+            if item is None:
+                raise ResourceConflictException("The created knowledge item is unavailable.")
+        else:
+            item = await knowledge.create(
+                principal,
+                space_id=arguments.space_id,
+                title=arguments.title.strip(),
+                content=arguments.content,
+                tags=[tag.strip() for tag in arguments.tags if tag.strip()],
+                request_id=get_request_id(request),
+            )
+        result = _knowledge_payload(item)
+        resource_ids = [str(item.id)]
+        response_status = 201
+    elif tool_name == "knowledge.update.v1":
+        knowledge = KnowledgeManagementService(session)
+        if reservation.status is ReservationStatus.REPLAY:
+            if not reservation.resource_ids:
+                raise ResourceConflictException()
+            item = await knowledge.get(UUID(reservation.resource_ids[0]))
+            if item is None:
+                raise ResourceConflictException("The updated knowledge item is unavailable.")
+        else:
+            item = await knowledge.update(
+                principal,
+                arguments.item_id,
+                expected_version=arguments.expected_version,
+                title=arguments.title.strip(),
+                content=arguments.content,
+                tags=[tag.strip() for tag in arguments.tags if tag.strip()],
+                change_summary=arguments.change_summary,
+                request_id=get_request_id(request),
+            )
+        result = _knowledge_payload(item)
+        resource_ids = [str(item.id)]
+    elif tool_name == "sources.list.v1":
+        items = await _ai_source_items(session, principal, arguments)
+        result = {"items": items, "next_cursor": None}
+        resource_ids = [item["id"] for item in items]
+    elif tool_name == "ingestion_jobs.list.v1":
+        items = await _ai_job_items(session, principal, arguments)
+        result = {"items": items, "next_cursor": None}
+        resource_ids = [item["id"] for item in items]
+    elif tool_name == "settings.inspect.v1":
+        result = _settings_payload(await RuntimeSettingsService(session).active())
+        if result["id"] is not None:
+            resource_ids = [result["id"]]
     else:
-        pending = await AIManagementService(session).propose_space_archive(
-            principal,
-            space_id=arguments.space_id,
-            expected_revision=arguments.expected_revision,
-            request_id=get_request_id(request),
-        )
-        pending_id = pending.action_id
-        expires_at = pending.expires_at
+        raise ValidationException("Unknown or unavailable AI tool.")
+    if reservation.status is not ReservationStatus.REPLAY:
         await IdempotencyService(session).complete(
             reservation.record_id,
-            response_status=202,
-            resource_ids=[str(pending_id)],
+            response_status=response_status,
+            resource_ids=resource_ids,
         )
     return JSONResponse(
-        status_code=202,
+        status_code=response_status,
         content={
-            "status": "confirmation_required",
-            "pending_action_id": str(pending_id),
+            "status": "executed",
             "tool_name": tool_name,
-            "expires_at": expires_at.isoformat(),
+            "result": result,
         },
     )
 
@@ -435,7 +756,7 @@ async def confirm_ai_action(
     action_id: UUID,
     request: Request,
     idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
-    principal: Principal = Depends(require_scope("spaces:write")),
+    principal: Principal = Depends(require_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     if principal.kind is not PrincipalKind.SESSION:
@@ -471,7 +792,7 @@ async def confirm_ai_action(
 
 @router.get("/ai-actions")
 async def list_ai_actions(
-    principal: Principal = Depends(require_scope("spaces:write")),
+    principal: Principal = Depends(require_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     if principal.kind is not PrincipalKind.SESSION:

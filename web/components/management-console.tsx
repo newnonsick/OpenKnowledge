@@ -147,6 +147,19 @@ type CreatedAPIKey = {
   secret: string;
 };
 
+const API_KEY_SCOPE_OPTIONS = [
+  { description: "Search and read knowledge you can access", label: "Read knowledge", value: "knowledge:read" },
+  { description: "Create and edit knowledge in writable spaces", label: "Write knowledge", value: "knowledge:write" },
+  { description: "Use model and assistant endpoints", label: "Use AI APIs", value: "chat:write" },
+  { description: "List spaces available to this member", label: "Read spaces", value: "spaces:read" },
+  { description: "Create and archive owned spaces", label: "Write spaces", value: "spaces:write" },
+  { description: "Manage access in owned spaces", label: "Manage space access", value: "spaces:members" },
+  { description: "Inspect safe runtime settings", label: "Read settings", value: "settings:read" },
+  { description: "Propose safe runtime setting drafts", label: "Write settings", superAdminOnly: true, value: "settings:write" },
+] as const;
+
+const DEFAULT_API_KEY_SCOPES = ["knowledge:read"];
+
 type SessionSummary = {
   created_at: string;
   current: boolean;
@@ -1158,6 +1171,7 @@ export function SettingsConsole() {
   const [runtimeLimit, setRuntimeLimit] = useState(20);
   const [runtimeReason, setRuntimeReason] = useState("");
   const [keyName, setKeyName] = useState("");
+  const [selectedKeyScopes, setSelectedKeyScopes] = useState<string[]>(DEFAULT_API_KEY_SCOPES);
   const [createdKey, setCreatedKey] = useState<CreatedAPIKey | null>(null);
   const [pendingKeyRevocation, setPendingKeyRevocation] = useState<APIKeySummary | null>(null);
   const [pendingSessionRevocation, setPendingSessionRevocation] = useState<SessionSummary | null>(null);
@@ -1217,7 +1231,7 @@ export function SettingsConsole() {
 
   const createKey = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!keyName.trim() || saving) {
+    if (!keyName.trim() || selectedKeyScopes.length === 0 || saving) {
       return;
     }
     setSaving(true);
@@ -1225,18 +1239,25 @@ export function SettingsConsole() {
     setError(null);
     try {
       const response = await apiRequest<CreatedAPIKey>("/api/v1/api-keys", {
-        body: { name: keyName.trim(), scopes: ["knowledge:read"] },
+        body: { name: keyName.trim(), scopes: selectedKeyScopes },
         idempotent: true,
         method: "POST",
       });
       setCreatedKey(response);
       setKeyName("");
+      setSelectedKeyScopes(DEFAULT_API_KEY_SCOPES);
       await loadKeys();
     } catch (createError) {
       setError(message(createError));
     } finally {
       setSaving(false);
     }
+  };
+
+  const toggleKeyScope = (scope: string) => {
+    setSelectedKeyScopes((current) => API_KEY_SCOPE_OPTIONS
+      .map((option) => option.value)
+      .filter((value) => value === scope ? !current.includes(value) : current.includes(value)));
   };
 
   const revokeKey = async () => {
@@ -1373,10 +1394,20 @@ export function SettingsConsole() {
           <div className="panel-heading"><div><span>Personal credentials</span><h2>API keys</h2></div><KeyRound size={20} /></div>
           <p className="section-intro">Every member owns separate keys. Start with the narrowest scope and create another key for a different device or automation.</p>
           {createdKey ? <div className="secret-banner"><div><strong>Copy this key now</strong><span>It cannot be displayed again after you leave this result.</span></div><code>{createdKey.secret}</code><button aria-label="Copy API key" onClick={() => navigator.clipboard?.writeText(createdKey.secret)} type="button"><Copy size={16} /></button></div> : null}
-          <form className="inline-create-form" onSubmit={createKey}>
+          <form className="inline-create-form api-key-create-form" onSubmit={createKey}>
             <div><label htmlFor="api-key-name">Key name</label><input id="api-key-name" maxLength={120} onChange={(event) => setKeyName(event.target.value)} placeholder="e.g. Laptop" required value={keyName} /></div>
-            <div className="scope-selection"><span>Initial scope</span><strong>knowledge:read</strong></div>
-            <button className="primary-button" disabled={saving} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <KeyRound size={16} />} Create API key</button>
+            <fieldset className="api-key-scopes">
+              <legend>Permissions</legend>
+              <div className="api-key-scope-grid">
+                {API_KEY_SCOPE_OPTIONS.filter((option) => !("superAdminOnly" in option) || member.system_role === "super_admin").map((option) => (
+                  <label className="api-key-scope-option" key={option.value}>
+                    <input aria-label={option.label} checked={selectedKeyScopes.includes(option.value)} onChange={() => toggleKeyScope(option.value)} type="checkbox" />
+                    <span><strong>{option.label}</strong><small>{option.description}</small></span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <button className="primary-button" disabled={saving || selectedKeyScopes.length === 0} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <KeyRound size={16} />} Create API key</button>
           </form>
           <div className="data-list compact-list">
             {keys.map((key) => <article className="data-row" key={key.id}><span className="row-leading violet"><KeyRound size={17} /></span><div className="row-copy"><h3>{key.name}</h3><p>{key.public_id} · {key.scopes.join(", ")}</p></div><span className={`status-pill status-${key.status}`}>{key.status}</span>{key.status === "active" ? <button aria-label={`Revoke ${key.name}`} className="membership-remove-button" onClick={() => setPendingKeyRevocation(key)} type="button"><X size={15} /></button> : null}</article>)}
@@ -1578,6 +1609,25 @@ type PendingAIAction = {
   tool_name: string;
 };
 
+function aiActionImpact(toolName: string) {
+  if (toolName === "spaces.members.set.v1") {
+    return "This changes who can access this space and which actions that member can perform. Approval remains bound to the exact space, member, role, revision, and expiration.";
+  }
+  if (toolName === "ingestion_jobs.cancel.v1") {
+    return "This requests cancellation at a safe worker boundary while preserving completed stages and audit history.";
+  }
+  if (toolName === "ingestion_jobs.retry.v1") {
+    return "This requests a new durable attempt from the preserved original source after current-state validation.";
+  }
+  if (toolName === "settings.propose.v1") {
+    return "This creates a validated settings draft only. Activation remains a separate recent-step-up action with optimistic concurrency.";
+  }
+  if (toolName === "knowledge.archive.v1" || toolName === "spaces.archive.v1") {
+    return "This permanently removes it from unified search while preserving its version and audit history. Approval is bound to the exact target, revision, member, and expiration.";
+  }
+  return "Approval is bound to this exact command, target, member, current state, and expiration.";
+}
+
 export function AiActionsConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
@@ -1647,7 +1697,7 @@ export function AiActionsConsole() {
       <div className="tool-grid">
         {tools.map((tool, index) => <article className="tool-card" key={tool.name}><div><span className={`tool-icon accent-${index % 4}`}><Code2 size={17} /></span><span className={`mode-pill mode-${tool.confirmation === "required" ? "confirm" : "read"}`}>{tool.confirmation === "required" ? "Confirm" : "Direct"}</span></div><code>{tool.name}</code><p>{tool.description}</p></article>)}
       </div>
-      {pendingActions.length > 0 ? <section className="console-panel pending-ai-panel"><div className="panel-heading"><div><span>Human approval</span><h2>Pending confirmation</h2></div><span className="count-pill">{pendingActions.length}</span></div><div className="data-list">{pendingActions.map((action) => <article className="data-row" key={action.id}><span className="row-leading violet"><Sparkles size={17} /></span><div className="row-copy"><h3>{action.tool_name}</h3><p>{action.target_ids.join(", ")} · revision {action.expected_revision ?? "—"}</p></div><button aria-label={`Review ${action.tool_name} for ${action.target_ids.join(", ")}`} className="row-action-button" onClick={() => setReviewing(action)} type="button">Review</button></article>)}</div>{reviewing ? <div aria-label={`Confirm ${reviewing.tool_name}`} className="confirmation-strip" role="alertdialog"><div><strong>Execute {reviewing.tool_name}?</strong><span>This permanently removes it from unified search. Approval is bound to this target, revision, member, and expiration.</span></div><button className="secondary-button" onClick={() => setReviewing(null)} type="button">Not now</button><button className="danger-button" disabled={saving} onClick={() => void confirmAction()} type="button">Confirm AI action</button></div> : null}</section> : null}
+      {pendingActions.length > 0 ? <section className="console-panel pending-ai-panel"><div className="panel-heading"><div><span>Human approval</span><h2>Pending confirmation</h2></div><span className="count-pill">{pendingActions.length}</span></div><div className="data-list">{pendingActions.map((action) => <article className="data-row" key={action.id}><span className="row-leading violet"><Sparkles size={17} /></span><div className="row-copy"><h3>{action.tool_name}</h3><p>{action.target_ids.join(", ")} · revision {action.expected_revision ?? "—"}</p></div><button aria-label={`Review ${action.tool_name} for ${action.target_ids.join(", ")}`} className="row-action-button" onClick={() => setReviewing(action)} type="button">Review</button></article>)}</div>{reviewing ? <div aria-label={`Confirm ${reviewing.tool_name}`} className="confirmation-strip" role="alertdialog"><div><strong>Execute {reviewing.tool_name}?</strong><span>{aiActionImpact(reviewing.tool_name)}</span></div><button className="secondary-button" onClick={() => setReviewing(null)} type="button">Not now</button><button className="danger-button" disabled={saving} onClick={() => void confirmAction()} type="button">Confirm AI action</button></div> : null}</section> : null}
       {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
     </ConsoleShell>
   );

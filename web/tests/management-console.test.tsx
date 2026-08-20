@@ -389,10 +389,16 @@ describe("management console", () => {
 
     await screen.findByRole("heading", { name: "API keys" });
     fireEvent.change(screen.getByLabelText("Key name"), { target: { value: "Laptop" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Write knowledge" }));
     fireEvent.click(screen.getByRole("button", { name: "Create API key" }));
 
     expect(await screen.findByText("aigw_v1_once_only")).toBeInTheDocument();
     expect(screen.getByText(/copy this key now/i)).toBeInTheDocument();
+    expect(apiRequest).toHaveBeenCalledWith("/api/v1/api-keys", {
+      body: { name: "Laptop", scopes: ["knowledge:read", "knowledge:write"] },
+      idempotent: true,
+      method: "POST",
+    });
   });
 
   it("revokes API keys and other website sessions only after confirmation", async () => {
@@ -623,5 +629,25 @@ describe("management console", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm AI action" }));
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/ai-actions/action-1/confirm", { idempotent: true, method: "POST" }));
     await waitFor(() => expect(screen.queryByText("Pending confirmation")).not.toBeInTheDocument());
+  });
+
+  it("explains the exact impact of each pending AI action", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path === "/api/v1/spaces?limit=100") {
+        return { items: [{ id: "private", name: "Private", role: "owner", revision: 1 }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/ai-tools") {
+        return { items: [] } as never;
+      }
+      if (path === "/api/v1/ai-actions") {
+        return { items: [{ id: "action-2", tool_name: "spaces.members.set.v1", target_ids: ["private", "member-2"], expected_revision: 1, status: "pending", created_at: "2026-08-20T12:00:00Z", expires_at: "2026-08-20T12:10:00Z" }], next_cursor: null } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<AiActionsConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Review spaces.members.set.v1 for private, member-2" }));
+    expect(screen.getByText(/changes who can access this space/i)).toBeInTheDocument();
+    expect(screen.queryByText(/permanently removes it from unified search/i)).not.toBeInTheDocument();
   });
 });
