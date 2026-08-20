@@ -15,7 +15,7 @@ def apply_security_headers(response: Response, path: str) -> Response:
     response.headers["Permissions-Policy"] = (
         "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
     )
-    if path.startswith(("/v1", "/admin", "/auth")) and "Cache-Control" not in response.headers:
+    if path.startswith(("/v1", "/api/v1", "/admin", "/auth")) and "Cache-Control" not in response.headers:
         response.headers["Cache-Control"] = "no-store"
     return response
 

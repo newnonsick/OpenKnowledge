@@ -18,6 +18,44 @@ from src.gateway.presentation.settings_context import SettingsContextMiddleware
 from tests.integration.postgres_test_database import isolated_postgres_database
 
 
+async def test_login_throttling_is_enforced_in_postgresql() -> None:
+    mfa_key = Fernet.generate_key().decode("ascii")
+    settings = Settings(
+        gateway={
+            "environment": "test",
+            "public_base_url": "https://gateway.test",
+            "mfa_encryption_keys": {1: mfa_key},
+            "active_mfa_encryption_key_version": 1,
+        }
+    )
+
+    async with isolated_postgres_database() as (_, factory):
+        app = FastAPI()
+        app.state.settings = settings
+        register_exception_handlers(app)
+        app.add_middleware(APIKeyAuthMiddleware, allowed_keys=[], session_factory=factory)
+        app.add_middleware(SettingsContextMiddleware)
+        app.include_router(router)
+        set_session_factory(factory)
+        try:
+            transport = httpx.ASGITransport(app=app, client=("198.51.100.27", 40000))
+            async with httpx.AsyncClient(transport=transport, base_url="https://gateway.test") as client:
+                responses = [
+                    await client.post(
+                        "/api/v1/auth/login",
+                        json={"username": "missing", "password": "wrong-password"},
+                    )
+                    for _ in range(5)
+                ]
+
+                assert [response.status_code for response in responses[:4]] == [401, 401, 401, 401]
+                assert responses[4].status_code == 429
+                assert int(responses[4].headers["Retry-After"]) >= 1
+                assert responses[4].json()["error"]["code"] == "login_throttled"
+        finally:
+            set_session_factory(None)
+
+
 async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
     now = datetime.now(timezone.utc)
     mfa_key = Fernet.generate_key().decode("ascii")

@@ -35,6 +35,8 @@ def protocol_error_response(
         }
     response = JSONResponse(status_code=status_code, content=content)
     response.headers["X-Request-ID"] = request_id
+    if status_code == 429:
+        response.headers["Retry-After"] = str(max(1, int(getattr(request.state, "retry_after_seconds", 1))))
     return apply_security_headers(response, request.url.path)
 
 
@@ -57,6 +59,8 @@ def register_exception_handlers(app: FastAPI) -> None:
         request: Request,
         exc: GatewayException,
     ) -> JSONResponse:
+        if exc.status_code == 429:
+            request.state.retry_after_seconds = exc.details.get("retry_after_seconds", 1)
         message = exc.message if exc.status_code < 500 else "A gateway dependency failed."
         return protocol_error_response(
             request,

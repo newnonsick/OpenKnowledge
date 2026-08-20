@@ -11,6 +11,8 @@ from src.gateway.infrastructure.database import get_db_session
 from src.gateway.main import create_app
 from src.gateway.presentation.routers.chat_completions import _handle_streaming_completion
 from src.gateway.presentation.routers.messages import _handle_anthropic_streaming
+from src.gateway.presentation.security_headers import apply_security_headers
+from starlette.responses import Response
 
 
 def boundary_settings() -> Settings:
@@ -31,6 +33,12 @@ def assert_security_headers(response: httpx.Response) -> None:
     assert response.headers["referrer-policy"] == "no-referrer"
     assert "camera=()" in response.headers["permissions-policy"]
     assert "default-src 'self'" in response.headers["content-security-policy"]
+
+
+def test_management_api_responses_are_never_cacheable() -> None:
+    response = apply_security_headers(Response(), "/api/v1/spaces")
+
+    assert response.headers["Cache-Control"] == "no-store"
 
 
 @pytest.mark.asyncio

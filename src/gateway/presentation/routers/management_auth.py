@@ -13,11 +13,12 @@ from src.gateway.application.security.passwords import PasswordService
 from src.gateway.application.security.tokens import SecretValue
 from src.gateway.application.security.totp import MFASecretService
 from src.gateway.application.services.identity_service import IdentityService
+from src.gateway.application.services.login_throttle_service import LoginThrottleService, request_client_ip
 from src.gateway.application.services.session_service import RefreshStatus, SessionSecrets, SessionService
 from src.gateway.config import get_settings
-from src.gateway.domain.exceptions import AuthenticationException, CSRFException
+from src.gateway.domain.exceptions import AuthenticationException, CSRFException, RateLimitException
 from src.gateway.domain.identity import Principal, PrincipalKind, SystemRole
-from src.gateway.infrastructure.database import get_db_session
+from src.gateway.infrastructure.database import get_db_session, get_session_factory
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, SessionCredentialModel
 from src.gateway.presentation.request_context import get_request_id
 
@@ -147,19 +148,33 @@ async def login(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
 ) -> JSONResponse:
+    gateway = get_settings().gateway
+    client_ip = request_client_ip(request, gateway.trusted_proxy_cidrs)
+    throttle_factory = get_session_factory()
+    async with throttle_factory.begin() as throttle_session:
+        await LoginThrottleService(throttle_session).assert_allowed(payload.username, client_ip)
     identity = _identity_service(session)
-    authenticated = await identity.authenticate_password(
-        payload.username,
-        payload.password,
-    )
-    principal = authenticated.principal
-    member_id = _member_id(principal)
-    if (
-        principal.system_role is SystemRole.SUPER_ADMIN
-        and not principal.restricted
-        and not await identity.verify_totp_login(member_id, payload.totp_code or "")
-    ):
-        raise AuthenticationException("Invalid username or password.")
+    try:
+        authenticated = await identity.authenticate_password(
+            payload.username,
+            payload.password,
+        )
+        principal = authenticated.principal
+        member_id = _member_id(principal)
+        if (
+            principal.system_role is SystemRole.SUPER_ADMIN
+            and not principal.restricted
+            and not await identity.verify_totp_login(member_id, payload.totp_code or "")
+        ):
+            raise AuthenticationException("Invalid username or password.")
+    except AuthenticationException:
+        async with throttle_factory.begin() as throttle_session:
+            retry_after = await LoginThrottleService(throttle_session).record_failure(payload.username, client_ip)
+        if retry_after:
+            raise RateLimitException(retry_after)
+        raise
+    async with throttle_factory.begin() as throttle_session:
+        await LoginThrottleService(throttle_session).record_success(payload.username)
     current_time = datetime.now(timezone.utc)
     secrets = await SessionService(session).issue(
         principal,
