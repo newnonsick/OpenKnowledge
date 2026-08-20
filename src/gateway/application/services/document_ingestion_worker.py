@@ -81,9 +81,12 @@ class DocumentIngestionWorker:
             )
         if claim is None:
             return None
+        queued_at = claim.queued_at
+        if queued_at.tzinfo is None or queued_at.utcoffset() is None:
+            queued_at = queued_at.replace(tzinfo=timezone.utc)
         observe_metric(
             "gateway_ingestion_claim_latency_seconds",
-            max(0.0, (datetime.now(timezone.utc) - claim.queued_at).total_seconds()),
+            max(0.0, (datetime.now(timezone.utc) - queued_at).total_seconds()),
             outcome="success",
         )
         increment_metric("gateway_ingestion_events_total", event="claim", outcome="success")

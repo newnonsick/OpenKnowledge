@@ -1,0 +1,55 @@
+name: Restore Drill
+
+on:
+  schedule:
+    - cron: "43 3 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f
+        env:
+          POSTGRES_DB: gateway_source
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d gateway_source"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/gateway_source
+      BACKUP_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/gateway_source
+      RESTORE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/gateway_restore
+      EMBEDDING_DIMENSION: "1024"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: sudo apt-get update && sudo apt-get install --yes age postgresql-client
+      - run: python -m pip install --disable-pip-version-check --require-hashes -r requirements/dev.lock
+      - run: python -c "import asyncio; from src.gateway.infrastructure.migrations import run_migrations_async; asyncio.run(run_migrations_async())"
+      - run: pytest tests/integration/test_storage_consistency.py -q
+      - run: |
+          set -eu
+          mkdir -p /tmp/kinbase-backups /tmp/kinbase-source-storage /tmp/kinbase-restore-storage /tmp/kinbase-metrics
+          age-keygen -o /tmp/kinbase-age-key.txt
+          recipient="$(age-keygen -y /tmp/kinbase-age-key.txt)"
+          BACKUP_DIR=/tmp/kinbase-backups BACKUP_AGE_RECIPIENT="$recipient" STORAGE_DIR=/tmp/kinbase-source-storage BACKUP_WRITERS_QUIESCED=true BACKUP_METRICS_FILE=/tmp/kinbase-metrics/backup.prom sh scripts/backup.sh
+          createdb "$RESTORE_DATABASE_URL"
+          backup_file="$(find /tmp/kinbase-backups -type f -name '*.tar.age' -print -quit)"
+          BACKUP_FILE="$backup_file" RESTORE_STORAGE_DIR=/tmp/kinbase-restore-storage BACKUP_AGE_IDENTITY=/tmp/kinbase-age-key.txt RESTORE_METRICS_FILE=/tmp/kinbase-metrics/restore.prom sh scripts/restore.sh
+          test "$(psql "$RESTORE_DATABASE_URL" -AtX -c 'SELECT count(*) FROM alembic_version')" = "1"
+          grep -q gateway_backup_last_success_unixtime /tmp/kinbase-metrics/backup.prom
+          grep -q gateway_restore_test_last_success_unixtime /tmp/kinbase-metrics/restore.prom

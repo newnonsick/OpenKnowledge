@@ -3,6 +3,9 @@ services:
   postgres:
     image: pgvector/pgvector:pg17@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f
     restart: unless-stopped
+    cpus: "2.0"
+    mem_limit: 2g
+    pids_limit: 256
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-kinbase}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -25,6 +28,9 @@ services:
   migrate:
     build: .
     user: "10001:10001"
+    cpus: "1.0"
+    mem_limit: 1g
+    pids_limit: 128
     environment:
       ENVIRONMENT: production
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kinbase}
@@ -41,6 +47,9 @@ services:
 
   permissions:
     image: pgvector/pgvector:pg17@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f
+    cpus: "0.25"
+    mem_limit: 128m
+    pids_limit: 64
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     command: ["psql", "--host=postgres", "--username=${POSTGRES_USER:-postgres}", "--dbname=${POSTGRES_DB:-kinbase}", "--file=/grant-runtime.sql"]
@@ -59,6 +68,9 @@ services:
   gateway:
     build: .
     restart: unless-stopped
+    cpus: "2.0"
+    mem_limit: 1g
+    pids_limit: 256
     env_file: ["${APP_ENV_FILE:-.env.production}"]
     environment:
       DATABASE_URL: postgresql+asyncpg://gateway_runtime:${GATEWAY_RUNTIME_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-kinbase}
@@ -85,6 +97,9 @@ services:
   worker:
     build: .
     restart: unless-stopped
+    cpus: "2.0"
+    mem_limit: 2g
+    pids_limit: 256
     command: ["python", "-m", "src.gateway.worker"]
     env_file: ["${APP_ENV_FILE:-.env.production}"]
     environment:
@@ -105,6 +120,9 @@ services:
   web:
     build: ./web
     restart: unless-stopped
+    cpus: "1.0"
+    mem_limit: 512m
+    pids_limit: 256
     environment:
       GATEWAY_INTERNAL_URL: http://gateway:8000
       NODE_ENV: production
@@ -120,6 +138,9 @@ services:
   edge:
     image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
     restart: unless-stopped
+    cpus: "0.5"
+    mem_limit: 256m
+    pids_limit: 128
     environment:
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?PUBLIC_DOMAIN is required}
     ports: ["80:80", "443:443", "443:443/udp"]

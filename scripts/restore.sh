@@ -17,3 +17,11 @@ fi
 mkdir -p "$RESTORE_STORAGE_DIR"
 tar -C "$RESTORE_STORAGE_DIR" -xzf "$restore_tmp/object-storage.tar.gz"
 python -m scripts.storage_manifest verify --database-url "$RESTORE_DATABASE_URL" --storage-dir "$RESTORE_STORAGE_DIR" --manifest "$restore_tmp/storage-manifest.json"
+if [ -n "${RESTORE_METRICS_FILE:-}" ]; then
+  metrics_dir="$(dirname "$RESTORE_METRICS_FILE")"
+  mkdir -p "$metrics_dir"
+  metrics_tmp="$(mktemp "$metrics_dir/.restore-metrics.XXXXXX")"
+  printf 'gateway_restore_test_last_success_unixtime %s\n' "$(date -u +%s)" > "$metrics_tmp"
+  chmod 600 "$metrics_tmp"
+  mv "$metrics_tmp" "$RESTORE_METRICS_FILE"
+fi

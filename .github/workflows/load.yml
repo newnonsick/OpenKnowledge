@@ -1,0 +1,32 @@
+name: Production Load Budget
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: HTTPS origin of the isolated production-shaped target
+        required: true
+        type: string
+      space_id:
+        description: Writable isolated space prepared for the load run
+        required: true
+        default: global
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  load:
+    runs-on: ubuntu-24.04
+    environment: load-test
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: grafana/setup-k6-action@c00053c996b4061198c9c24a00474b748abdf8b7
+      - uses: grafana/run-k6-action@fb5a163607c1bd1984f629f322f580e63899bd36
+        env:
+          GATEWAY_BASE_URL: ${{ inputs.base_url }}
+          GATEWAY_API_KEY: ${{ secrets.LOAD_TEST_API_KEY }}
+          GATEWAY_SPACE_ID: ${{ inputs.space_id }}
+        with:
+          path: tests/load/k6.js

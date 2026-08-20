@@ -1,0 +1,68 @@
+groups:
+  - name: kinbase
+    rules:
+      - alert: GatewayUnavailable
+        expr: up{job="kinbase-gateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Gateway metrics target is unavailable
+      - alert: GatewayErrorBudgetFastBurn
+        expr: sum(rate(gateway_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(gateway_http_requests_total[5m])), 1) > 0.05
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: Gateway error budget is burning rapidly
+      - alert: GatewayIngestionQueueGrowing
+        expr: sum(gateway_ingestion_queue_depth{state="queued"}) > 25
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Ingestion queue exceeds the family workload budget
+      - alert: GatewayIngestionTerminalFailures
+        expr: increase(gateway_ingestion_events_total{event="terminal",outcome="failed"}[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: An ingestion job reached terminal failure
+      - alert: GatewayAuthenticationAbuse
+        expr: increase(gateway_auth_events_total{outcome="throttled"}[10m]) > 10
+        labels:
+          severity: warning
+        annotations:
+          summary: Authentication throttling is elevated
+      - alert: GatewayRefreshTokenReuse
+        expr: increase(gateway_auth_events_total{event="token_reuse"}[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: Refresh token reuse was detected
+      - alert: GatewayBackupStale
+        expr: time() - gateway_backup_last_success_unixtime > 3600
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: No successful coordinated backup exists within the one-hour RPO
+      - alert: GatewayRestoreDrillStale
+        expr: time() - gateway_restore_test_last_success_unixtime > 2678400
+        labels:
+          severity: warning
+        annotations:
+          summary: The monthly isolated restore drill is stale
+      - alert: GatewayCertificateExpiring
+        expr: probe_ssl_earliest_cert_expiry - time() < 1209600
+        labels:
+          severity: warning
+        annotations:
+          summary: Public TLS certificate expires within fourteen days
+      - alert: GatewayDependencyUnavailable
+        expr: gateway_dependency_available == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: A gateway dependency is unavailable
