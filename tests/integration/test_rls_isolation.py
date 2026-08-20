@@ -65,26 +65,31 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                     text(
                         "GRANT SELECT ON alembic_version, api_key_scopes, audit_events, "
                         "compatibility_principals, document_chunks, document_files, "
-                        "idempotency_records, knowledge_items, knowledge_revisions, "
+                        "document_revision_chunks, document_revisions, documents, "
+                        "embedding_generations, idempotency_records, ingestion_jobs, "
+                        "knowledge_items, knowledge_revisions, "
                         "login_throttle_buckets, members, mfa_factors, mfa_recovery_codes, "
                         "password_credentials, personal_api_keys, session_credentials, "
-                        f'session_families, space_memberships, workspaces TO "{runtime_role}"'
+                        "provenance_links, retrieval_units, session_families, "
+                        f'space_memberships, workspaces TO "{runtime_role}"'
                     )
                 )
                 await connection.execute(
                     text(
                         "GRANT INSERT ON api_key_scopes, audit_events, "
-                        "document_chunks, document_files, idempotency_records, knowledge_items, "
+                        "document_chunks, document_files, document_revisions, documents, "
+                        "idempotency_records, ingestion_jobs, job_outbox, knowledge_items, "
                         "knowledge_revisions, login_throttle_buckets, members, mfa_factors, "
                         "mfa_recovery_codes, password_credentials, personal_api_keys, "
-                        "session_credentials, session_families, space_memberships, workspaces "
+                        "provenance_links, session_credentials, session_families, "
+                        "space_memberships, workspaces "
                         f'TO "{runtime_role}"'
                     )
                 )
                 await connection.execute(
                     text(
                         "GRANT UPDATE ON document_chunks, document_files, "
-                        "idempotency_records, knowledge_items, knowledge_revisions, "
+                        "idempotency_records, knowledge_items, "
                         "login_throttle_buckets, members, mfa_factors, mfa_recovery_codes, "
                         "password_credentials, personal_api_keys, session_credentials, session_families "
                         f'TO "{runtime_role}"'
@@ -93,11 +98,29 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                 await connection.execute(
                     text(
                         "GRANT DELETE ON api_key_scopes, document_chunks, document_files, "
-                        f'knowledge_items, knowledge_revisions, space_memberships TO "{runtime_role}"'
+                        f'knowledge_items, space_memberships TO "{runtime_role}"'
                     )
                 )
                 await connection.execute(
                     text(f'GRANT UPDATE (revoked_at) ON compatibility_principals TO "{runtime_role}"')
+                )
+                await connection.execute(
+                    text(
+                        "GRANT UPDATE (display_name, current_revision_id, archived_at, revision, updated_at) "
+                        f'ON documents TO "{runtime_role}"'
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "GRANT UPDATE (staging_storage_key, storage_key) "
+                        f'ON document_revisions TO "{runtime_role}"'
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "GRANT UPDATE (state, cancellation_requested, retry_requested, updated_at) "
+                        f'ON ingestion_jobs TO "{runtime_role}"'
+                    )
                 )
                 await connection.execute(
                     text(f'GRANT UPDATE (role, updated_at) ON space_memberships TO "{runtime_role}"')
@@ -286,6 +309,23 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                     assert await connection.scalar(
                         text("SELECT count(*) FROM space_memberships")
                     ) == 3
+                    with pytest.raises(DBAPIError):
+                        async with connection.begin_nested():
+                            await connection.execute(
+                                text(
+                                    "UPDATE knowledge_revisions SET content = 'mutated' "
+                                    "WHERE id = :revision_id"
+                                ),
+                                {"revision_id": repository_revision.id},
+                            )
+                    with pytest.raises(DBAPIError):
+                        async with connection.begin_nested():
+                            await connection.execute(
+                                text(
+                                    "DELETE FROM knowledge_revisions WHERE id = :revision_id"
+                                ),
+                                {"revision_id": repository_revision.id},
+                            )
                     await connection.execute(
                         text(
                             "INSERT INTO workspaces (id, name, created_by_member_id) "

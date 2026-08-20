@@ -133,6 +133,16 @@ class ConcurrencyConflictException(GatewayException):
             details=det,
         )
 
+class JobLeaseLostException(GatewayException):
+
+    def __init__(self) -> None:
+        super().__init__(
+            message="The ingestion job lease is no longer valid.",
+            status_code=409,
+            error_type="concurrency_conflict_error",
+            code="job_lease_lost",
+        )
+
 class ModelNotFoundException(GatewayException):
 
     def __init__(
@@ -193,6 +203,26 @@ class StorageException(GatewayException):
             error_type="storage_error",
             code="storage_operation_failed",
             details=details,
+        )
+
+class UploadTooLargeException(GatewayException):
+
+    def __init__(self) -> None:
+        super().__init__(
+            message="The uploaded file exceeds the configured size limit.",
+            status_code=413,
+            error_type="validation_error",
+            code="upload_too_large",
+        )
+
+class ParserTimeoutException(GatewayException):
+
+    def __init__(self) -> None:
+        super().__init__(
+            message="Document parsing exceeded the configured time limit.",
+            status_code=422,
+            error_type="validation_error",
+            code="parser_timeout",
         )
 
 class ValidationException(GatewayException):

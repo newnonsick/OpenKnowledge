@@ -36,6 +36,8 @@ _engine: Optional[AsyncEngine] = None
 _session_factory: Optional[async_sessionmaker[AsyncSession]] = None
 _migration_engine: Optional[AsyncEngine] = None
 _migration_session_factory: Optional[async_sessionmaker[AsyncSession]] = None
+_worker_engine: Optional[AsyncEngine] = None
+_worker_session_factory: Optional[async_sessionmaker[AsyncSession]] = None
 _engine_loop = None
 
 
@@ -139,6 +141,37 @@ def get_migration_session_factory() -> async_sessionmaker[AsyncSession]:
         )
     return _migration_session_factory
 
+
+def get_worker_engine() -> AsyncEngine:
+    global _worker_engine, _worker_session_factory
+    worker_url = get_settings().database.worker_url
+    if not worker_url:
+        raise RuntimeError("A dedicated worker database URL is required")
+    target_url = normalize_database_url(worker_url)
+    if (
+        _worker_engine is not None
+        and _worker_engine.url.render_as_string(hide_password=False) != target_url
+    ):
+        _worker_engine.sync_engine.dispose(close=False)
+        _worker_engine = None
+        _worker_session_factory = None
+    if _worker_engine is None:
+        _worker_engine = create_async_engine(target_url, pool_pre_ping=True)
+    return _worker_engine
+
+
+def get_worker_session_factory() -> async_sessionmaker[AsyncSession]:
+    global _worker_session_factory
+    if _worker_session_factory is None:
+        _worker_session_factory = async_sessionmaker(
+            bind=get_worker_engine(),
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autoflush=False,
+            autocommit=False,
+        )
+    return _worker_session_factory
+
 def set_session_factory(factory: Optional[async_sessionmaker[AsyncSession]]) -> None:
 
     global _session_factory
@@ -176,7 +209,13 @@ async def _validate_runtime_database_connection(connection) -> None:
         "compatibility_principals",
         "document_chunks",
         "document_files",
+        "document_revision_chunks",
+        "document_revisions",
+        "documents",
+        "embedding_generations",
         "idempotency_records",
+        "ingestion_jobs",
+        "job_outbox",
         "knowledge_items",
         "knowledge_revisions",
         "login_throttle_buckets",
@@ -185,6 +224,8 @@ async def _validate_runtime_database_connection(connection) -> None:
         "mfa_recovery_codes",
         "password_credentials",
         "personal_api_keys",
+        "provenance_links",
+        "retrieval_units",
         "session_credentials",
         "session_families",
         "space_memberships",
@@ -288,15 +329,23 @@ async def _validate_runtime_database_connection(connection) -> None:
         "compatibility_principals": ("SELECT",),
         "document_chunks": ("SELECT", "INSERT", "UPDATE", "DELETE"),
         "document_files": ("SELECT", "INSERT", "UPDATE", "DELETE"),
+        "document_revision_chunks": ("SELECT",),
+        "document_revisions": ("SELECT", "INSERT"),
+        "documents": ("SELECT", "INSERT"),
+        "embedding_generations": ("SELECT",),
         "idempotency_records": ("SELECT", "INSERT", "UPDATE"),
+        "ingestion_jobs": ("SELECT", "INSERT"),
+        "job_outbox": ("INSERT",),
         "knowledge_items": ("SELECT", "INSERT", "UPDATE", "DELETE"),
-        "knowledge_revisions": ("SELECT", "INSERT", "UPDATE", "DELETE"),
+        "knowledge_revisions": ("SELECT", "INSERT"),
         "login_throttle_buckets": ("SELECT", "INSERT", "UPDATE"),
         "members": ("SELECT", "INSERT", "UPDATE"),
         "mfa_factors": ("SELECT", "INSERT", "UPDATE"),
         "mfa_recovery_codes": ("SELECT", "INSERT", "UPDATE"),
         "password_credentials": ("SELECT", "INSERT", "UPDATE"),
         "personal_api_keys": ("SELECT", "INSERT", "UPDATE"),
+        "provenance_links": ("SELECT", "INSERT"),
+        "retrieval_units": ("SELECT",),
         "session_credentials": ("SELECT", "INSERT", "UPDATE"),
         "session_families": ("SELECT", "INSERT", "UPDATE"),
         "space_memberships": ("SELECT", "INSERT", "DELETE"),
@@ -379,6 +428,20 @@ async def _validate_runtime_database_connection(connection) -> None:
             missing_privileges.append(f"{function_name}:EXECUTE")
     required_column_privileges = {
         "compatibility_principals": ("revoked_at",),
+        "documents": (
+            "display_name",
+            "current_revision_id",
+            "archived_at",
+            "revision",
+            "updated_at",
+        ),
+        "document_revisions": ("staging_storage_key", "storage_key"),
+        "ingestion_jobs": (
+            "state",
+            "cancellation_requested",
+            "retry_requested",
+            "updated_at",
+        ),
         "space_memberships": ("role", "updated_at"),
         "workspaces": ("name", "archived_at", "revision"),
     }
@@ -473,9 +536,177 @@ async def validate_runtime_database_role(engine: AsyncEngine | None = None) -> N
 async def validate_runtime_database_connection(connection) -> None:
     await _validate_runtime_database_connection(connection)
 
+
+async def _validate_worker_database_connection(connection) -> None:
+    worker_tables = {
+        "document_revision_chunks": ("SELECT", "INSERT"),
+        "document_revisions": ("SELECT",),
+        "documents": ("SELECT",),
+        "embedding_generations": ("SELECT",),
+        "ingestion_jobs": ("SELECT",),
+        "job_outbox": ("SELECT", "INSERT"),
+        "members": ("SELECT",),
+        "operational_alerts": ("SELECT", "INSERT"),
+        "retrieval_units": ("SELECT", "INSERT"),
+        "space_memberships": ("SELECT",),
+        "workspaces": ("SELECT",),
+    }
+    update_columns = {
+        "documents": ("current_revision_id", "revision", "updated_at"),
+        "document_revisions": (
+            "staging_storage_key",
+            "parser_version",
+            "status",
+            "failure_code",
+            "ready_at",
+            "activated_at",
+        ),
+        "ingestion_jobs": (
+            "state",
+            "progress",
+            "attempt_count",
+            "next_attempt_at",
+            "cancellation_requested",
+            "retry_requested",
+            "last_error_code",
+            "last_error_detail",
+            "lease_owner",
+            "lease_expires_at",
+            "claim_token",
+            "updated_at",
+            "started_at",
+            "finished_at",
+        ),
+        "job_outbox": (
+            "state",
+            "attempt_count",
+            "last_error_code",
+            "lease_owner",
+            "lease_expires_at",
+            "claim_token",
+            "available_at",
+            "published_at",
+            "updated_at",
+        ),
+        "retrieval_units": ("active", "deactivated_at"),
+    }
+    role = (
+        await connection.execute(
+            text(
+                "SELECT r.rolsuper, r.rolbypassrls, r.rolcreaterole, "
+                "r.rolcreatedb, r.rolreplication "
+                "FROM pg_roles r WHERE r.rolname = current_user"
+            )
+        )
+    ).one()
+    owned_objects = int(
+        await connection.scalar(
+            text(
+                "SELECT count(*) FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() "
+                "AND c.relname = ANY(:tables) "
+                "AND pg_get_userbyid(c.relowner) = current_user"
+            ),
+            {"tables": list(worker_tables)},
+        )
+        or 0
+    )
+    inherited_privileged_roles = int(
+        await connection.scalar(
+            text(
+                "SELECT count(*) FROM pg_roles inherited "
+                "WHERE inherited.rolname <> current_user "
+                "AND pg_has_role(current_user, inherited.oid, 'MEMBER') "
+                "AND (inherited.rolsuper OR inherited.rolcreaterole "
+                "OR inherited.rolcreatedb OR inherited.rolreplication "
+                "OR EXISTS (SELECT 1 FROM pg_class c WHERE c.relowner = inherited.oid AND c.relname = ANY(:tables)))"
+            ),
+            {"tables": list(worker_tables)},
+        )
+        or 0
+    )
+    violations = []
+    if not role.rolbypassrls:
+        violations.append("role:BYPASSRLS:REQUIRED")
+    if role.rolsuper or role.rolcreaterole or role.rolcreatedb or role.rolreplication:
+        violations.append("role:ADMIN:FORBIDDEN")
+    if owned_objects:
+        violations.append("role:TABLE_OWNER:FORBIDDEN")
+    if inherited_privileged_roles:
+        violations.append("role:PRIVILEGED_INHERITANCE:FORBIDDEN")
+    if not await connection.scalar(
+        text("SELECT has_schema_privilege(current_user, 'public', 'USAGE')")
+    ):
+        violations.append("public:USAGE")
+    if await connection.scalar(
+        text("SELECT has_schema_privilege(current_user, 'public', 'CREATE')")
+    ):
+        violations.append("public:CREATE:FORBIDDEN")
+    all_table_privileges = (
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+    )
+    for table_name, required in worker_tables.items():
+        for privilege in all_table_privileges:
+            granted = await connection.scalar(
+                text(
+                    "SELECT has_table_privilege(current_user, :table_name, :privilege)"
+                ),
+                {
+                    "table_name": f"public.{table_name}",
+                    "privilege": privilege,
+                },
+            )
+            if privilege in required and not granted:
+                violations.append(f"{table_name}:{privilege}")
+            elif privilege not in required and granted:
+                violations.append(f"{table_name}:{privilege}:FORBIDDEN")
+    for table_name, permitted_columns in update_columns.items():
+        columns = tuple(
+            await connection.scalars(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = current_schema() AND table_name = :table_name"
+                ),
+                {"table_name": table_name},
+            )
+        )
+        for column_name in columns:
+            granted = await connection.scalar(
+                text(
+                    "SELECT has_column_privilege(current_user, :table_name, :column_name, 'UPDATE')"
+                ),
+                {
+                    "table_name": f"public.{table_name}",
+                    "column_name": column_name,
+                },
+            )
+            if column_name in permitted_columns and not granted:
+                violations.append(f"{table_name}.{column_name}:UPDATE")
+            elif column_name not in permitted_columns and granted:
+                violations.append(f"{table_name}.{column_name}:FORBIDDEN_UPDATE")
+    if violations:
+        raise RuntimeError("Worker database role violates the least-privilege contract")
+
+
+async def validate_worker_database_role(engine: AsyncEngine | None = None) -> None:
+    target = engine or get_worker_engine()
+    async with target.connect() as connection:
+        await _validate_worker_database_connection(connection)
+
+
+async def validate_worker_database_connection(connection) -> None:
+    await _validate_worker_database_connection(connection)
+
 async def close_db_engine() -> None:
 
-    global _engine, _session_factory, _migration_engine, _migration_session_factory, _engine_loop
+    global _engine, _session_factory, _migration_engine, _migration_session_factory, _worker_engine, _worker_session_factory, _engine_loop
     if _engine is not None:
         await _engine.dispose()
         _engine = None
@@ -485,4 +716,8 @@ async def close_db_engine() -> None:
         await _migration_engine.dispose()
         _migration_engine = None
         _migration_session_factory = None
+    if _worker_engine is not None:
+        await _worker_engine.dispose()
+        _worker_engine = None
+        _worker_session_factory = None
     logger.info("Database connection pools disposed.")

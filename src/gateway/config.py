@@ -130,6 +130,16 @@ class DatabaseSettings(BaseSettings):
         ),
         description="Privileged database URL used only by explicit migration commands",
     )
+    worker_url: Optional[str] = Field(
+        default=None,
+        repr=False,
+        validation_alias=AliasChoices(
+            "WORKER_DATABASE_URL",
+            "worker_database_url",
+            "worker_url",
+        ),
+        description="Dedicated database URL used only by background workers",
+    )
     pool_size: int = Field(
         default=20,
         gt=0,
@@ -267,6 +277,84 @@ class GatewaySettings(BaseSettings):
         validation_alias=AliasChoices(
             "PARSER_TIMEOUT_SECONDS",
             "parser_timeout_seconds",
+        ),
+    )
+    parser_cpu_seconds: int = Field(
+        default=30,
+        gt=0,
+        validation_alias=AliasChoices("PARSER_CPU_SECONDS", "parser_cpu_seconds"),
+    )
+    parser_max_pages: int = Field(
+        default=500,
+        gt=0,
+        validation_alias=AliasChoices("PARSER_MAX_PAGES", "parser_max_pages"),
+    )
+    parser_max_output_characters: int = Field(
+        default=5_000_000,
+        gt=0,
+        validation_alias=AliasChoices(
+            "PARSER_MAX_OUTPUT_CHARACTERS",
+            "parser_max_output_characters",
+        ),
+    )
+    ingestion_chunk_size: int = Field(
+        default=2000,
+        gt=0,
+        validation_alias=AliasChoices("INGESTION_CHUNK_SIZE", "ingestion_chunk_size"),
+    )
+    ingestion_chunk_overlap: int = Field(
+        default=200,
+        ge=0,
+        validation_alias=AliasChoices("INGESTION_CHUNK_OVERLAP", "ingestion_chunk_overlap"),
+    )
+    ingestion_max_chunks: int = Field(
+        default=10_000,
+        gt=0,
+        validation_alias=AliasChoices("INGESTION_MAX_CHUNKS", "ingestion_max_chunks"),
+    )
+    worker_lease_seconds: int = Field(
+        default=60,
+        gt=1,
+        validation_alias=AliasChoices("WORKER_LEASE_SECONDS", "worker_lease_seconds"),
+    )
+    worker_heartbeat_seconds: float = Field(
+        default=15.0,
+        gt=0,
+        validation_alias=AliasChoices(
+            "WORKER_HEARTBEAT_SECONDS",
+            "worker_heartbeat_seconds",
+        ),
+    )
+    worker_idle_delay_seconds: float = Field(
+        default=0.5,
+        gt=0,
+        validation_alias=AliasChoices(
+            "WORKER_IDLE_DELAY_SECONDS",
+            "worker_idle_delay_seconds",
+        ),
+    )
+    storage_reconcile_interval_seconds: int = Field(
+        default=3600,
+        gt=0,
+        validation_alias=AliasChoices(
+            "STORAGE_RECONCILE_INTERVAL_SECONDS",
+            "storage_reconcile_interval_seconds",
+        ),
+    )
+    storage_staging_ttl_seconds: int = Field(
+        default=86_400,
+        gt=0,
+        validation_alias=AliasChoices(
+            "STORAGE_STAGING_TTL_SECONDS",
+            "storage_staging_ttl_seconds",
+        ),
+    )
+    storage_orphan_grace_seconds: int = Field(
+        default=86_400,
+        gt=0,
+        validation_alias=AliasChoices(
+            "STORAGE_ORPHAN_GRACE_SECONDS",
+            "storage_orphan_grace_seconds",
         ),
     )
     default_workspace_id: str = Field(

@@ -8,13 +8,16 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Computed,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -72,18 +75,12 @@ class KnowledgeItem(Base):
     )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    current_revision_id: Mapped[Optional[UUID]] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey(
-            "knowledge_revisions.id",
-            ondelete="SET NULL",
-            use_alter=True,
-            name="fk_knowledge_items_current_revision_id",
-        ),
-        nullable=True,
-    )
+    current_revision_id: Mapped[Optional[UUID]] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    tags: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False)
     is_global: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revision: Mapped[int] = mapped_column(BigInteger, default=1, server_default=text("1"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -108,6 +105,15 @@ class KnowledgeItem(Base):
     )
 
     __table_args__ = (
+        CheckConstraint("revision > 0", name="ck_knowledge_items_revision"),
+        UniqueConstraint("id", "workspace_id", name="uq_knowledge_items_id_space"),
+        ForeignKeyConstraint(
+            ["current_revision_id", "id", "workspace_id"],
+            ["knowledge_revisions.id", "knowledge_revisions.item_id", "knowledge_revisions.space_id"],
+            name="fk_knowledge_items_current_revision_parent_space",
+            ondelete="RESTRICT",
+            use_alter=True,
+        ),
         Index("ix_knowledge_items_workspace_deleted", "workspace_id", "is_deleted"),
         Index("ix_knowledge_items_global_deleted", "is_global", "is_deleted"),
     )
@@ -119,17 +125,20 @@ class KnowledgeRevision(Base):
     __tablename__ = "knowledge_revisions"
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    item_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("knowledge_items.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
+    item_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    space_id: Mapped[str] = mapped_column(String(64), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str | None] = mapped_column(String(500))
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    tags: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False)
+    change_summary: Mapped[str | None] = mapped_column(Text)
     embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(EMBED_DIM), nullable=True)
     author: Mapped[str] = mapped_column(String(255), default="system", server_default=text("'system'"), nullable=False)
+    author_member_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("members.id", ondelete="SET NULL"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -142,6 +151,19 @@ class KnowledgeRevision(Base):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["item_id", "space_id"],
+            ["knowledge_items.id", "knowledge_items.workspace_id"],
+            name="fk_knowledge_revisions_item_space",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "id",
+            "item_id",
+            "space_id",
+            name="uq_knowledge_revisions_identity_parent_space",
+        ),
+        UniqueConstraint("id", "space_id", name="uq_knowledge_revisions_id_space"),
         Index("ix_knowledge_revisions_item_version", "item_id", "version", unique=True),
         Index(
             "ix_knowledge_revisions_embedding",
@@ -236,3 +258,4 @@ class DocumentChunk(Base):
 
 
 from src.gateway.infrastructure.persistence import identity_models as identity_models
+from src.gateway.infrastructure.persistence import ingestion_models as ingestion_models

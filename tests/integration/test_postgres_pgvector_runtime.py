@@ -66,13 +66,14 @@ async def test_configured_postgres_pgvector_round_trip_and_cosine_ordering() -> 
                 await connection.execute(
                     text(
                         "INSERT INTO knowledge_revisions "
-                        "(id, item_id, version, content_hash, content, embedding, author) VALUES "
-                        "(:first_revision, :first_item, 1, :first_hash, 'near', CAST(:near AS vector), 'test'), "
-                        "(:second_revision, :second_item, 1, :second_hash, 'far', CAST(:far AS vector), 'test')"
+                        "(id, item_id, space_id, version, title, content_hash, content, embedding, author) VALUES "
+                        "(:first_revision, :first_item, :workspace_id, 1, 'Near', :first_hash, 'near', CAST(:near AS vector), 'test'), "
+                        "(:second_revision, :second_item, :workspace_id, 1, 'Far', :second_hash, 'far', CAST(:far AS vector), 'test')"
                     ),
                     {
                         "first_revision": first_revision,
                         "first_item": first_item,
+                        "workspace_id": workspace_id,
                         "first_hash": "a" * 64,
                         "near": near,
                         "second_revision": second_revision,

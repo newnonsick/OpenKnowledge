@@ -604,10 +604,10 @@ class TestSQLiteTypeCompilationAdversarial:
             )
             await conn.execute(
                 text(
-                    "INSERT INTO knowledge_revisions (id, item_id, version, content_hash, content) "
-                    "VALUES (:id, :item_id, :v, :h, :content)"
+                    "INSERT INTO knowledge_revisions (id, item_id, space_id, version, content_hash, content) "
+                    "VALUES (:id, :item_id, :space_id, :v, :h, :content)"
                 ),
-                [{"id": rev_id, "item_id": k_id, "v": 1, "h": "hash123", "content": "Test content"}],
+                [{"id": rev_id, "item_id": k_id, "space_id": ws_id, "v": 1, "h": "hash123", "content": "Test content"}],
             )
 
             # Query back

@@ -15,11 +15,13 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy import select
 
 from src.gateway.application.services.knowledge_service import KnowledgeService
 from src.gateway.domain.entities import KnowledgeItem, KnowledgeRevision
 from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.persistence.knowledge_repository import KnowledgeRepository
+from src.gateway.infrastructure.persistence.ingestion_models import ProvenanceLinkModel
 from tests.e2e.harness.test_env import TestEnvironment
 from src.gateway.infrastructure.persistence.models import EMBED_DIM
 
@@ -123,3 +125,50 @@ async def test_knowledge_save_tool_end_to_end():
         # Search must find the saved knowledge
         results = await service.search_items("ชื่อ", workspace_id="global")
         assert any(r.id == payload["id"] for r in results)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_knowledge_revision_metadata_and_provenance_survive_round_trip():
+    async with TestEnvironment() as env:
+        repo = KnowledgeRepository(session_factory=env.session_factory)
+        item_id = uuid4()
+        revision = KnowledgeRevision(
+            id=uuid4(),
+            item_id=item_id,
+            version=1,
+            title="Canonical title",
+            content="Canonical content",
+            content_hash=KnowledgeRevision.compute_hash("Canonical content"),
+            tags=["family", "reference"],
+            change_summary="Initial capture",
+            author="member",
+            provenance_type="ai_action",
+            provenance_metadata={"request_id": "req-safe"},
+        )
+        item = KnowledgeItem(
+            id=item_id,
+            workspace_id="global",
+            title="Canonical title",
+            content=revision.content,
+            tags=["family", "reference"],
+            current_revision=revision,
+        )
+
+        await repo.create_item(item, revision)
+        fetched = await repo.get_item_by_id(item_id, workspace_id="global")
+        history = await repo.list_revisions(item_id)
+
+        assert fetched is not None
+        assert fetched.tags == ["family", "reference"]
+        assert history[0].title == "Canonical title"
+        assert history[0].tags == ["family", "reference"]
+        assert history[0].change_summary == "Initial capture"
+        async with env.session_factory() as session:
+            provenance = await session.scalar(
+                select(ProvenanceLinkModel).where(
+                    ProvenanceLinkModel.knowledge_revision_id == revision.id
+                )
+            )
+            assert provenance.source_type == "ai_action"
+            assert provenance.source_metadata == {"request_id": "req-safe"}

@@ -31,6 +31,8 @@ class KnowledgeRevision(BaseModel):
     embedding: Optional[List[float]] = None
     change_summary: Optional[str] = None
     author: str = "system"
+    provenance_type: str = "manual"
+    provenance_metadata: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
 
     @classmethod

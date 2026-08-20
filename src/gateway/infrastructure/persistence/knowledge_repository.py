@@ -7,7 +7,7 @@ import math
 from typing import Any, List, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -28,6 +28,7 @@ from src.gateway.infrastructure.persistence.models import (
     KnowledgeRevision as ORMKnowledgeRevision,
     Workspace as ORMWorkspace,
 )
+from src.gateway.infrastructure.persistence.ingestion_models import ProvenanceLinkModel, RetrievalUnitModel
 
 class KnowledgeRepository(IKnowledgeRepository):
 
@@ -51,9 +52,11 @@ class KnowledgeRepository(IKnowledgeRepository):
             id=orm_rev.id,
             item_id=orm_rev.item_id,
             version=orm_rev.version,
-            title=getattr(orm_rev, "title", None),
+            title=orm_rev.title,
             content=orm_rev.content,
             content_hash=orm_rev.content_hash,
+            tags=list(orm_rev.tags or []),
+            change_summary=orm_rev.change_summary,
             author=orm_rev.author,
             embedding=emb,
             created_at=created_at,
@@ -78,6 +81,7 @@ class KnowledgeRepository(IKnowledgeRepository):
             version=version,
             title=orm_item.title,
             content=content,
+            tags=list(orm_item.tags or []),
             is_deleted=orm_item.is_deleted,
             created_at=created_at,
             updated_at=updated_at,
@@ -109,8 +113,11 @@ class KnowledgeRepository(IKnowledgeRepository):
                     title=item.title,
                     content=item.content or initial_revision.content,
                     current_revision_id=None,
+                    tags=list(item.tags),
                     is_global=item.is_global,
                     is_deleted=item.is_deleted,
+                    archived_at=item.updated_at if item.is_deleted else None,
+                    revision=max(item.version, 1),
                     created_at=item.created_at or now,
                     updated_at=item.updated_at or now,
                 )
@@ -120,16 +127,31 @@ class KnowledgeRepository(IKnowledgeRepository):
                 orm_rev = ORMKnowledgeRevision(
                     id=initial_revision.id,
                     item_id=item.id,
+                    space_id=item.workspace_id,
                     version=initial_revision.version,
+                    title=initial_revision.title or item.title,
                     content_hash=initial_revision.content_hash
                     or DomainKnowledgeRevision.compute_hash(initial_revision.content),
                     content=initial_revision.content,
+                    tags=list(initial_revision.tags or item.tags),
+                    change_summary=initial_revision.change_summary,
                     embedding=initial_revision.embedding,
                     author=initial_revision.author or "system",
+                    author_member_id=self._actor_member_id(),
                     created_at=initial_revision.created_at or now,
                 )
                 session.add(orm_rev)
                 await session.flush()
+
+                session.add(
+                    ProvenanceLinkModel(
+                        space_id=item.workspace_id,
+                        knowledge_revision_id=orm_rev.id,
+                        source_type=self._provenance_type(initial_revision.provenance_type),
+                        actor_member_id=self._actor_member_id(),
+                        source_metadata=dict(initial_revision.provenance_metadata),
+                    )
+                )
 
                 orm_item.current_revision_id = orm_rev.id
                 await session.flush()
@@ -239,11 +261,16 @@ class KnowledgeRepository(IKnowledgeRepository):
                 orm_rev = ORMKnowledgeRevision(
                     id=new_revision.id if new_revision.id != (current_rev.id if current_rev else None) else uuid4(),
                     item_id=item_id,
+                    space_id=orm_item.workspace_id,
                     version=new_version,
+                    title=title if title is not None else orm_item.title,
                     content_hash=content_hash,
                     content=new_revision.content,
+                    tags=list(tags if tags is not None else new_revision.tags or orm_item.tags),
+                    change_summary=new_revision.change_summary,
                     embedding=new_revision.embedding,
                     author=new_revision.author or "system",
+                    author_member_id=self._actor_member_id(),
                     created_at=new_revision.created_at or now,
                 )
 
@@ -263,16 +290,43 @@ class KnowledgeRepository(IKnowledgeRepository):
                         ),
                     ) from exc
 
-                orm_item.content = new_revision.content
-                orm_item.current_revision_id = orm_rev.id
-                orm_item.updated_at = now
-                if title is not None:
-                    orm_item.title = title
-                if is_global is not None:
-                    orm_item.is_global = is_global
-
+                values = {
+                    "content": new_revision.content,
+                    "current_revision_id": orm_rev.id,
+                    "updated_at": now,
+                    "revision": ORMKnowledgeItem.revision + 1,
+                    "title": title if title is not None else orm_item.title,
+                    "tags": list(tags if tags is not None else new_revision.tags or orm_item.tags),
+                    "is_global": is_global if is_global is not None else orm_item.is_global,
+                }
+                changed = await session.execute(
+                    update(ORMKnowledgeItem)
+                    .where(
+                        ORMKnowledgeItem.id == item_id,
+                        ORMKnowledgeItem.current_revision_id == current_rev.id,
+                        ORMKnowledgeItem.is_deleted.is_(False),
+                    )
+                    .values(**values)
+                    .returning(ORMKnowledgeItem.id)
+                    .execution_options(synchronize_session=False)
+                )
+                if changed.scalar_one_or_none() is None:
+                    raise ConcurrencyConflictException(
+                        message_or_item_id=str(item_id),
+                        expected_version=expected_version,
+                        actual_version=new_version,
+                    )
+                session.add(
+                    ProvenanceLinkModel(
+                        space_id=orm_item.workspace_id,
+                        knowledge_revision_id=orm_rev.id,
+                        source_type=self._provenance_type(new_revision.provenance_type),
+                        actor_member_id=self._actor_member_id(),
+                        source_metadata=dict(new_revision.provenance_metadata),
+                    )
+                )
                 await session.flush()
-
+                await session.refresh(orm_item)
                 await session.refresh(orm_item, attribute_names=["updated_at"])
                 return self._to_domain_item(orm_item, orm_rev)
 
@@ -312,10 +366,56 @@ class KnowledgeRepository(IKnowledgeRepository):
                             actual_version=current_version,
                         )
 
-                orm_item.is_deleted = True
-                orm_item.updated_at = utc_now()
-                await session.flush()
+                now = utc_now()
+                current_revision_id = current_rev.id if current_rev is not None else None
+                deleted = await session.execute(
+                    update(ORMKnowledgeItem)
+                    .where(
+                        ORMKnowledgeItem.id == item_id,
+                        ORMKnowledgeItem.current_revision_id == current_revision_id,
+                        ORMKnowledgeItem.is_deleted.is_(False),
+                    )
+                    .values(
+                        is_deleted=True,
+                        archived_at=now,
+                        revision=ORMKnowledgeItem.revision + 1,
+                        updated_at=now,
+                    )
+                    .returning(ORMKnowledgeItem.id)
+                    .execution_options(synchronize_session=False)
+                )
+                if deleted.scalar_one_or_none() is None:
+                    if expected_version is None:
+                        return False
+                    raise ConcurrencyConflictException(
+                        message_or_item_id=str(item_id),
+                        expected_version=expected_version,
+                        actual_version=current_version,
+                    )
+                if current_revision_id is not None:
+                    await session.execute(
+                        update(RetrievalUnitModel)
+                        .where(
+                            RetrievalUnitModel.knowledge_revision_id == current_revision_id,
+                            RetrievalUnitModel.active.is_(True),
+                        )
+                        .values(active=False, deactivated_at=now)
+                    )
                 return True
+
+    @staticmethod
+    def _actor_member_id() -> UUID | None:
+        principal = get_bound_principal()
+        if principal is None:
+            return None
+        try:
+            return UUID(principal.subject_id)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _provenance_type(value: str) -> str:
+        return value if value in {"manual", "ai_action"} else "manual"
 
     async def list_revisions(self, item_id: UUID) -> List[DomainKnowledgeRevision]:
 
