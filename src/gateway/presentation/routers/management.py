@@ -71,6 +71,14 @@ class MemberCreateRequest(BaseModel):
     display_name: str = Field(min_length=1, max_length=255)
 
 
+class MemberUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str = Field(min_length=1, max_length=255)
+    status: MemberStatus
+    system_role: SystemRole
+
+
 class KnowledgeCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1036,6 +1044,93 @@ async def create_member(
             "temporary_password_expires_at": created.expires_at.isoformat(),
             "requires_password_change": True,
         },
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.patch("/members/{member_id}")
+async def update_member(
+    member_id: UUID,
+    payload: MemberUpdateRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("members:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    reservation = await _reserve(
+        session,
+        principal,
+        "member.update",
+        idempotency_key,
+        {"member_id": str(member_id), **payload.model_dump(mode="json")},
+    )
+    if reservation.status is not ReservationStatus.REPLAY:
+        try:
+            await MemberAdministrationService(session, PasswordService()).update(
+                principal,
+                family_id=await _family_id(session, principal),
+                member_id=member_id,
+                display_name=payload.display_name,
+                status=payload.status,
+                system_role=payload.system_role,
+                request_id=get_request_id(request),
+            )
+        except ValueError as exc:
+            raise ValidationException(str(exc)) from exc
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=200,
+            resource_ids=[str(member_id)],
+        )
+    member = await session.get(MemberModel, member_id)
+    if member is None:
+        raise AuthorizationException()
+    return {
+        "id": str(member.id),
+        "username": member.username,
+        "display_name": member.display_name,
+        "status": member.status,
+        "system_role": member.system_role,
+        "requires_password_change": member.force_password_change,
+    }
+
+
+@router.post("/members/{member_id}/password-reset")
+async def reset_member_password(
+    member_id: UUID,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("members:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> JSONResponse:
+    reservation = await _reserve(
+        session,
+        principal,
+        "member.password_reset",
+        idempotency_key,
+        {"member_id": str(member_id)},
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        raise ResourceConflictException("The temporary password was already revealed and cannot be replayed.")
+    reset = await MemberAdministrationService(session, PasswordService()).reset_password(
+        principal,
+        family_id=await _family_id(session, principal),
+        member_id=member_id,
+        request_id=get_request_id(request),
+    )
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=200,
+        resource_ids=[str(member_id)],
+    )
+    response = JSONResponse(
+        content={
+            "id": str(reset.member_id),
+            "temporary_password": reset.temporary_password.reveal(),
+            "temporary_password_expires_at": reset.expires_at.isoformat(),
+            "requires_password_change": True,
+        }
     )
     response.headers["Cache-Control"] = "no-store"
     return response

@@ -118,6 +118,13 @@ type CreatedMember = {
   username: string;
 };
 
+type ResetMemberPassword = {
+  id: string;
+  requires_password_change: boolean;
+  temporary_password: string;
+  temporary_password_expires_at: string;
+};
+
 type APIKeySummary = {
   created_at: string;
   id: string;
@@ -923,6 +930,9 @@ export function PeopleConsole() {
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [created, setCreated] = useState<CreatedMember | null>(null);
+  const [selectedMember, setSelectedMember] = useState<MemberSummary | null>(null);
+  const [pendingMemberAction, setPendingMemberAction] = useState<"disable" | "enable" | "reset" | null>(null);
+  const [resetPassword, setResetPassword] = useState<ResetMemberPassword | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -984,6 +994,54 @@ export function PeopleConsole() {
     }
   };
 
+  const updateSelectedMember = async (status = selectedMember?.status) => {
+    if (!selectedMember || !status || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await apiRequest<MemberSummary>(`/api/v1/members/${selectedMember.id}`, {
+        body: {
+          display_name: selectedMember.display_name,
+          status,
+          system_role: selectedMember.system_role,
+        },
+        idempotent: true,
+        method: "PATCH",
+      });
+      setSelectedMember(response);
+      setPendingMemberAction(null);
+      await loadMembers();
+    } catch (updateError) {
+      setError(message(updateError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetSelectedMemberPassword = async () => {
+    if (!selectedMember || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await apiRequest<ResetMemberPassword>(`/api/v1/members/${selectedMember.id}/password-reset`, {
+        idempotent: true,
+        method: "POST",
+      });
+      setResetPassword(response);
+      setPendingMemberAction(null);
+      setSelectedMember({ ...selectedMember, requires_password_change: true });
+      await loadMembers();
+    } catch (resetError) {
+      setError(message(resetError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <ConsoleShell
       description="Super admins create family accounts. Space owners grant access separately so identity and knowledge boundaries stay explicit."
@@ -1005,9 +1063,28 @@ export function PeopleConsole() {
                   <span className="profile-avatar">{person.display_name.slice(0, 2).toUpperCase()}</span>
                   <div className="row-copy"><h3>{person.display_name}</h3><p>@{person.username}</p></div>
                   <div className="member-state"><span className={`status-pill status-${person.status}`}>{person.status}</span>{person.requires_password_change ? <small>First sign-in pending</small> : null}</div>
+                  <button aria-label={`Manage ${person.display_name}`} className="row-action-button" onClick={() => { setSelectedMember(person); setPendingMemberAction(null); setResetPassword(null); }} type="button"><Settings2 size={14} /> Manage</button>
                 </article>
               ))}
             </div>
+            {selectedMember ? (
+              <section aria-label={`Manage ${selectedMember.display_name}`} className="member-admin-panel">
+                <div className="space-access-heading"><div><span>Account controls</span><h2>{selectedMember.display_name}</h2></div><button aria-label="Close member manager" className="icon-button" onClick={() => setSelectedMember(null)} type="button"><X size={16} /></button></div>
+                <div className="member-admin-form">
+                  <div><label htmlFor="member-admin-display-name">Display name</label><input id="member-admin-display-name" maxLength={255} onChange={(event) => setSelectedMember({ ...selectedMember, display_name: event.target.value })} value={selectedMember.display_name} /></div>
+                  <div><label htmlFor="member-admin-system-role">System role</label><select id="member-admin-system-role" onChange={(event) => setSelectedMember({ ...selectedMember, system_role: event.target.value })} value={selectedMember.system_role}><option value="member">Member</option><option value="super_admin">Super admin</option></select></div>
+                  <button className="secondary-button" disabled={saving} onClick={() => void updateSelectedMember()} type="button"><Save size={14} /> Save account</button>
+                </div>
+                <div className="member-security-actions">
+                  <button className="secondary-button" disabled={saving} onClick={() => { setResetPassword(null); setPendingMemberAction("reset"); }} type="button"><KeyRound size={14} /> Reset {selectedMember.display_name} password</button>
+                  {selectedMember.status === "disabled" ? <button className="secondary-button" disabled={saving} onClick={() => setPendingMemberAction("enable")} type="button">Enable {selectedMember.display_name}</button> : <button className="archive-button compact" disabled={saving} onClick={() => setPendingMemberAction("disable")} type="button">Disable {selectedMember.display_name}</button>}
+                </div>
+                {pendingMemberAction === "reset" ? <div aria-label={`Reset ${selectedMember.display_name} password`} className="confirmation-strip" role="alertdialog"><div><strong>Reset this password?</strong><span>This signs out every session, revokes active API keys, and creates a one-time password.</span></div><button className="secondary-button" onClick={() => setPendingMemberAction(null)} type="button">Keep password</button><button className="danger-button" disabled={saving} onClick={() => void resetSelectedMemberPassword()} type="button">Confirm password reset</button></div> : null}
+                {pendingMemberAction === "disable" ? <div aria-label={`Disable ${selectedMember.display_name}`} className="confirmation-strip" role="alertdialog"><div><strong>Disable this member?</strong><span>This immediately revokes sessions and API keys. Space history remains preserved.</span></div><button className="secondary-button" onClick={() => setPendingMemberAction(null)} type="button">Keep active</button><button className="danger-button" disabled={saving} onClick={() => void updateSelectedMember("disabled")} type="button">Confirm disable member</button></div> : null}
+                {pendingMemberAction === "enable" ? <div aria-label={`Enable ${selectedMember.display_name}`} className="confirmation-strip" role="alertdialog"><div><strong>Enable this member?</strong><span>The member can authenticate again, but revoked sessions and keys remain revoked.</span></div><button className="secondary-button" onClick={() => setPendingMemberAction(null)} type="button">Keep disabled</button><button className="primary-button" disabled={saving} onClick={() => void updateSelectedMember("active")} type="button">Confirm enable member</button></div> : null}
+                {resetPassword ? <div className="member-reset-secret"><p>This temporary password is shown only once.</p><div className="secret-value"><code>{resetPassword.temporary_password}</code><button aria-label="Copy reset password" onClick={() => navigator.clipboard?.writeText(resetPassword.temporary_password)} type="button"><Copy size={16} /></button></div></div> : null}
+              </section>
+            ) : null}
           </section>
           <aside className="console-panel action-panel member-create-panel">
             {created ? (

@@ -300,6 +300,44 @@ describe("management console", () => {
     expect(screen.getByText(/shown only once/i)).toBeInTheDocument();
   });
 
+  it("resets and disables a member only after explicit confirmation", async () => {
+    currentMember.system_role = "super_admin";
+    let disabled = false;
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Family Shared", role: "owner", revision: 1 }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/members?limit=100") {
+        return { items: [{ id: "member-1", username: "nana", display_name: "Nana", status: disabled ? "disabled" : "active", system_role: "member", requires_password_change: false }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/members/member-1/password-reset" && options?.method === "POST") {
+        return { id: "member-1", temporary_password: "Reset-Only-Once!42", temporary_password_expires_at: "2026-08-21T12:00:00Z", requires_password_change: true } as never;
+      }
+      if (path === "/api/v1/members/member-1" && options?.method === "PATCH") {
+        disabled = true;
+        return { id: "member-1", username: "nana", display_name: "Nana", status: "disabled", system_role: "member", requires_password_change: true } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<PeopleConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Manage Nana" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset Nana password" }));
+    expect(screen.getByText(/signs out every session/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm password reset" }));
+    expect(await screen.findByText("Reset-Only-Once!42")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Disable Nana" }));
+    expect(screen.getByText(/immediately revokes sessions and api keys/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm disable member" }));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/members/member-1", {
+      body: { display_name: "Nana", status: "disabled", system_role: "member" },
+      idempotent: true,
+      method: "PATCH",
+    }));
+    expect(await screen.findByText("disabled")).toBeInTheDocument();
+  });
+
   it("creates an individually scoped API key and reveals the secret once", async () => {
     let created = false;
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {

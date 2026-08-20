@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import secrets
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +16,7 @@ from src.gateway.domain.authorization import Action, AuthorizationContext, is_al
 from src.gateway.domain.exceptions import AuthorizationException, ResourceConflictException
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SpaceRole, SystemRole, normalize_username
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
-from src.gateway.infrastructure.persistence.identity_models import MemberModel, PasswordCredentialModel, SessionFamilyModel, SpaceMembershipModel
+from src.gateway.infrastructure.persistence.identity_models import MFAFactorModel, MemberModel, PasswordCredentialModel, PersonalAPIKeyModel, SessionCredentialModel, SessionFamilyModel, SpaceMembershipModel
 from src.gateway.infrastructure.persistence.models import Workspace
 
 
@@ -25,6 +25,13 @@ class CreatedMember:
     member_id: UUID
     username: str
     display_name: str
+    temporary_password: SecretValue
+    expires_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ResetPassword:
+    member_id: UUID
     temporary_password: SecretValue
     expires_at: datetime
 
@@ -129,6 +136,171 @@ class MemberAdministrationService:
             clean_display_name,
             temporary_password,
             expires_at,
+        )
+
+    async def update(
+        self,
+        actor: Principal,
+        *,
+        family_id: UUID,
+        member_id: UUID,
+        display_name: str,
+        status: MemberStatus,
+        system_role: SystemRole,
+        request_id: str,
+        now: datetime | None = None,
+    ) -> None:
+        current_time = now or datetime.now(timezone.utc)
+        actor_id = await self._require_recent_super_admin(actor, family_id, current_time)
+        member = await self._session.scalar(
+            select(MemberModel).where(MemberModel.id == member_id).with_for_update()
+        )
+        if member is None:
+            raise AuthorizationException()
+        clean_display_name = display_name.strip()
+        if not clean_display_name or len(clean_display_name) > 255:
+            raise ValueError("Invalid member identity")
+        active_admins = list(
+            await self._session.scalars(
+                select(MemberModel.id)
+                .where(
+                    MemberModel.status == MemberStatus.ACTIVE.value,
+                    MemberModel.system_role == SystemRole.SUPER_ADMIN.value,
+                )
+                .with_for_update()
+            )
+        )
+        removes_active_admin = (
+            member.status == MemberStatus.ACTIVE.value
+            and member.system_role == SystemRole.SUPER_ADMIN.value
+            and (status is not MemberStatus.ACTIVE or system_role is not SystemRole.SUPER_ADMIN)
+        )
+        if removes_active_admin and len(active_admins) <= 1:
+            raise ResourceConflictException("At least one active super admin is required.")
+        if system_role is SystemRole.SUPER_ADMIN and member.system_role != SystemRole.SUPER_ADMIN.value:
+            confirmed_mfa = await self._session.scalar(
+                select(MFAFactorModel.id).where(
+                    MFAFactorModel.member_id == member_id,
+                    MFAFactorModel.confirmed_at.is_not(None),
+                    MFAFactorModel.retired_at.is_(None),
+                )
+            )
+            if confirmed_mfa is None:
+                raise ResourceConflictException("Confirmed MFA is required before Super Admin promotion.")
+        previous_status = member.status
+        previous_role = member.system_role
+        member.display_name = clean_display_name
+        member.status = status.value
+        member.system_role = system_role.value
+        member.updated_at = current_time
+        if status is MemberStatus.DISABLED:
+            member.disabled_at = member.disabled_at or current_time
+            await self._revoke_member_credentials(member_id, current_time)
+        else:
+            member.disabled_at = None
+        self._audit.record(
+            actor_member_id=actor_id,
+            actor_kind=actor.kind.value,
+            request_id=request_id,
+            action="member.updated",
+            resource_type="member",
+            resource_id=str(member_id),
+            details={
+                "previous_status": previous_status,
+                "status": status.value,
+                "previous_system_role": previous_role,
+                "system_role": system_role.value,
+            },
+        )
+        await self._session.flush()
+
+    async def reset_password(
+        self,
+        actor: Principal,
+        *,
+        family_id: UUID,
+        member_id: UUID,
+        request_id: str,
+        now: datetime | None = None,
+    ) -> ResetPassword:
+        current_time = now or datetime.now(timezone.utc)
+        actor_id = await self._require_recent_super_admin(actor, family_id, current_time)
+        member = await self._session.scalar(
+            select(MemberModel).where(MemberModel.id == member_id).with_for_update()
+        )
+        if member is None:
+            raise AuthorizationException()
+        current_credential = await self._session.scalar(
+            select(PasswordCredentialModel)
+            .where(
+                PasswordCredentialModel.member_id == member_id,
+                PasswordCredentialModel.retired_at.is_(None),
+            )
+            .with_for_update()
+        )
+        if current_credential is not None:
+            current_credential.retired_at = current_time
+        temporary_password = SecretValue(secrets.token_urlsafe(24))
+        expires_at = current_time + timedelta(hours=24)
+        self._session.add(
+            PasswordCredentialModel(
+                id=uuid4(),
+                member_id=member_id,
+                password_hash=self._passwords.hash(
+                    temporary_password.reveal(),
+                    username=member.username,
+                ),
+                temporary=True,
+                expires_at=expires_at,
+            )
+        )
+        member.force_password_change = True
+        member.updated_at = current_time
+        await self._revoke_member_credentials(member_id, current_time)
+        self._audit.record(
+            actor_member_id=actor_id,
+            actor_kind=actor.kind.value,
+            request_id=request_id,
+            action="member.password_reset",
+            resource_type="member",
+            resource_id=str(member_id),
+            details={"temporary_expires_at": expires_at.isoformat()},
+        )
+        await self._session.flush()
+        return ResetPassword(member_id, temporary_password, expires_at)
+
+    async def _revoke_member_credentials(self, member_id: UUID, current_time: datetime) -> None:
+        family_ids = list(
+            await self._session.scalars(
+                select(SessionFamilyModel.id)
+                .where(
+                    SessionFamilyModel.member_id == member_id,
+                    SessionFamilyModel.revoked_at.is_(None),
+                )
+                .with_for_update()
+            )
+        )
+        if family_ids:
+            await self._session.execute(
+                update(SessionFamilyModel)
+                .where(SessionFamilyModel.id.in_(family_ids))
+                .values(revoked_at=current_time, revoke_reason="member_admin")
+            )
+            await self._session.execute(
+                update(SessionCredentialModel)
+                .where(
+                    SessionCredentialModel.family_id.in_(family_ids),
+                    SessionCredentialModel.revoked_at.is_(None),
+                )
+                .values(revoked_at=current_time)
+            )
+        await self._session.execute(
+            update(PersonalAPIKeyModel)
+            .where(
+                PersonalAPIKeyModel.member_id == member_id,
+                PersonalAPIKeyModel.status == "active",
+            )
+            .values(status="revoked", revoked_at=current_time)
         )
 
     async def _require_recent_super_admin(

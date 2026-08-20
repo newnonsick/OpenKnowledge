@@ -299,6 +299,34 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 assert member_list.status_code == 200
                 assert "temporary_password" not in str(member_list.json())
                 assert any(item["username"] == "new-member" for item in member_list.json()["items"])
+                created_member_id = created_member.json()["id"]
+                reset_member = await admin_client.post(
+                    f"/api/v1/members/{created_member_id}/password-reset",
+                    headers={
+                        "Origin": "https://gateway.test",
+                        "X-CSRF-Token": admin_session.csrf_token.reveal(),
+                        "Idempotency-Key": "reset-new-member",
+                    },
+                )
+                assert reset_member.status_code == 200
+                reset_password = reset_member.json()["temporary_password"]
+                assert reset_password and reset_password != temporary_password
+                assert reset_member.headers["Cache-Control"] == "no-store"
+                disabled_member = await admin_client.patch(
+                    f"/api/v1/members/{created_member_id}",
+                    headers={
+                        "Origin": "https://gateway.test",
+                        "X-CSRF-Token": admin_session.csrf_token.reveal(),
+                        "Idempotency-Key": "disable-new-member",
+                    },
+                    json={
+                        "display_name": "New Member",
+                        "status": "disabled",
+                        "system_role": "member",
+                    },
+                )
+                assert disabled_member.status_code == 200
+                assert disabled_member.json()["status"] == "disabled"
 
                 current_settings = await admin_client.get("/api/v1/settings")
                 assert current_settings.status_code == 200
@@ -348,4 +376,5 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
             )
             assert credential is not None
             assert temporary_password not in credential.password_hash
+            assert reset_password not in credential.password_hash
             assert OpaqueTokenCodec().digest(raw_key) != credential.password_hash
