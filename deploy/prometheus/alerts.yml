@@ -1,6 +1,19 @@
 groups:
   - name: kinbase
     rules:
+      - alert: GatewayUpstreamCircuitOpened
+        expr: increase(gateway_upstream_resilience_events_total{event="circuit_opened"}[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: An upstream provider circuit opened
+      - alert: GatewayUpstreamBulkheadSaturated
+        expr: increase(gateway_upstream_resilience_events_total{event="bulkhead_rejected"}[5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Upstream concurrency capacity is saturated
       - alert: GatewayUnavailable
         expr: up{job="kinbase-gateway"} == 0
         for: 2m

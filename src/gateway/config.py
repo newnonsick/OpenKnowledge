@@ -59,6 +59,24 @@ class LLMSettings(BaseSettings):
         validation_alias=AliasChoices("LLM_TIMEOUT_SECONDS", "llm_timeout_seconds", "timeout_seconds"),
         description="HTTP timeout for LLM inference in seconds",
     )
+    retry_attempts: int = Field(
+        default=3, ge=1, le=5, validation_alias=AliasChoices("LLM_RETRY_ATTEMPTS", "retry_attempts")
+    )
+    retry_backoff_seconds: float = Field(
+        default=0.2, ge=0.0, le=10.0, validation_alias=AliasChoices("LLM_RETRY_BACKOFF_SECONDS", "retry_backoff_seconds")
+    )
+    max_concurrency: int = Field(
+        default=20, ge=1, le=500, validation_alias=AliasChoices("LLM_MAX_CONCURRENCY", "max_concurrency")
+    )
+    bulkhead_timeout_seconds: float = Field(
+        default=1.0, gt=0.0, le=30.0, validation_alias=AliasChoices("LLM_BULKHEAD_TIMEOUT_SECONDS", "bulkhead_timeout_seconds")
+    )
+    circuit_failure_threshold: int = Field(
+        default=5, ge=1, le=100, validation_alias=AliasChoices("LLM_CIRCUIT_FAILURE_THRESHOLD", "circuit_failure_threshold")
+    )
+    circuit_recovery_seconds: float = Field(
+        default=30.0, gt=0.0, le=600.0, validation_alias=AliasChoices("LLM_CIRCUIT_RECOVERY_SECONDS", "circuit_recovery_seconds")
+    )
     temperature: float = Field(
         default=0.7,
         ge=0.0,
@@ -109,6 +127,24 @@ class EmbeddingSettings(BaseSettings):
         gt=0.0,
         validation_alias=AliasChoices("EMBEDDING_TIMEOUT_SECONDS", "embedding_timeout_seconds", "timeout_seconds"),
         description="HTTP timeout for embedding generation in seconds",
+    )
+    retry_attempts: int = Field(
+        default=3, ge=1, le=5, validation_alias=AliasChoices("EMBEDDING_RETRY_ATTEMPTS", "retry_attempts")
+    )
+    retry_backoff_seconds: float = Field(
+        default=0.2, ge=0.0, le=10.0, validation_alias=AliasChoices("EMBEDDING_RETRY_BACKOFF_SECONDS", "retry_backoff_seconds")
+    )
+    max_concurrency: int = Field(
+        default=20, ge=1, le=500, validation_alias=AliasChoices("EMBEDDING_MAX_CONCURRENCY", "max_concurrency")
+    )
+    bulkhead_timeout_seconds: float = Field(
+        default=1.0, gt=0.0, le=30.0, validation_alias=AliasChoices("EMBEDDING_BULKHEAD_TIMEOUT_SECONDS", "bulkhead_timeout_seconds")
+    )
+    circuit_failure_threshold: int = Field(
+        default=5, ge=1, le=100, validation_alias=AliasChoices("EMBEDDING_CIRCUIT_FAILURE_THRESHOLD", "circuit_failure_threshold")
+    )
+    circuit_recovery_seconds: float = Field(
+        default=30.0, gt=0.0, le=600.0, validation_alias=AliasChoices("EMBEDDING_CIRCUIT_RECOVERY_SECONDS", "circuit_recovery_seconds")
     )
 
 class DatabaseSettings(BaseSettings):

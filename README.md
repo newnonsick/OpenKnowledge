@@ -188,6 +188,12 @@ cp .env.example .env
 | `LLM_API_KEY` | `EMPTY` | Backend API key |
 | `CONTEXT_WINDOW` | `8192` | Context window reported by the model registry |
 | `LLM_TIMEOUT_SECONDS` | `120.0` | HTTP timeout for inference |
+| `LLM_RETRY_ATTEMPTS` | `3` | Maximum attempts for transient connection, 408, 429, and 5xx failures |
+| `LLM_RETRY_BACKOFF_SECONDS` | `0.2` | Initial bounded exponential retry delay |
+| `LLM_MAX_CONCURRENCY` | `20` | Process-wide concurrent LLM request limit |
+| `LLM_BULKHEAD_TIMEOUT_SECONDS` | `1.0` | Maximum wait for LLM concurrency capacity |
+| `LLM_CIRCUIT_FAILURE_THRESHOLD` | `5` | Consecutive failed operations before opening the circuit |
+| `LLM_CIRCUIT_RECOVERY_SECONDS` | `30.0` | Open-circuit interval before one recovery probe |
 | `LLM_TEMPERATURE` | `0.7` | Default sampling temperature |
 | `LLM_MAX_TOKENS` | unset | Default completion token limit |
 
@@ -201,6 +207,12 @@ cp .env.example .env
 | `EMBEDDING_DIMENSION` | `1024` | Vector dimension, must match the schema |
 | `EMBEDDING_BATCH_SIZE` | `32` | Batch size for embedding requests |
 | `EMBEDDING_TIMEOUT_SECONDS` | `30.0` | HTTP timeout for embedding calls |
+| `EMBEDDING_RETRY_ATTEMPTS` | `3` | Maximum attempts for transient connection, 408, 429, and 5xx failures |
+| `EMBEDDING_RETRY_BACKOFF_SECONDS` | `0.2` | Initial bounded exponential retry delay |
+| `EMBEDDING_MAX_CONCURRENCY` | `20` | Process-wide concurrent embedding request limit |
+| `EMBEDDING_BULKHEAD_TIMEOUT_SECONDS` | `1.0` | Maximum wait for embedding concurrency capacity |
+| `EMBEDDING_CIRCUIT_FAILURE_THRESHOLD` | `5` | Consecutive failed operations before opening the circuit |
+| `EMBEDDING_CIRCUIT_RECOVERY_SECONDS` | `30.0` | Open-circuit interval before one recovery probe |
 
 The current schema is `vector(1024)`. `EMBEDDING_DIMENSION` must remain `1024` until a reviewed embedding-generation migration introduces another dimension; readiness fails closed when runtime configuration and schema differ.
 

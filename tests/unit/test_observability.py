@@ -127,3 +127,4 @@ async def test_upstream_calls_carry_correlation_and_emit_dependency_metrics() ->
     assert 'gateway_embedding_events_total{event="batch",outcome="success"} 1' in rendered
     assert 'gateway_dependency_duration_seconds_count{dependency="embedding",operation="batch",outcome="success"} 1' in rendered
     assert 'gateway_embedding_batch_size_count{operation="batch",outcome="success"} 1' in rendered
+    assert 'gateway_upstream_resilience_events_total{dependency="embedding",event="success"} 1' in rendered

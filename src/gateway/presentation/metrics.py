@@ -18,6 +18,7 @@ _COUNTER_LABELS = {
     "gateway_llm_events_total": ("event", "outcome"),
     "gateway_retrieval_events_total": ("event", "outcome"),
     "gateway_tool_events_total": ("event", "outcome"),
+    "gateway_upstream_resilience_events_total": ("dependency", "event"),
 }
 
 _OBSERVATION_LABELS = {

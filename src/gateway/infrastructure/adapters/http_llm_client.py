@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import logging
 from time import perf_counter
@@ -18,6 +19,13 @@ from src.gateway.domain.canonical import (
     CanonicalUsage,
 )
 from src.gateway.domain.exceptions import LLMProviderException
+from src.gateway.infrastructure.adapters.upstream_resilience import (
+    BulkheadRejectedError,
+    CircuitOpenError,
+    ResiliencePolicy,
+    RetryableStatusError,
+    shared_upstream_resilience,
+)
 from src.gateway.domain.tools import FunctionCall, ToolCall
 from src.gateway.observability import current_trace_headers, increment_metric, observe_metric
 
@@ -85,6 +93,7 @@ class HttpLLMClient(ILLMClient):
         default_model: Optional[str] = None,
         timeout_seconds: Optional[float] = None,
         client: Optional[httpx.AsyncClient] = None,
+        resilience_policy: ResiliencePolicy | None = None,
     ):
 
         current_settings = get_settings()
@@ -109,6 +118,17 @@ class HttpLLMClient(ILLMClient):
             else current_settings.llm.timeout_seconds
         )
         self._client = client
+        llm_cfg = current_settings.llm
+        self._resilience_policy = resilience_policy or ResiliencePolicy(
+            max_attempts=llm_cfg.retry_attempts,
+            base_backoff_seconds=llm_cfg.retry_backoff_seconds,
+            max_backoff_seconds=max(llm_cfg.retry_backoff_seconds, llm_cfg.retry_backoff_seconds * 4),
+            max_concurrency=llm_cfg.max_concurrency,
+            bulkhead_timeout_seconds=llm_cfg.bulkhead_timeout_seconds,
+            circuit_failure_threshold=llm_cfg.circuit_failure_threshold,
+            circuit_recovery_seconds=llm_cfg.circuit_recovery_seconds,
+            total_timeout_seconds=self.timeout_seconds,
+        )
 
     def _get_headers(self) -> Dict[str, str]:
         headers: Dict[str, str] = {
@@ -124,6 +144,63 @@ class HttpLLMClient(ILLMClient):
         if self._client is not None:
             return self._client
         return await self.get_shared_client(self.timeout_seconds)
+
+    @asynccontextmanager
+    async def _resilient_stream(
+        self,
+        client: httpx.AsyncClient,
+        payload: Dict[str, Any],
+        headers: Dict[str, str],
+        timeout: httpx.Timeout,
+    ) -> AsyncIterator[httpx.Response]:
+        guard = shared_upstream_resilience("llm", self._resilience_policy)
+        response: httpx.Response | None = None
+        async with asyncio.timeout(self.timeout_seconds):
+            async with guard.lease() as lease:
+                for attempt in range(self._resilience_policy.max_attempts):
+                    try:
+                        request = client.build_request(
+                            "POST",
+                            self.endpoint,
+                            json=payload,
+                            headers=headers,
+                            timeout=timeout,
+                        )
+                        response = await client.send(request, stream=True)
+                        if response.status_code in {408, 429} or response.status_code >= 500:
+                            status_code = response.status_code
+                            await response.aclose()
+                            response = None
+                            raise RetryableStatusError(status_code)
+                        break
+                    except (httpx.RequestError, RetryableStatusError):
+                        if attempt + 1 >= self._resilience_policy.max_attempts:
+                            await lease.failure()
+                            raise
+                        increment_metric("gateway_upstream_resilience_events_total", dependency="llm", event="retry")
+                        await asyncio.sleep(
+                            min(
+                                self._resilience_policy.base_backoff_seconds * (2**attempt),
+                                self._resilience_policy.max_backoff_seconds,
+                            )
+                        )
+                if response is None:
+                    await lease.failure()
+                    raise RuntimeError("LLM stream did not open")
+                if 400 <= response.status_code < 500:
+                    await lease.success()
+                try:
+                    yield response
+                except (httpx.RequestError, TimeoutError):
+                    await lease.failure()
+                    raise
+                except Exception:
+                    await lease.neutral()
+                    raise
+                else:
+                    await lease.success()
+                finally:
+                    await response.aclose()
 
     async def generate(
         self,
@@ -178,11 +255,20 @@ class HttpLLMClient(ILLMClient):
         started = perf_counter()
         outcome = "success"
         try:
-            resp = await client.post(
-                self.endpoint,
-                json=payload,
-                headers=headers,
-                timeout=req_timeout,
+            async def send() -> httpx.Response:
+                response = await client.post(
+                    self.endpoint,
+                    json=payload,
+                    headers=headers,
+                    timeout=req_timeout,
+                )
+                if response.status_code in {408, 429} or response.status_code >= 500:
+                    raise RetryableStatusError(response.status_code)
+                return response
+
+            resp = await shared_upstream_resilience("llm", self._resilience_policy).call(
+                send,
+                retry_if=lambda exc: isinstance(exc, (httpx.RequestError, RetryableStatusError)),
             )
 
             if 400 <= resp.status_code < 500:
@@ -194,16 +280,6 @@ class HttpLLMClient(ILLMClient):
                     message="LLM provider rejected the request.",
                     details={"status_code": resp.status_code},
                 )
-            if resp.status_code >= 500:
-                logger.error(
-                    "LLM provider request failed",
-                    extra={"status_code": resp.status_code},
-                )
-                raise LLMProviderException(
-                    message="LLM provider request failed.",
-                    details={"status_code": resp.status_code},
-                )
-
             data = resp.json()
 
             choices = data.get("choices", [])
@@ -257,8 +333,14 @@ class HttpLLMClient(ILLMClient):
                 usage=usage,
             )
 
-        except httpx.RequestError as exc:
-            outcome = "timeout" if isinstance(exc, httpx.TimeoutException) else "error"
+        except RetryableStatusError as exc:
+            outcome = "error"
+            raise LLMProviderException(
+                message="LLM provider request failed.",
+                details={"status_code": exc.status_code},
+            ) from exc
+        except (httpx.RequestError, TimeoutError, BulkheadRejectedError, CircuitOpenError) as exc:
+            outcome = "timeout" if isinstance(exc, (TimeoutError, httpx.TimeoutException)) else "error"
             logger.error(
                 "LLM provider connection failed",
                 extra={"exception_class": type(exc).__name__},
@@ -331,26 +413,13 @@ class HttpLLMClient(ILLMClient):
         started = perf_counter()
         outcome = "success"
         try:
-            async with client.stream(
-                "POST",
-                self.endpoint,
-                json=payload,
-                headers=headers,
-                timeout=req_timeout,
-            ) as response:
+            async with self._resilient_stream(client, payload, headers, req_timeout) as response:
                 if 400 <= response.status_code < 500:
                     await response.aread()
                     raise LLMProviderException(
                         message="LLM provider rejected the streaming request.",
                         details={"status_code": response.status_code},
                     )
-                if response.status_code >= 500:
-                    await response.aread()
-                    raise LLMProviderException(
-                        message="LLM provider stream connection failed.",
-                        details={"status_code": response.status_code},
-                    )
-
                 async for line in response.aiter_lines():
                     line = line.strip()
                     if not line or line.startswith(":"):
@@ -424,8 +493,14 @@ class HttpLLMClient(ILLMClient):
                         usage=usage_obj,
                     )
 
-        except httpx.RequestError as exc:
-            outcome = "timeout" if isinstance(exc, httpx.TimeoutException) else "error"
+        except RetryableStatusError as exc:
+            outcome = "error"
+            raise LLMProviderException(
+                message="LLM provider stream connection failed.",
+                details={"status_code": exc.status_code},
+            ) from exc
+        except (httpx.RequestError, TimeoutError, BulkheadRejectedError, CircuitOpenError) as exc:
+            outcome = "timeout" if isinstance(exc, (TimeoutError, httpx.TimeoutException)) else "error"
             logger.error(
                 "LLM provider stream connection failed",
                 extra={"exception_class": type(exc).__name__},

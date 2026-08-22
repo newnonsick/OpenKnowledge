@@ -11,6 +11,13 @@ import httpx
 from src.gateway.application.ports.clients import IEmbeddingClient
 from src.gateway.config import get_settings
 from src.gateway.domain.exceptions import EmbeddingException
+from src.gateway.infrastructure.adapters.upstream_resilience import (
+    BulkheadRejectedError,
+    CircuitOpenError,
+    ResiliencePolicy,
+    RetryableStatusError,
+    shared_upstream_resilience,
+)
 from src.gateway.observability import current_trace_headers, increment_metric, observe_metric
 
 logger = logging.getLogger(__name__)
@@ -68,6 +75,7 @@ class HTTPEmbeddingClient(IEmbeddingClient):
         batch_size: Optional[int] = None,
         timeout_seconds: Optional[float] = None,
         http_client: Optional[httpx.AsyncClient] = None,
+        resilience_policy: ResiliencePolicy | None = None,
     ) -> None:
 
         emb_cfg = get_settings().embedding
@@ -78,6 +86,16 @@ class HTTPEmbeddingClient(IEmbeddingClient):
         self.batch_size = max(1, batch_size if batch_size is not None else (emb_cfg.batch_size or 32))
         self.timeout_seconds = timeout_seconds or emb_cfg.timeout_seconds
         self._client = http_client
+        self._resilience_policy = resilience_policy or ResiliencePolicy(
+            max_attempts=emb_cfg.retry_attempts,
+            base_backoff_seconds=emb_cfg.retry_backoff_seconds,
+            max_backoff_seconds=max(emb_cfg.retry_backoff_seconds, emb_cfg.retry_backoff_seconds * 4),
+            max_concurrency=emb_cfg.max_concurrency,
+            bulkhead_timeout_seconds=emb_cfg.bulkhead_timeout_seconds,
+            circuit_failure_threshold=emb_cfg.circuit_failure_threshold,
+            circuit_recovery_seconds=emb_cfg.circuit_recovery_seconds,
+            total_timeout_seconds=self.timeout_seconds,
+        )
 
     @property
     def dimension(self) -> int:
@@ -119,14 +137,29 @@ class HTTPEmbeddingClient(IEmbeddingClient):
                 "input": batch,
                 "model": self.model_id,
             }
-            try:
-                resp = await client.post(
+            async def send() -> httpx.Response:
+                response = await client.post(
                     endpoint,
                     json=payload,
                     headers=headers,
                     timeout=self.timeout_seconds,
                 )
-            except Exception as exc:
+                if response.status_code in {408, 429} or response.status_code >= 500:
+                    raise RetryableStatusError(response.status_code)
+                return response
+
+            guard = shared_upstream_resilience("embedding", self._resilience_policy)
+            try:
+                resp = await guard.call(
+                    send,
+                    retry_if=lambda exc: isinstance(exc, (httpx.RequestError, RetryableStatusError)),
+                )
+            except RetryableStatusError as exc:
+                raise EmbeddingException(
+                    message="Embedding provider request failed.",
+                    details={"status_code": exc.status_code},
+                ) from exc
+            except (httpx.RequestError, TimeoutError, BulkheadRejectedError, CircuitOpenError) as exc:
                 raise EmbeddingException(
                     message="Embedding provider connection failed.",
                     details={"error_type": type(exc).__name__},
@@ -137,12 +170,6 @@ class HTTPEmbeddingClient(IEmbeddingClient):
                     message="Embedding provider rejected the request.",
                     details={"status_code": resp.status_code},
                 )
-            if resp.status_code >= 500:
-                raise EmbeddingException(
-                    message="Embedding provider request failed.",
-                    details={"status_code": resp.status_code},
-                )
-
             data = resp.json()
 
             batch_vectors: List[List[float]] = []
