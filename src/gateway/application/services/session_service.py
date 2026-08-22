@@ -320,6 +320,46 @@ class SessionService:
             raise AuthenticationException("Invalid session.")
         family.last_activity_at = current_time
         family.idle_expires_at = min(current_time + self._policy.idle_lifetime, family.absolute_expires_at)
+        await self._session.execute(
+            update(SessionCredentialModel)
+            .where(
+                SessionCredentialModel.family_id == family.id,
+                SessionCredentialModel.credential_type == "refresh",
+                SessionCredentialModel.used_at.is_(None),
+                SessionCredentialModel.revoked_at.is_(None),
+            )
+            .values(expires_at=family.idle_expires_at)
+        )
+
+    async def record_step_up(
+        self,
+        family_id: UUID,
+        *,
+        request_id: str,
+        now: datetime | None = None,
+    ) -> datetime:
+        current_time = now or datetime.now(timezone.utc)
+        family = await self._session.scalar(
+            select(SessionFamilyModel).where(SessionFamilyModel.id == family_id).with_for_update()
+        )
+        if (
+            family is None
+            or family.revoked_at is not None
+            or current_time >= family.idle_expires_at
+            or current_time >= family.absolute_expires_at
+        ):
+            raise AuthenticationException("Invalid session.")
+        family.last_step_up_at = current_time
+        self._audit.record(
+            actor_member_id=family.member_id,
+            actor_kind="session",
+            request_id=request_id,
+            action="session.step_up_completed",
+            resource_type="session_family",
+            resource_id=str(family.id),
+        )
+        await self._session.flush()
+        return current_time + timedelta(minutes=10)
 
     async def revoke_family(
         self,

@@ -22,6 +22,9 @@ export class ApiError extends Error {
     this.status = status;
     this.code = payload.error?.code || "request_failed";
     this.requestId = payload.request_id;
+    if (this.code === "recent_authentication_required" && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("aigw-step-up-required"));
+    }
   }
 }
 
@@ -47,7 +50,9 @@ export type RefreshResponse = {
 };
 
 let refreshInFlight: Promise<RefreshResponse> | null = null;
+let meaningfulActivityAt = 0;
 const refreshCoordinationWindow = 30 * 1000;
+const meaningfulActivityWindow = 2 * 60 * 1000;
 const refreshRecordKey = "aigw-last-session-refresh";
 
 type SharedRefreshRecord = RefreshResponse & { completed_at: number };
@@ -64,6 +69,16 @@ function tracedHeaders(value?: HeadersInit): Headers {
     headers.set("traceparent", traceparent());
   }
   return headers;
+}
+
+export function noteMeaningfulActivity(): void {
+  meaningfulActivityAt = Date.now();
+}
+
+function markMeaningfulActivity(headers: Headers, path: string): void {
+  if (!path.startsWith("/api/v1/auth/") && Date.now() - meaningfulActivityAt <= meaningfulActivityWindow) {
+    headers.set("X-AIGW-Meaningful-Activity", "1");
+  }
 }
 
 function csrfToken(): string | null {
@@ -91,6 +106,7 @@ async function decodeResponse<T>(response: Response): Promise<T> {
 async function rawRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const method = options.method || "GET";
   const headers = tracedHeaders(options.headers);
+  markMeaningfulActivity(headers, path);
   if (options.body !== undefined) {
     headers.set("Content-Type", "application/json");
   }
@@ -222,6 +238,7 @@ export async function apiMultipart<T>(
 
 function prepareContractRequest(request: Request): Request {
   const headers = tracedHeaders(request.headers);
+  markMeaningfulActivity(headers, new URL(request.url).pathname);
   if (request.method !== "GET" && request.method !== "HEAD") {
     const token = csrfToken();
     if (token) {

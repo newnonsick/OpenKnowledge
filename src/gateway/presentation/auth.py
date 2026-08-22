@@ -224,6 +224,8 @@ class APIKeyAuthMiddleware:
                             session,
                             principal,
                         )
+                    if request.headers.get("X-AIGW-Meaningful-Activity") == "1":
+                        await self._record_cookie_activity(service, session, principal)
                     return principal
         if not self._legacy_api_keys_enabled:
             raise AuthenticationException("Invalid API key provided.")
@@ -313,6 +315,23 @@ class APIKeyAuthMiddleware:
             )
         ):
             raise CSRFException()
+
+    async def _record_cookie_activity(
+        self,
+        service: SessionService,
+        session,
+        principal: Principal,
+    ) -> None:
+        if principal.credential_id is None:
+            raise AuthenticationException("Invalid session.")
+        try:
+            credential_id = UUID(principal.credential_id)
+        except ValueError as exc:
+            raise AuthenticationException("Invalid session.") from exc
+        credential = await session.get(SessionCredentialModel, credential_id)
+        if credential is None:
+            raise AuthenticationException("Invalid session.")
+        await service.record_activity(credential.family_id, meaningful=True)
 
     @staticmethod
     def _bearer_token(auth_header: Optional[str]) -> Optional[str]:

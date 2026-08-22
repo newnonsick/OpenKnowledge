@@ -14,7 +14,7 @@ from src.gateway.application.services.bootstrap_service import BootstrapService
 from src.gateway.config import Settings
 from src.gateway.domain.identity import MemberStatus, SystemRole
 from src.gateway.infrastructure.database import set_session_factory
-from src.gateway.infrastructure.persistence.identity_models import MemberModel, PasswordCredentialModel, PersonalAPIKeyModel
+from src.gateway.infrastructure.persistence.identity_models import MemberModel, PasswordCredentialModel, PersonalAPIKeyModel, SessionCredentialModel, SessionFamilyModel
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
 from src.gateway.presentation.errors import register_exception_handlers
 from src.gateway.presentation.routers.management_auth import router
@@ -42,6 +42,7 @@ async def test_login_throttling_is_enforced_in_postgresql() -> None:
         app.add_middleware(APIKeyAuthMiddleware, allowed_keys=[], session_factory=factory)
         app.add_middleware(SettingsContextMiddleware)
         app.include_router(router)
+
         set_session_factory(factory)
         try:
             transport = httpx.ASGITransport(app=app, client=("198.51.100.27", 40000))
@@ -98,6 +99,11 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
         )
         app.add_middleware(SettingsContextMiddleware)
         app.include_router(router)
+
+        @app.get("/private-activity")
+        async def private_activity():
+            return {"status": "recorded"}
+
         set_session_factory(factory)
         try:
             transport = httpx.ASGITransport(app=app)
@@ -150,6 +156,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                 )
                 assert confirmation.status_code == 200
                 assert len(confirmation.json()["recovery_codes"]) == 10
+                recovery_codes = confirmation.json()["recovery_codes"]
                 initial_key = confirmation.json()["initial_api_key"]
                 assert initial_key["secret"].startswith("aigw_v1_")
                 assert initial_key["name"] == "First device"
@@ -160,6 +167,14 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                     stored_keys = list(await verification_session.scalars(select(PersonalAPIKeyModel)))
                     assert len(stored_keys) == 1
                     assert initial_key["secret"] not in stored_keys[0].key_digest
+
+                csrf = client.cookies.get("aigw-csrf")
+                stolen_session_enrollment = await client.post(
+                    "/api/v1/auth/mfa/totp/enroll",
+                    headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
+                    json={},
+                )
+                assert stolen_session_enrollment.status_code == 401
 
                 missing_totp = await client.post(
                     "/api/v1/auth/login",
@@ -183,6 +198,28 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                 assert authenticated_login.json()["requires_mfa_enrollment"] is False
                 assert "initial_api_key" not in authenticated_login.json()
 
+                async with factory.begin() as activity_session:
+                    active_credential = await activity_session.scalar(
+                        select(SessionCredentialModel)
+                        .where(
+                            SessionCredentialModel.credential_type == "access",
+                            SessionCredentialModel.revoked_at.is_(None),
+                        )
+                        .order_by(SessionCredentialModel.issued_at.desc())
+                    )
+                    active_family = await activity_session.get(SessionFamilyModel, active_credential.family_id)
+                    active_family.idle_expires_at = datetime.now(timezone.utc) + timedelta(days=1)
+                    activity_family_id = active_family.id
+
+                activity_response = await client.get(
+                    "/private-activity",
+                    headers={"X-AIGW-Meaningful-Activity": "1"},
+                )
+                assert activity_response.status_code == 200
+                async with factory() as activity_verification:
+                    active_family = await activity_verification.get(SessionFamilyModel, activity_family_id)
+                    assert active_family.idle_expires_at > datetime.now(timezone.utc) + timedelta(days=6)
+
                 old_refresh = client.cookies.get("__Secure-aigw-refresh")
                 csrf = client.cookies.get("aigw-csrf")
                 refreshed = await client.post(
@@ -193,6 +230,57 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                 assert refreshed.status_code == 200
                 assert client.cookies.get("__Secure-aigw-refresh") != old_refresh
                 assert client.cookies.get("aigw-csrf") != csrf
+
+                csrf = client.cookies.get("aigw-csrf")
+                stepped_up = await client.post(
+                    "/api/v1/auth/step-up",
+                    headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
+                    json={
+                        "password": "a permanent password long enough",
+                        "totp_code": pyotp.TOTP(secret).now(),
+                    },
+                )
+                assert stepped_up.status_code == 200
+                assert stepped_up.json()["status"] == "reauthenticated"
+
+            recovery_transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=recovery_transport,
+                base_url="https://gateway.test",
+            ) as recovery_client:
+                recovery_login = await recovery_client.post(
+                    "/api/v1/auth/login",
+                    json={
+                        "username": "admin",
+                        "password": "a permanent password long enough",
+                        "recovery_code": recovery_codes[0],
+                    },
+                )
+                assert recovery_login.status_code == 200
+
+            replay_transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=replay_transport,
+                base_url="https://gateway.test",
+            ) as replay_client:
+                replay = await replay_client.post(
+                    "/api/v1/auth/login",
+                    json={
+                        "username": "admin",
+                        "password": "a permanent password long enough",
+                        "recovery_code": recovery_codes[0],
+                    },
+                )
+                assert replay.status_code == 401
+
+            async with factory() as verification_session:
+                credential = await verification_session.scalar(
+                    select(SessionCredentialModel)
+                    .where(SessionCredentialModel.credential_type == "access")
+                    .order_by(SessionCredentialModel.issued_at.desc())
+                )
+                family = await verification_session.get(SessionFamilyModel, credential.family_id)
+                assert family.last_step_up_at is not None
         finally:
             set_session_factory(None)
 
@@ -270,6 +358,17 @@ async def test_member_receives_exactly_one_personal_api_key_after_first_password
                     "/api/v1/auth/password",
                     headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
                     json={
+                        "password": "a second permanent family secret",
+                        "confirmation": "a second permanent family secret",
+                    },
+                )
+                assert changed_again.status_code == 401
+
+                changed_again = await client.post(
+                    "/api/v1/auth/password",
+                    headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
+                    json={
+                        "current_password": "a permanent family password",
                         "password": "a second permanent family secret",
                         "confirmation": "a second permanent family secret",
                     },

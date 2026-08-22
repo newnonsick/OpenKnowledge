@@ -30,6 +30,7 @@ ManagementErrorCode = Literal[
     "login_throttled",
     "model_not_found",
     "parser_timeout",
+    "recent_authentication_required",
     "resource_conflict",
     "resource_not_found",
     "resource_unavailable",
@@ -136,6 +137,11 @@ class SessionRefresh(ContractModel):
     access_expires_at: datetime
 
 
+class SessionStepUp(ContractModel):
+    status: Literal["reauthenticated"]
+    step_up_expires_at: datetime
+
+
 class TotpEnrollment(ContractModel):
     factor_id: str
     secret: str
@@ -191,6 +197,16 @@ class SpaceSummary(ContractModel):
     role: SpaceRole
     revision: int
     personal: bool
+    created_at: datetime
+
+
+class AdminSpaceSummary(ContractModel):
+    id: str
+    name: str
+    revision: int
+    owner_member_id: str
+    owner_username: str
+    owner_display_name: str
     created_at: datetime
 
 

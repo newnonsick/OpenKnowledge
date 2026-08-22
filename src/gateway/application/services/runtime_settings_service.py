@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.gateway.application.services.audit_service import AuditService
 from src.gateway.domain.authorization import Action, AuthorizationContext, is_allowed
-from src.gateway.domain.exceptions import AuthorizationException, ConcurrencyConflictException, ResourceConflictException
+from src.gateway.domain.exceptions import AuthorizationException, ConcurrencyConflictException, RecentAuthenticationRequiredException, ResourceConflictException
 from src.gateway.domain.identity import Principal, PrincipalKind
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
 from src.gateway.infrastructure.persistence.identity_models import SessionFamilyModel
@@ -372,7 +372,7 @@ class RuntimeSettingsService:
             or family.last_step_up_at is None
             or current_time - family.last_step_up_at > self._step_up_window
         ):
-            raise AuthorizationException()
+            raise RecentAuthenticationRequiredException()
         return actor_id
 
     @staticmethod

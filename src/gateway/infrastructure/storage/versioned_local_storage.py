@@ -19,6 +19,7 @@ class LocalVersionedObjectStorage(IVersionedObjectStorage):
     def __init__(self, base_dir: str | Path) -> None:
         self._base_dir = Path(base_dir).resolve()
         self._base_dir.mkdir(parents=True, exist_ok=True)
+        self._base_dir = self._base_dir.resolve()
 
     async def stage(
         self,
@@ -108,11 +109,24 @@ class LocalVersionedObjectStorage(IVersionedObjectStorage):
         if any(not self._segment(part) for part in parts[1:]):
             raise StorageException("Invalid storage key.")
         path = (self._base_dir.joinpath(*parts)).resolve()
-        try:
-            path.relative_to(self._base_dir)
-        except ValueError as exc:
-            raise StorageException("Storage key escapes the configured root.") from exc
+        if not self._contains(self._base_dir, path):
+            raise StorageException("Storage key escapes the configured root.")
         return path
+
+    def _contains(self, parent: Path, child: Path) -> bool:
+        parent_text = self._normalized(parent)
+        try:
+            return os.path.commonpath([parent_text, self._normalized(child)]) == parent_text
+        except ValueError:
+            return False
+
+    def _normalized(self, value: Path) -> str:
+        text = os.path.normcase(os.path.abspath(value))
+        if text.startswith("\\\\?\\UNC\\"):
+            text = "\\" + text[8:]
+        elif text.startswith("\\\\?\\"):
+            text = text[4:]
+        return text.rstrip(os.sep)
 
     def _segment(self, value) -> str:
         segment = str(value)

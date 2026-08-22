@@ -1,11 +1,12 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
 
 from src.gateway.application.services.authorization_service import AuthorizationService
+from src.gateway.application.services.session_service import SessionService
 from src.gateway.application.services.space_service import SpaceService
 from src.gateway.domain.authorization import Action
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SpaceRole, SystemRole
@@ -109,13 +110,14 @@ async def test_concurrent_owner_removal_cannot_leave_space_without_owner() -> No
                 request_id="two-owner-create",
                 now=now,
             )
-            await SpaceService(session).set_membership(
-                principal(first_id),
-                created.space_id,
-                second_id,
-                role=SpaceRole.OWNER,
-                request_id="second-owner",
-                now=now,
+            session.add(
+                SpaceMembershipModel(
+                    id=uuid4(),
+                    space_id=created.space_id,
+                    member_id=second_id,
+                    role=SpaceRole.OWNER.value,
+                    updated_at=now,
+                )
             )
 
         async def remove(actor_id, target_id):
@@ -148,3 +150,102 @@ async def test_concurrent_owner_removal_cannot_leave_space_without_owner() -> No
                 )
             )
             assert len(owners.all()) == 1
+
+
+async def test_ownership_transfer_requires_recent_session_and_emergency_reason() -> None:
+    owner_id = uuid4()
+    target_id = uuid4()
+    admin_id = uuid4()
+    now = datetime(2026, 8, 20, 13, 0, tzinfo=timezone.utc)
+
+    async with isolated_postgres_database() as (_, factory):
+        async with factory.begin() as session:
+            session.add_all(
+                [
+                    MemberModel(id=owner_id, username="owner", username_normalized="owner", display_name="Owner", status="active", system_role="member", force_password_change=False),
+                    MemberModel(id=target_id, username="target", username_normalized="target", display_name="Target", status="active", system_role="member", force_password_change=False),
+                    MemberModel(id=admin_id, username="admin", username_normalized="admin", display_name="Admin", status="active", system_role="super_admin", force_password_change=False),
+                ]
+            )
+            created = await SpaceService(session).create(
+                principal(owner_id),
+                name="Ownership",
+                request_id="ownership-create",
+                now=now,
+            )
+            await SpaceService(session).set_membership(
+                principal(owner_id),
+                created.space_id,
+                target_id,
+                role=SpaceRole.EDITOR,
+                request_id="ownership-target",
+                now=now,
+            )
+            stale = await SessionService(session).issue(
+                principal(owner_id),
+                now=now,
+                step_up_at=now - timedelta(minutes=11),
+            )
+            fresh = await SessionService(session).issue(
+                principal(owner_id),
+                now=now,
+                step_up_at=now,
+            )
+            admin = await SessionService(session).issue(
+                principal(admin_id, system_role=SystemRole.SUPER_ADMIN),
+                now=now,
+                step_up_at=now,
+            )
+
+        async with factory.begin() as session:
+            with pytest.raises(Exception, match="Recent authentication required"):
+                await SpaceService(session).transfer_ownership(
+                    principal(owner_id),
+                    stale.family_id,
+                    created.space_id,
+                    target_id,
+                    expected_revision=2,
+                    request_id="stale-transfer",
+                    now=now,
+                )
+
+        async with factory.begin() as session:
+            await SpaceService(session).transfer_ownership(
+                principal(owner_id),
+                fresh.family_id,
+                created.space_id,
+                target_id,
+                expected_revision=2,
+                request_id="owner-transfer",
+                now=now,
+            )
+
+        async with factory.begin() as session:
+            await SpaceService(session).transfer_ownership(
+                principal(admin_id, system_role=SystemRole.SUPER_ADMIN),
+                admin.family_id,
+                created.space_id,
+                owner_id,
+                expected_revision=3,
+                request_id="emergency-transfer",
+                emergency_reason="Restore ownership after account recovery",
+                now=now,
+            )
+            admin_membership = await session.scalar(
+                select(SpaceMembershipModel).where(
+                    SpaceMembershipModel.space_id == created.space_id,
+                    SpaceMembershipModel.member_id == admin_id,
+                )
+            )
+            assert admin_membership is None
+            owner = await session.scalar(
+                select(SpaceMembershipModel).where(
+                    SpaceMembershipModel.space_id == created.space_id,
+                    SpaceMembershipModel.role == SpaceRole.OWNER.value,
+                )
+            )
+            assert owner.member_id == owner_id
+            event = await session.scalar(
+                select(AuditEventModel).where(AuditEventModel.request_id == "emergency-transfer")
+            )
+            assert event.action == "space.emergency_ownership_transferred"

@@ -67,6 +67,20 @@ def test_committed_openapi_contract_matches_application() -> None:
     assert committed == create_app().openapi()
 
 
+def test_openapi_declares_public_and_protected_authentication_contracts() -> None:
+    schema = create_app().openapi()
+    schemes = schema["components"]["securitySchemes"]
+    assert schemes["cookieAuth"] == {"type": "apiKey", "in": "cookie", "name": "__Host-aigw-access"}
+    assert schemes["bearerAuth"] == {"type": "http", "scheme": "bearer"}
+    assert "security" not in schema["paths"]["/api/v1/auth/login"]["post"]
+    assert schema["paths"]["/api/v1/auth/step-up"]["post"]["security"] == [{"cookieAuth": []}]
+    assert schema["paths"]["/api/v1/spaces"]["get"]["security"] == [
+        {"cookieAuth": []},
+        {"bearerAuth": []},
+    ]
+    assert schema["paths"]["/v1/chat/completions"]["post"]["security"] == [{"bearerAuth": []}]
+
+
 def test_management_errors_use_the_runtime_error_envelope() -> None:
     schema = create_app().openapi()
     mismatches: list[str] = []

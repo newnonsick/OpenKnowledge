@@ -45,6 +45,17 @@ class AuthenticationException(GatewayException):
             details=details,
         )
 
+
+class RecentAuthenticationRequiredException(GatewayException):
+
+    def __init__(self) -> None:
+        super().__init__(
+            message="Recent authentication required.",
+            status_code=401,
+            error_type="authentication_error",
+            code="recent_authentication_required",
+        )
+
 class AuthorizationException(GatewayException):
 
     def __init__(
@@ -184,6 +195,7 @@ class ToolExecutionException(GatewayException):
         tool_name_or_message: str = "Tool execution failed.",
         message: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
+        code: str = "tool_failed",
     ) -> None:
         det = details.copy() if details else {}
         if message is not None:
@@ -197,7 +209,7 @@ class ToolExecutionException(GatewayException):
             message=full_msg,
             status_code=500,
             error_type="tool_execution_error",
-            code="tool_failed",
+            code=code,
             details=det,
         )
 

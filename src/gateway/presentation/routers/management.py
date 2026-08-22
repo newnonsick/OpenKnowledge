@@ -46,6 +46,7 @@ from src.gateway.presentation.authorization import require_principal, require_sc
 from src.gateway.presentation.request_context import get_request_id
 from src.gateway.presentation.schemas.management_responses import (
     MANAGEMENT_ERROR_RESPONSES,
+    AdminSpaceSummary,
     APIKeySummary,
     AIToolExecution,
     AIToolList,
@@ -139,7 +140,18 @@ class SpaceCreateRequest(BaseModel):
 class MembershipRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    role: SpaceRole
+    role: Literal["editor", "reader"]
+
+
+class OwnershipTransferRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_member_id: UUID
+    expected_revision: int = Field(ge=1)
+
+
+class EmergencyOwnershipTransferRequest(OwnershipTransferRequest):
+    reason: str = Field(min_length=5, max_length=500)
 
 
 class APIKeyCreateRequest(BaseModel):
@@ -987,6 +999,51 @@ async def list_spaces(
     }
 
 
+@router.get("/admin/spaces", response_model=Page[AdminSpaceSummary])
+async def list_admin_spaces(
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None),
+    principal: Principal = Depends(require_scope("members:admin")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    if principal.system_role is not SystemRole.SUPER_ADMIN:
+        raise AuthorizationException()
+    after = _cursor_decode(cursor)
+    query = (
+        select(Workspace, SpaceMembershipModel, MemberModel)
+        .join(
+            SpaceMembershipModel,
+            and_(
+                SpaceMembershipModel.space_id == Workspace.id,
+                SpaceMembershipModel.role == SpaceRole.OWNER.value,
+            ),
+        )
+        .join(MemberModel, MemberModel.id == SpaceMembershipModel.member_id)
+        .where(Workspace.archived_at.is_(None))
+        .order_by(Workspace.id)
+        .limit(limit + 1)
+    )
+    if after is not None:
+        query = query.where(Workspace.id > after)
+    rows = list((await session.execute(query)).all())
+    page = rows[:limit]
+    return {
+        "items": [
+            {
+                "id": space.id,
+                "name": space.name,
+                "revision": space.revision,
+                "owner_member_id": str(owner.id),
+                "owner_username": owner.username,
+                "owner_display_name": owner.display_name,
+                "created_at": space.created_at,
+            }
+            for space, _, owner in page
+        ],
+        "next_cursor": _cursor_encode(page[-1][0].id) if len(rows) > limit else None,
+    }
+
+
 @router.post("/spaces", status_code=status.HTTP_201_CREATED, response_model=CreatedSpace)
 async def create_space(
     payload: SpaceCreateRequest,
@@ -1134,14 +1191,14 @@ async def set_space_membership(
         principal,
         "space.membership.set",
         idempotency_key,
-        {"space_id": space_id, "member_id": str(member_id), "role": payload.role.value},
+        {"space_id": space_id, "member_id": str(member_id), "role": payload.role},
     )
     if reservation.status is not ReservationStatus.REPLAY:
         await SpaceService(session).set_membership(
             principal,
             space_id,
             member_id,
-            role=payload.role,
+            role=SpaceRole(payload.role),
             request_id=get_request_id(request),
         )
         await IdempotencyService(session).complete(
@@ -1149,7 +1206,91 @@ async def set_space_membership(
             response_status=200,
             resource_ids=[space_id, str(member_id)],
         )
-    return {"space_id": space_id, "member_id": str(member_id), "role": payload.role.value}
+    return {"space_id": space_id, "member_id": str(member_id), "role": payload.role}
+
+
+@router.put("/spaces/{space_id}/ownership", response_model=SpaceMembership)
+async def transfer_space_ownership(
+    space_id: str,
+    payload: OwnershipTransferRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("spaces:members")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    reservation = await _reserve(
+        session,
+        principal,
+        "space.ownership.transfer",
+        idempotency_key,
+        {
+            "space_id": space_id,
+            "target_member_id": str(payload.target_member_id),
+            "expected_revision": payload.expected_revision,
+        },
+    )
+    if reservation.status is not ReservationStatus.REPLAY:
+        await SpaceService(session).transfer_ownership(
+            principal,
+            await _family_id(session, principal),
+            space_id,
+            payload.target_member_id,
+            expected_revision=payload.expected_revision,
+            request_id=get_request_id(request),
+        )
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=200,
+            resource_ids=[space_id, str(payload.target_member_id)],
+        )
+    return {
+        "space_id": space_id,
+        "member_id": str(payload.target_member_id),
+        "role": SpaceRole.OWNER.value,
+    }
+
+
+@router.put("/admin/spaces/{space_id}/ownership", response_model=SpaceMembership)
+async def emergency_transfer_space_ownership(
+    space_id: str,
+    payload: EmergencyOwnershipTransferRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("members:admin")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    reservation = await _reserve(
+        session,
+        principal,
+        "space.ownership.emergency_transfer",
+        idempotency_key,
+        {
+            "space_id": space_id,
+            "target_member_id": str(payload.target_member_id),
+            "expected_revision": payload.expected_revision,
+            "reason": payload.reason.strip(),
+        },
+    )
+    if reservation.status is not ReservationStatus.REPLAY:
+        await SpaceService(session).transfer_ownership(
+            principal,
+            await _family_id(session, principal),
+            space_id,
+            payload.target_member_id,
+            expected_revision=payload.expected_revision,
+            request_id=get_request_id(request),
+            emergency_reason=payload.reason,
+        )
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=200,
+            resource_ids=[space_id, str(payload.target_member_id)],
+        )
+    return {
+        "space_id": space_id,
+        "member_id": str(payload.target_member_id),
+        "role": SpaceRole.OWNER.value,
+    }
 
 
 @router.delete("/spaces/{space_id}/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT)

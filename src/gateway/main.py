@@ -5,6 +5,7 @@ import logging
 from typing import AsyncIterator, Optional
 
 from fastapi import FastAPI
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
@@ -184,6 +185,65 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
     app.include_router(chat_completions_router)
     app.include_router(messages_router)
     app.include_router(files_router)
+
+    def authoritative_openapi() -> dict:
+        if app.openapi_schema is not None:
+            return app.openapi_schema
+        schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            openapi_version=app.openapi_version,
+            summary=app.summary,
+            description=app.description,
+            terms_of_service=app.terms_of_service,
+            contact=app.contact,
+            license_info=app.license_info,
+            routes=app.routes,
+            webhooks=app.webhooks.routes,
+            tags=app.openapi_tags,
+            servers=app.servers,
+            separate_input_output_schemas=app.separate_input_output_schemas,
+            external_docs=app.openapi_external_docs,
+        )
+        components = schema.setdefault("components", {})
+        components["securitySchemes"] = {
+            "cookieAuth": {
+                "type": "apiKey",
+                "in": "cookie",
+                "name": "__Host-aigw-access",
+            },
+            "bearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+            },
+        }
+        public_operations = {
+            ("/api/v1/auth/login", "post"),
+            ("/api/v1/auth/refresh", "post"),
+            ("/health", "get"),
+            ("/healthz/live", "get"),
+            ("/healthz/ready", "get"),
+            ("/v1/health", "get"),
+        }
+        for path, path_item in schema.get("paths", {}).items():
+            for method, operation in path_item.items():
+                if method not in {"delete", "get", "patch", "post", "put"}:
+                    continue
+                if (path, method) in public_operations:
+                    operation.pop("security", None)
+                elif path.startswith("/api/v1/auth/"):
+                    operation["security"] = [{"cookieAuth": []}]
+                elif path.startswith("/v1/"):
+                    operation["security"] = [{"bearerAuth": []}]
+                else:
+                    operation["security"] = [
+                        {"cookieAuth": []},
+                        {"bearerAuth": []},
+                    ]
+        app.openapi_schema = schema
+        return schema
+
+    app.openapi = authoritative_openapi
 
     return app
 

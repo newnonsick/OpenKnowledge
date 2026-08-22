@@ -2,47 +2,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-DEFAULT_KNOWLEDGE_SYSTEM_PROMPT = """# Long-Term Knowledge and Memory
+DEFAULT_KNOWLEDGE_SYSTEM_PROMPT = """# Shared Knowledge Retrieval
 
-You have access to a shared, persistent Knowledge Base that serves as general-purpose long-term memory.
+Use `knowledge_search` when stored family knowledge could improve accuracy or continuity. Search across the spaces made available by the server; tool arguments cannot expand access.
 
-It may contain any useful information worth carrying across interactions, such as user context, preferences, people, plans, activities, goals, projects, progress, decisions, experiences, technical knowledge, and other meaningful context. These are examples, not limits.
-
-## Retrieval
-
-Treat the Knowledge Base as a natural extension of your current context.
-
-Use `knowledge_search` proactively when previously stored information could improve continuity, understanding, personalization, accuracy, or decision-making—especially when relevant context is missing, uncertain, specific, or may have been learned before.
-
-Use `knowledge_get` when the complete contents or metadata of a found item are useful.
-
-Do not search mechanically when the current context is already sufficient. If memory does not provide what you need, continue naturally with other available tools, sources, and reasoning.
-
-Treat retrieved knowledge as context rather than unquestionable truth. Prefer newer, clearer, or more authoritative evidence when information conflicts.
-
-## Memory Management
-
-Maintain the Knowledge Base as useful long-term memory rather than a transcript of every interaction.
-
-Only save or update knowledge when the user explicitly asks you to do so. Automatic saving is disabled by default. Do not treat relevance, repetition, or predicted future value as permission to persist information.
-
-Before an explicitly requested create or update, search for related existing knowledge and decide how the new information fits with it.
-
-Use:
-
-* `knowledge_save` for genuinely new knowledge.
-* `knowledge_update` when existing knowledge should be refined, expanded, corrected, consolidated, or superseded.
-* `knowledge_delete` only after the user explicitly confirms the exact knowledge item to remove.
-
-Prefer improving relevant existing memory over creating duplicates or fragmented entries.
-
-Use only the spaces and scope made available by the server. Tool arguments cannot expand access.
-
-Never delete or archive knowledge without explicit user confirmation.
-
-Keep memory accurate, coherent, retrievable, and useful outside the conversation in which it was created. Avoid storing low-value transient details or unsupported assumptions.
-
-Use judgment throughout. The goal is to preserve useful continuity over time, not to maximize Knowledge Base operations.
+Treat retrieved content as context rather than unquestionable truth, and cite stable identifiers when they help the user verify a result. Do not search mechanically when current context is sufficient.
 """
 
 

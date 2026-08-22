@@ -48,11 +48,15 @@ def test_github_actions_are_commit_pinned_and_cover_release_gates() -> None:
     assert "timeout-minutes: 30" in legacy_contracts
     assert "retention-days: 90" in legacy_contracts
     assert "tests/load/k6.js" in load
+    assert "actions/upload-artifact" in load
+    assert "load-summary.json" in load
+    assert "load-metadata.json" in load
 
 
 def test_monitoring_and_load_assets_cover_required_objectives() -> None:
     alerts = read("deploy/prometheus/alerts.yml")
     load = read("tests/load/k6.js")
+    caddy = read("deploy/Caddyfile")
     operations = read("docs/operations.md")
     for signal in (
         "gateway_http_requests_total",
@@ -66,6 +70,9 @@ def test_monitoring_and_load_assets_cover_required_objectives() -> None:
         assert scenario in load
     assert "p(95)<500" in load
     assert "p(95)<1000" in load
+    assert 'checks: ["rate>0.99"]' in load
+    assert "handleSummary" in load
+    assert "handle /metrics" not in caddy
     assert "one-hour RPO" in operations
     assert "four-hour RTO" in operations
 

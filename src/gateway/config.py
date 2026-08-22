@@ -466,6 +466,30 @@ class GatewaySettings(BaseSettings):
         validation_alias=AliasChoices("TOOL_TIMEOUT_SECONDS", "tool_timeout_seconds"),
         description="Timeout for internal tool execution in seconds",
     )
+    max_internal_tool_calls: int = Field(
+        default=32,
+        gt=0,
+        validation_alias=AliasChoices("MAX_INTERNAL_TOOL_CALLS", "max_internal_tool_calls"),
+        description="Maximum internal tool calls across one gateway request",
+    )
+    max_repeated_tool_signatures: int = Field(
+        default=2,
+        gt=0,
+        validation_alias=AliasChoices(
+            "MAX_REPEATED_TOOL_SIGNATURES",
+            "max_repeated_tool_signatures",
+        ),
+        description="Maximum executions of one identical internal tool signature",
+    )
+    max_tool_wall_clock_seconds: float = Field(
+        default=180.0,
+        gt=0,
+        validation_alias=AliasChoices(
+            "MAX_TOOL_WALL_CLOCK_SECONDS",
+            "max_tool_wall_clock_seconds",
+        ),
+        description="Maximum wall-clock duration for one orchestrated chat request",
+    )
     knowledge_system_prompt_enabled: bool = Field(
         default=True,
         validation_alias=AliasChoices(

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.gateway.application.security.tokens import APIKeyCodec, SecretValue
 from src.gateway.application.services.audit_service import AuditService
 from src.gateway.domain.authorization import Action, AuthorizationContext, is_allowed
-from src.gateway.domain.exceptions import AuthenticationException
+from src.gateway.domain.exceptions import AuthenticationException, RecentAuthenticationRequiredException
 from src.gateway.domain.identity import APIKeyStatus, MemberStatus, Principal, PrincipalKind, SystemRole
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
 from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeModel, MemberModel, PersonalAPIKeyModel, SessionFamilyModel
@@ -119,7 +119,7 @@ class APIKeyService:
             or family.last_step_up_at is None
             or current_time - family.last_step_up_at > self._step_up_window
         ):
-            raise AuthenticationException("Recent authentication required.")
+            raise RecentAuthenticationRequiredException()
         if expires_at is not None and expires_at <= current_time:
             raise ValueError("API key expiration must be in the future")
         issued = self._codec.issue()

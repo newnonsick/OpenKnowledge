@@ -6,9 +6,6 @@
     handle /health* {
         reverse_proxy gateway:8000
     }
-    handle /metrics {
-        reverse_proxy gateway:8000
-    }
     handle {
         reverse_proxy web:3000
     }

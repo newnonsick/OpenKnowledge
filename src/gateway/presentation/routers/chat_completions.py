@@ -17,7 +17,6 @@ from src.gateway.application.services.chat_orchestrator import (
     IChatOrchestrator,
 )
 from src.gateway.application.services.authorized_retrieval_service import AuthorizedRetrievalService
-from src.gateway.application.services.knowledge_service import KnowledgeService
 from src.gateway.application.services.model_registry import (
     ModelRegistryService,
     get_model_registry,
@@ -40,11 +39,11 @@ from src.gateway.domain.exceptions import (
     GatewayException,
     LLMProviderException,
     ModelNotFoundException,
+    ToolExecutionException,
 )
 from src.gateway.domain.tools import ToolCall
 from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.adapters.http_llm_client import HttpLLMClient
-from src.gateway.infrastructure.persistence.knowledge_repository import KnowledgeRepository
 from src.gateway.infrastructure.persistence.retrieval_unit_repository import PostgresRetrievalUnitRepository
 from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings
 from src.gateway.presentation.converters.openai_converter import (
@@ -136,13 +135,6 @@ def get_embedding_client() -> IEmbeddingClient:
 
     return HTTPEmbeddingClient()
 
-def get_knowledge_service(
-    embedding_client: IEmbeddingClient = Depends(get_embedding_client),
-) -> KnowledgeService:
-
-    repo = KnowledgeRepository()
-    return KnowledgeService(repository=repo, embedding_client=embedding_client)
-
 def get_retrieval_service(
     embedding_client: IEmbeddingClient = Depends(get_embedding_client),
 ) -> AuthorizedRetrievalService:
@@ -155,13 +147,11 @@ def get_retrieval_service(
 
 def get_chat_orchestrator(
     llm_client: ILLMClient = Depends(get_llm_client),
-    knowledge_service: KnowledgeService = Depends(get_knowledge_service),
     retrieval_service: AuthorizedRetrievalService = Depends(get_retrieval_service),
 ) -> IChatOrchestrator:
 
     return ChatOrchestratorService(
         llm_client=llm_client,
-        knowledge_service=knowledge_service,
         retrieval_service=retrieval_service,
     )
 
@@ -332,6 +322,20 @@ def _handle_streaming_completion(
                     }
                 yield f"data: {json.dumps(chunk_payload)}\n\n"
 
+        except GatewayException as exc:
+            logger.warning(
+                "Streaming generation terminated",
+                extra={"error_type": exc.error_type, "error_code": exc.code},
+            )
+            tool_error = isinstance(exc, ToolExecutionException)
+            err_chunk = {
+                "error": {
+                    "message": exc.message if exc.status_code < 500 else "The response stream ended unexpectedly.",
+                    "type": exc.error_type if tool_error else "streaming_error",
+                    "code": exc.code if tool_error else "streaming_error",
+                }
+            }
+            yield f"data: {json.dumps(err_chunk)}\n\n"
         except Exception as exc:
             logger.error(
                 "Streaming generation failed",

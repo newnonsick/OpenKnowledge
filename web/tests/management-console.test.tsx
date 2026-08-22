@@ -162,6 +162,38 @@ describe("management console", () => {
     await waitFor(() => expect(screen.queryByText("@nana")).not.toBeInTheDocument());
   });
 
+  it("uses the step-up ownership command instead of an ordinary role change", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path === "/api/v1/spaces?limit=100") {
+        return { items: [{ id: "travel", name: "Travel plans", role: "owner", revision: 2 }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/spaces/travel/member-candidates") {
+        return { items: [], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/spaces/travel/members") {
+        return { items: [
+          { member_id: "member-1", username: "mai", display_name: "Mai", status: "active", role: "owner" },
+          { member_id: "member-2", username: "nana", display_name: "Nana", status: "active", role: "editor" },
+        ], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/spaces/travel/ownership") {
+        return { member_id: "member-2", role: "owner", space_id: "travel" } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<SpacesConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Manage access for Travel plans" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Transfer ownership to Nana" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm ownership transfer" }));
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/spaces/travel/ownership", {
+      body: { expected_revision: 2, target_member_id: "member-2" },
+      idempotent: true,
+      method: "PUT",
+    }));
+  });
+
   it("archives an owned space only after showing its impact", async () => {
     let archived = false;
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
@@ -444,6 +476,43 @@ describe("management console", () => {
       method: "PATCH",
     }));
     expect(await screen.findByText("disabled")).toBeInTheDocument();
+  });
+
+  it("lets a super admin repair ownership without granting themselves space access", async () => {
+    currentMember.system_role = "super_admin";
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path === "/api/v1/spaces?limit=100") {
+        return { items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/members?limit=100") {
+        return { items: [
+          { id: "member-1", username: "old-owner", display_name: "Old Owner", status: "active", system_role: "member", requires_password_change: false },
+          { id: "member-2", username: "new-owner", display_name: "New Owner", status: "active", system_role: "member", requires_password_change: false },
+        ], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/admin/spaces?limit=100") {
+        return { items: [{ id: "private", name: "Private records", revision: 4, owner_member_id: "member-1", owner_username: "old-owner", owner_display_name: "Old Owner", created_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/admin/spaces/private/ownership" && options?.method === "PUT") {
+        return { space_id: "private", member_id: "member-2", role: "owner" } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<PeopleConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open ownership recovery" }));
+    expect(await screen.findByRole("option", { name: "Private records · Old Owner" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("New owner"), { target: { value: "member-2" } });
+    fireEvent.change(screen.getByLabelText("Recovery reason"), { target: { value: "Restore after account recovery" } });
+    fireEvent.click(screen.getByRole("button", { name: "Review ownership repair" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm emergency transfer" }));
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/admin/spaces/private/ownership", {
+      body: { expected_revision: 4, reason: "Restore after account recovery", target_member_id: "member-2" },
+      idempotent: true,
+      method: "PUT",
+    }));
+    expect(screen.getByText(/does not grant the super admin access/i)).toBeInTheDocument();
   });
 
   it("creates an individually scoped API key and reveals the secret once", async () => {

@@ -20,6 +20,7 @@ export const options = {
     ingestion: { executor: "constant-arrival-rate", exec: "ingestion", rate: 2, timeUnit: "1m", duration: "2m", preAllocatedVUs: 1, maxVUs: 2 },
   },
   thresholds: {
+    checks: ["rate>0.99"],
     management_latency: ["p(95)<500"],
     retrieval_latency: ["p(95)<1000"],
     streaming_latency: ["p(95)<30000"],
@@ -27,6 +28,13 @@ export const options = {
     http_req_failed: ["rate<0.01"],
   },
 };
+
+export function handleSummary(data) {
+  return {
+    "load-summary.json": JSON.stringify(data, null, 2),
+    stdout: `load gate complete: ${Object.keys(data.metrics).length} metrics\n`,
+  };
+}
 
 export function setup() {
   if (!baseUrl || !apiKey) {

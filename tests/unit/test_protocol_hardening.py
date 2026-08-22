@@ -12,8 +12,14 @@ from src.gateway.application.services.knowledge_service import KnowledgeService
 from src.gateway.application.services.model_registry import ModelRegistryService
 from src.gateway.domain.canonical import CanonicalChatRequest, CanonicalChatResponse, CanonicalLLMResponse, CanonicalLLMStreamChunk, CanonicalMessage, CanonicalTextBlock, CanonicalThinkingBlock
 from src.gateway.domain.exceptions import ModelNotFoundException, ToolExecutionException, ValidationException
+from src.gateway.domain.identity import Principal, PrincipalKind, SystemRole
+from src.gateway.domain.prompts import DEFAULT_KNOWLEDGE_SYSTEM_PROMPT
 from src.gateway.domain.tools import FunctionCall, FunctionDefinition, ToolCall, ToolDefinition, ToolResult
+from src.gateway.infrastructure.persistence.principal_context import bind_principal, reset_principal
 from src.gateway.presentation.converters.anthropic_converter import canonical_response_to_anthropic
+from src.gateway.presentation.routers.chat_completions import get_chat_orchestrator as get_openai_orchestrator
+from src.gateway.presentation.routers.chat_completions import _handle_streaming_completion
+from src.gateway.presentation.routers.messages import get_chat_orchestrator as get_anthropic_orchestrator
 from src.gateway.presentation.routers.messages import _handle_anthropic_streaming
 from src.gateway.presentation.schemas.anthropic_schemas import AnthropicMessagesRequest
 from src.gateway.presentation.schemas.openai_schemas import OpenAIChatCompletionRequest
@@ -23,11 +29,14 @@ class ScriptedClient:
     def __init__(self, responses=None, streams=None) -> None:
         self.responses = list(responses or [])
         self.streams = list(streams or [])
+        self.call_count = 0
 
     async def generate(self, **kwargs):
+        self.call_count += 1
         return self.responses.pop(0)
 
     async def generate_stream(self, **kwargs):
+        self.call_count += 1
         for chunk in self.streams.pop(0):
             yield chunk
 
@@ -145,8 +154,9 @@ async def test_mixed_internal_and_external_tool_turn_fails_without_exposure_or_e
     knowledge.execute_tool = AsyncMock()
     service = ChatOrchestratorService(client, knowledge_service=knowledge)
 
-    with pytest.raises(ToolExecutionException):
+    with pytest.raises(ToolExecutionException) as exc_info:
         await service.orchestrate_chat(request())
+    assert exc_info.value.code == "mixed_tool_calls"
     knowledge.execute_tool.assert_not_awaited()
 
 
@@ -239,19 +249,91 @@ async def test_tool_iteration_exhaustion_is_a_gateway_error_not_token_exhaustion
         )
     )
 
-    with pytest.raises(ToolExecutionException):
+    with pytest.raises(ToolExecutionException) as response_error:
         await ChatOrchestratorService(
             response_client,
             knowledge_service=knowledge,
             max_tool_iterations=1,
         ).orchestrate_chat(request())
-    with pytest.raises(ToolExecutionException):
+    assert response_error.value.code == "tool_iteration_limit"
+    with pytest.raises(ToolExecutionException) as stream_error:
         async for _ in ChatOrchestratorService(
             stream_client,
             knowledge_service=knowledge,
             max_tool_iterations=1,
         ).orchestrate_chat_stream(request()):
             pass
+    assert stream_error.value.code == "tool_iteration_limit"
+
+
+def test_provider_tool_catalog_never_injects_management_mutations():
+    principal = Principal(
+        subject_id="00000000-0000-0000-0000-000000000001",
+        kind=PrincipalKind.API_KEY,
+        system_role=SystemRole.MEMBER,
+        scopes=frozenset({"chat:write", "knowledge:read", "knowledge:write"}),
+    )
+    token = bind_principal(principal)
+    try:
+        _, upstream = ChatOrchestratorService(ScriptedClient())._prepare_tools([])
+    finally:
+        reset_principal(token)
+
+    assert [tool["function"]["name"] for tool in upstream or []] == ["knowledge_search"]
+
+
+def test_provider_tool_catalog_requires_knowledge_read_scope_for_search():
+    principal = Principal(
+        subject_id="00000000-0000-0000-0000-000000000001",
+        kind=PrincipalKind.API_KEY,
+        system_role=SystemRole.MEMBER,
+        scopes=frozenset({"chat:write"}),
+    )
+    token = bind_principal(principal)
+    try:
+        _, upstream = ChatOrchestratorService(ScriptedClient())._prepare_tools([])
+    finally:
+        reset_principal(token)
+
+    assert upstream is None
+
+
+def test_production_protocol_wiring_has_no_legacy_knowledge_mutation_service():
+    llm = ScriptedClient()
+    retrieval = MagicMock()
+
+    openai = get_openai_orchestrator(llm_client=llm, retrieval_service=retrieval)
+    anthropic = get_anthropic_orchestrator(llm_client=llm, retrieval_service=retrieval)
+
+    assert openai.knowledge_service is None
+    assert anthropic.knowledge_service is None
+
+
+def test_default_gateway_prompt_advertises_search_only():
+    assert "knowledge_search" in DEFAULT_KNOWLEDGE_SYSTEM_PROMPT
+    for unavailable_tool in ("knowledge_get", "knowledge_save", "knowledge_update", "knowledge_delete"):
+        assert unavailable_tool not in DEFAULT_KNOWLEDGE_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_unavailable_reserved_tools_fail_closed_without_fake_success():
+    client = ScriptedClient(
+        responses=[
+            CanonicalLLMResponse(
+                id="reserved",
+                model="model",
+                tool_calls=[call("knowledge_save", "call_reserved")],
+                finish_reason="tool_calls",
+            ),
+            CanonicalLLMResponse(id="final", model="model", content="saved", finish_reason="stop"),
+        ]
+    )
+
+    with pytest.raises(ToolExecutionException) as exc_info:
+        await ChatOrchestratorService(client).orchestrate_chat(request())
+
+    assert exc_info.value.code == "unsupported_internal_tool"
+    assert client.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -300,6 +382,81 @@ async def test_internal_tool_timeout_and_hidden_turn_buffer_are_bounded():
 
 
 @pytest.mark.asyncio
+async def test_internal_loop_enforces_total_call_and_repeated_signature_budgets():
+    two_calls = ScriptedClient(
+        responses=[
+            CanonicalLLMResponse(
+                id="many",
+                model="model",
+                tool_calls=[call("knowledge_search", "one"), call("knowledge_search", "two")],
+                finish_reason="tool_calls",
+            )
+        ]
+    )
+    repeated = ScriptedClient(
+        responses=[
+            CanonicalLLMResponse(id="first", model="model", tool_calls=[call("knowledge_search", "one")], finish_reason="tool_calls"),
+            CanonicalLLMResponse(id="second", model="model", tool_calls=[call("knowledge_search", "two")], finish_reason="tool_calls"),
+        ]
+    )
+    knowledge = MagicMock(spec=KnowledgeService)
+    knowledge.execute_tool = AsyncMock(return_value=ToolResult(tool_call_id="call", name="knowledge_search", content="{}"))
+
+    with pytest.raises(ToolExecutionException) as call_limit:
+        await ChatOrchestratorService(
+            two_calls,
+            knowledge_service=knowledge,
+            max_internal_tool_calls=1,
+        ).orchestrate_chat(request())
+    assert call_limit.value.code == "tool_call_limit"
+
+    with pytest.raises(ToolExecutionException) as repeat_limit:
+        await ChatOrchestratorService(
+            repeated,
+            knowledge_service=knowledge,
+            max_repeated_tool_signatures=1,
+        ).orchestrate_chat(request())
+    assert repeat_limit.value.code == "repeated_tool_call_limit"
+
+
+@pytest.mark.asyncio
+async def test_internal_loop_enforces_total_wall_clock_budget_for_json_and_streaming():
+    class SlowClient(ScriptedClient):
+        async def generate(self, **kwargs):
+            await asyncio.sleep(0.02)
+            return await super().generate(**kwargs)
+
+        async def generate_stream(self, **kwargs):
+            await asyncio.sleep(0.02)
+            async for chunk in super().generate_stream(**kwargs):
+                yield chunk
+
+    response_client = SlowClient(
+        responses=[CanonicalLLMResponse(id="slow", model="model", content="done")]
+    )
+    stream_client = SlowClient(
+        streams=[
+            [CanonicalLLMStreamChunk(id="slow", model="model", delta_content="done", finish_reason="stop")]
+        ]
+    )
+
+    with pytest.raises(ToolExecutionException) as response_limit:
+        await ChatOrchestratorService(
+            response_client,
+            max_tool_wall_clock_seconds=0.001,
+        ).orchestrate_chat(request())
+    assert response_limit.value.code == "tool_wall_clock_limit"
+
+    with pytest.raises(ToolExecutionException) as stream_limit:
+        async for _ in ChatOrchestratorService(
+            stream_client,
+            max_tool_wall_clock_seconds=0.001,
+        ).orchestrate_chat_stream(request()):
+            pass
+    assert stream_limit.value.code == "tool_wall_clock_limit"
+
+
+@pytest.mark.asyncio
 async def test_anthropic_stream_error_is_terminal():
     class FailingOrchestrator:
         async def orchestrate_chat_stream(self, request, workspace_id):
@@ -317,3 +474,29 @@ async def test_anthropic_stream_error_is_terminal():
 
     assert events == ["message_start", "error"]
     assert "private failure" not in body
+
+
+@pytest.mark.asyncio
+async def test_streaming_protocols_preserve_structured_tool_termination_codes():
+    class FailingOrchestrator:
+        async def orchestrate_chat_stream(self, request, workspace_id):
+            if False:
+                yield None
+            raise ToolExecutionException(
+                "Mixed tool classes are unavailable.",
+                code="mixed_tool_calls",
+            )
+
+    openai_response = _handle_streaming_completion(request(), FailingOrchestrator())
+    openai_body = "".join([
+        part.decode() if isinstance(part, bytes) else part
+        async for part in openai_response.body_iterator
+    ])
+    anthropic_response = _handle_anthropic_streaming(request(), FailingOrchestrator())
+    anthropic_body = "".join([
+        part.decode() if isinstance(part, bytes) else part
+        async for part in anthropic_response.body_iterator
+    ])
+
+    assert '"code": "mixed_tool_calls"' in openai_body
+    assert '"type": "mixed_tool_calls"' in anthropic_body

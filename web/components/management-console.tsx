@@ -11,6 +11,7 @@ import type { components } from "@/lib/generated/openapi";
 
 type Space = components["schemas"]["SpaceSummary"];
 type SpaceListResponse = components["schemas"]["Page_SpaceSummary_"];
+type AdminSpace = components["schemas"]["AdminSpaceSummary"];
 type SpaceMember = components["schemas"]["SpaceMember"];
 type SpaceMemberCandidate = components["schemas"]["SpaceMemberCandidate"];
 type SpaceMemberListResponse = components["schemas"]["Page_SpaceMember_"];
@@ -74,8 +75,9 @@ export function SpacesConsole() {
   const [spaceMembers, setSpaceMembers] = useState<SpaceMember[]>([]);
   const [memberCandidates, setMemberCandidates] = useState<SpaceMemberCandidate[]>([]);
   const [candidateId, setCandidateId] = useState("");
-  const [candidateRole, setCandidateRole] = useState<SpaceMember["role"]>("reader");
+  const [candidateRole, setCandidateRole] = useState<"editor" | "reader">("reader");
   const [pendingRemoval, setPendingRemoval] = useState<SpaceMember | null>(null);
+  const [pendingOwnership, setPendingOwnership] = useState<SpaceMember | null>(null);
   const [confirmSpaceArchive, setConfirmSpaceArchive] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -154,7 +156,7 @@ export function SpacesConsole() {
     }
   };
 
-  const changeRole = async (spaceMember: SpaceMember, role: SpaceMember["role"]) => {
+  const changeRole = async (spaceMember: SpaceMember, role: "editor" | "reader") => {
     if (!selectedSpace || saving) {
       return;
     }
@@ -168,6 +170,27 @@ export function SpacesConsole() {
       await loadAccess(selectedSpace);
     } catch (updateError) {
       setError(message(updateError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const transferOwnership = async () => {
+    if (!selectedSpace || !pendingOwnership || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await contractData(contractClient.PUT("/api/v1/spaces/{space_id}/ownership", {
+        body: { expected_revision: selectedSpace.revision, target_member_id: pendingOwnership.member_id },
+        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { space_id: selectedSpace.id } },
+      }));
+      setPendingOwnership(null);
+      setSelectedSpace(null);
+      await load();
+    } catch (transferError) {
+      setError(message(transferError));
     } finally {
       setSaving(false);
     }
@@ -261,10 +284,9 @@ export function SpacesConsole() {
                 </div>
                 <div>
                   <label htmlFor="space-member-role">Role</label>
-                  <select id="space-member-role" onChange={(event) => setCandidateRole(event.target.value as SpaceMember["role"])} value={candidateRole}>
+                  <select id="space-member-role" onChange={(event) => setCandidateRole(event.target.value as "editor" | "reader")} value={candidateRole}>
                     <option value="reader">Reader</option>
                     <option value="editor">Editor</option>
-                    <option value="owner">Owner</option>
                   </select>
                 </div>
                 <button className="primary-button" disabled={!candidateId || saving} type="submit"><UserPlus size={15} /> Add member</button>
@@ -274,12 +296,7 @@ export function SpacesConsole() {
                   <article className="membership-row" key={spaceMember.member_id}>
                     <span className="profile-avatar">{spaceMember.display_name.slice(0, 2).toUpperCase()}</span>
                     <div className="row-copy"><h3>{spaceMember.display_name}</h3><p>@{spaceMember.username}</p></div>
-                    <label className="visually-hidden" htmlFor={`role-${spaceMember.member_id}`}>Role for {spaceMember.display_name}</label>
-                    <select disabled={saving} id={`role-${spaceMember.member_id}`} onChange={(event) => void changeRole(spaceMember, event.target.value as SpaceMember["role"])} value={spaceMember.role}>
-                      <option value="reader">Reader</option>
-                      <option value="editor">Editor</option>
-                      <option value="owner">Owner</option>
-                    </select>
+                    {spaceMember.role === "owner" ? <span className="role-pill role-owner">owner</span> : <><label className="visually-hidden" htmlFor={`role-${spaceMember.member_id}`}>Role for {spaceMember.display_name}</label><select disabled={saving} id={`role-${spaceMember.member_id}`} onChange={(event) => void changeRole(spaceMember, event.target.value as "editor" | "reader")} value={spaceMember.role}><option value="reader">Reader</option><option value="editor">Editor</option></select><button aria-label={`Transfer ownership to ${spaceMember.display_name}`} className="ownership-transfer-button" disabled={saving} onClick={() => setPendingOwnership(spaceMember)} type="button"><KeyRound size={14} /></button></>}
                     <button aria-label={`Remove ${spaceMember.display_name}`} className="membership-remove-button" disabled={saving} onClick={() => setPendingRemoval(spaceMember)} type="button"><UserMinus size={15} /></button>
                   </article>
                 ))}
@@ -291,6 +308,7 @@ export function SpacesConsole() {
                   <button className="danger-button" disabled={saving} onClick={() => void removeMember()} type="button">Confirm removal</button>
                 </div>
               ) : null}
+              {pendingOwnership ? <div className="confirmation-strip" role="alertdialog" aria-label={`Transfer ownership to ${pendingOwnership.display_name}`}><div><strong>Transfer this space?</strong><span>You will become an editor. A recent identity verification is required, and the blocked action is never replayed automatically.</span></div><button className="secondary-button" onClick={() => setPendingOwnership(null)} type="button">Keep ownership</button><button className="danger-button" disabled={saving} onClick={() => void transferOwnership()} type="button">Confirm ownership transfer</button></div> : null}
               {confirmSpaceArchive ? <div className="confirmation-strip" role="alertdialog" aria-label={`Archive ${selectedSpace.name}`}><div><strong>Archive {selectedSpace.name}?</strong><span>Its knowledge will leave unified search immediately, while history remains preserved.</span></div><button className="secondary-button" onClick={() => setConfirmSpaceArchive(false)} type="button">Keep space</button><button className="danger-button" disabled={saving} onClick={() => void archiveSelectedSpace()} type="button">Confirm archive space</button></div> : null}
             </section>
           ) : null}
@@ -823,6 +841,13 @@ export function PeopleConsole() {
   const [selectedMember, setSelectedMember] = useState<MemberSummary | null>(null);
   const [pendingMemberAction, setPendingMemberAction] = useState<"disable" | "enable" | "reset" | null>(null);
   const [resetPassword, setResetPassword] = useState<ResetMemberPassword | null>(null);
+  const [adminSpaces, setAdminSpaces] = useState<AdminSpace[]>([]);
+  const [ownershipRecoveryOpen, setOwnershipRecoveryOpen] = useState(false);
+  const [recoverySpaceId, setRecoverySpaceId] = useState("");
+  const [recoveryTargetId, setRecoveryTargetId] = useState("");
+  const [recoveryReason, setRecoveryReason] = useState("");
+  const [reviewOwnershipRecovery, setReviewOwnershipRecovery] = useState(false);
+  const [ownershipRecovered, setOwnershipRecovered] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -929,6 +954,66 @@ export function PeopleConsole() {
     }
   };
 
+  const openOwnershipRecovery = async () => {
+    setSaving(true);
+    setError(null);
+    setOwnershipRecovered(false);
+    try {
+      const response = await contractData(contractClient.GET("/api/v1/admin/spaces", { params: { query: { limit: 100 } } }));
+      setAdminSpaces(response.items);
+      setRecoverySpaceId(response.items[0]?.id || "");
+      const firstOwner = response.items[0]?.owner_member_id;
+      setRecoveryTargetId(members.find((candidate) => candidate.status === "active" && candidate.id !== firstOwner)?.id || "");
+      setOwnershipRecoveryOpen(true);
+    } catch (loadError) {
+      setError(message(loadError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const selectRecoverySpace = (spaceId: string) => {
+    setRecoverySpaceId(spaceId);
+    const ownerId = adminSpaces.find((space) => space.id === spaceId)?.owner_member_id;
+    setRecoveryTargetId(members.find((candidate) => candidate.status === "active" && candidate.id !== ownerId)?.id || "");
+    setReviewOwnershipRecovery(false);
+    setOwnershipRecovered(false);
+  };
+
+  const transferEmergencyOwnership = async () => {
+    const selected = adminSpaces.find((space) => space.id === recoverySpaceId);
+    const target = members.find((candidate) => candidate.id === recoveryTargetId);
+    if (!selected || !target || recoveryReason.trim().length < 5 || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await contractData(contractClient.PUT("/api/v1/admin/spaces/{space_id}/ownership", {
+        body: {
+          expected_revision: selected.revision,
+          reason: recoveryReason.trim(),
+          target_member_id: target.id,
+        },
+        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { space_id: selected.id } },
+      }));
+      setAdminSpaces((current) => current.map((space) => space.id === selected.id ? {
+        ...space,
+        owner_display_name: target.display_name,
+        owner_member_id: target.id,
+        owner_username: target.username,
+        revision: space.revision + 1,
+      } : space));
+      setReviewOwnershipRecovery(false);
+      setRecoveryReason("");
+      setOwnershipRecovered(true);
+    } catch (transferError) {
+      setError(message(transferError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <ConsoleShell
       description="Super admins create family accounts. Space owners grant access separately so identity and knowledge boundaries stay explicit."
@@ -999,6 +1084,36 @@ export function PeopleConsole() {
                 </form>
               </>
             )}
+            <div className="ownership-recovery">
+              <div className="ownership-recovery-heading">
+                <div><span>Account recovery</span><strong>Emergency ownership</strong></div>
+                {!ownershipRecoveryOpen ? <button className="secondary-button" disabled={saving} onClick={() => void openOwnershipRecovery()} type="button"><KeyRound size={14} /> Open ownership recovery</button> : <button aria-label="Close ownership recovery" className="icon-button" onClick={() => { setOwnershipRecoveryOpen(false); setReviewOwnershipRecovery(false); }} type="button"><X size={15} /></button>}
+              </div>
+              {ownershipRecoveryOpen ? (
+                <div className="ownership-recovery-form">
+                  <p>Use only when an owner cannot recover their account. Space names and ownership metadata are visible here; content remains inaccessible.</p>
+                  <label htmlFor="recovery-space">Recovery space</label>
+                  <select id="recovery-space" onChange={(event) => selectRecoverySpace(event.target.value)} value={recoverySpaceId}>
+                    {adminSpaces.map((space) => <option key={space.id} value={space.id}>{space.name} · {space.owner_display_name}</option>)}
+                  </select>
+                  <label htmlFor="recovery-owner">New owner</label>
+                  <select id="recovery-owner" onChange={(event) => { setRecoveryTargetId(event.target.value); setReviewOwnershipRecovery(false); setOwnershipRecovered(false); }} value={recoveryTargetId}>
+                    {members.filter((candidate) => candidate.status === "active" && candidate.id !== adminSpaces.find((space) => space.id === recoverySpaceId)?.owner_member_id).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name} (@{candidate.username})</option>)}
+                  </select>
+                  <label htmlFor="recovery-reason">Recovery reason</label>
+                  <textarea id="recovery-reason" maxLength={500} minLength={5} onChange={(event) => { setRecoveryReason(event.target.value); setReviewOwnershipRecovery(false); setOwnershipRecovered(false); }} required value={recoveryReason} />
+                  <p className="ownership-boundary"><ShieldCheck size={14} /> This repair is audited and does not grant the Super Admin access to space content.</p>
+                  {reviewOwnershipRecovery ? (
+                    <div aria-label="Confirm emergency ownership transfer" className="confirmation-strip" role="alertdialog">
+                      <div><strong>Transfer ownership now?</strong><span>The current owner becomes an editor. The selected member becomes the sole owner.</span></div>
+                      <button className="secondary-button" onClick={() => setReviewOwnershipRecovery(false)} type="button">Go back</button>
+                      <button className="danger-button" disabled={saving} onClick={() => void transferEmergencyOwnership()} type="button">Confirm emergency transfer</button>
+                    </div>
+                  ) : <button className="secondary-button" disabled={!recoverySpaceId || !recoveryTargetId || recoveryReason.trim().length < 5 || saving} onClick={() => setReviewOwnershipRecovery(true)} type="button">Review ownership repair</button>}
+                  {ownershipRecovered ? <p className="inline-success"><ShieldCheck size={14} /> Ownership repaired. The action and reason were written to the audit trail.</p> : null}
+                </div>
+              ) : null}
+            </div>
             {error ? <p className="inline-error" role="alert">{error}</p> : null}
           </aside>
         </div>

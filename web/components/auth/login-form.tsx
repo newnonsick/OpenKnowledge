@@ -9,7 +9,7 @@ import { ApiError, contractClient, contractData } from "@/lib/api-client";
 export function LoginForm() {
   const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
-  const [showTotp, setShowTotp] = useState(false);
+  const [factorMode, setFactorMode] = useState<"none" | "recovery" | "totp">("none");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,10 +19,12 @@ export function LoginForm() {
     setSubmitting(true);
     const fields = new FormData(event.currentTarget);
     const totpCode = String(fields.get("totp_code") || "").trim();
+    const recoveryCode = String(fields.get("recovery_code") || "").trim();
     try {
       const session = await contractData(contractClient.POST("/api/v1/auth/login", {
         body: {
           password: String(fields.get("password") || ""),
+          recovery_code: recoveryCode || null,
           totp_code: totpCode || null,
           username: String(fields.get("username") || ""),
         },
@@ -64,14 +66,26 @@ export function LoginForm() {
         </button>
       </div>
 
-      <button className="totp-reveal" onClick={() => setShowTotp((value) => !value)} type="button">
-        <ShieldCheck aria-hidden="true" size={16} />
-        {showTotp ? "Hide authentication code" : "Use an authentication code"}
-      </button>
-      {showTotp ? (
+      <div className="auth-factor-actions">
+        <button className="totp-reveal" onClick={() => setFactorMode((value) => value === "totp" ? "none" : "totp")} type="button">
+          <ShieldCheck aria-hidden="true" size={16} />
+          {factorMode === "totp" ? "Hide authentication code" : "Use an authentication code"}
+        </button>
+        <button className="totp-reveal" onClick={() => setFactorMode((value) => value === "recovery" ? "none" : "recovery")} type="button">
+          <ShieldCheck aria-hidden="true" size={16} />
+          {factorMode === "recovery" ? "Hide recovery code" : "Use a recovery code"}
+        </button>
+      </div>
+      {factorMode === "totp" ? (
         <div className="totp-field-wrap">
           <label className="field-label" htmlFor="totp_code">Authentication code</label>
           <input autoComplete="one-time-code" className="text-field code-field" id="totp_code" inputMode="numeric" maxLength={8} name="totp_code" pattern="[0-9]{6,8}" />
+        </div>
+      ) : null}
+      {factorMode === "recovery" ? (
+        <div className="totp-field-wrap">
+          <label className="field-label" htmlFor="recovery_code">Recovery code</label>
+          <input autoCapitalize="none" autoComplete="one-time-code" className="text-field code-field" id="recovery_code" maxLength={64} name="recovery_code" required />
         </div>
       ) : null}
 

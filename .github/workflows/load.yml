@@ -12,6 +12,22 @@ on:
         required: true
         default: global
         type: string
+      data_scale:
+        description: Active retrieval-unit count and source scale of the target
+        required: true
+        type: string
+      authorized_space_count:
+        description: Number of spaces authorized to the load-test principal
+        required: true
+        type: string
+      provider_state:
+        description: LLM and embedding provider/model state for this run
+        required: true
+        type: string
+      host_sizing:
+        description: CPU, memory, storage, and network sizing of the target
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -30,3 +46,29 @@ jobs:
           GATEWAY_SPACE_ID: ${{ inputs.space_id }}
         with:
           path: tests/load/k6.js
+      - name: Record production-shape metadata
+        env:
+          LOAD_AUTHORIZED_SPACE_COUNT: ${{ inputs.authorized_space_count }}
+          LOAD_DATA_SCALE: ${{ inputs.data_scale }}
+          LOAD_HOST_SIZING: ${{ inputs.host_sizing }}
+          LOAD_PROVIDER_STATE: ${{ inputs.provider_state }}
+          LOAD_SPACE_ID: ${{ inputs.space_id }}
+        run: |
+          jq -n \
+            --arg commit "$GITHUB_SHA" \
+            --arg data_scale "$LOAD_DATA_SCALE" \
+            --arg authorized_space_count "$LOAD_AUTHORIZED_SPACE_COUNT" \
+            --arg provider_state "$LOAD_PROVIDER_STATE" \
+            --arg host_sizing "$LOAD_HOST_SIZING" \
+            --arg space_id "$LOAD_SPACE_ID" \
+            --arg concurrency "management=4,retrieval=4,streaming=2,ingestion_rate=2/min" \
+            '{commit:$commit,data_scale:$data_scale,authorized_space_count:$authorized_space_count,provider_state:$provider_state,host_sizing:$host_sizing,space_id:$space_id,concurrency:$concurrency}' > load-metadata.json
+      - name: Archive load evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: production-load-${{ github.sha }}
+          path: |
+            load-summary.json
+            load-metadata.json
+          retention-days: 90

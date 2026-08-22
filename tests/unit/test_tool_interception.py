@@ -143,13 +143,12 @@ async def test_tool_definition_ingestion_merges_external_and_internal():
     )
 
     combined_defs, upstream_tools = orchestrator._prepare_tools([external_tool])
-    assert len(combined_defs) == 6  # 1 external + 5 internal
+    assert len(combined_defs) == 2
     names = [td.function.name for td in combined_defs]
-    assert "bash" in names
-    assert "knowledge_search" in names
+    assert names == ["bash", "knowledge_search"]
 
     assert upstream_tools is not None
-    assert len(upstream_tools) == 6
+    assert len(upstream_tools) == 2
     assert any(t["function"]["name"] == "bash" for t in upstream_tools)
     assert any(t["function"]["name"] == "knowledge_search" for t in upstream_tools)
 
@@ -210,20 +209,13 @@ async def test_single_turn_internal_tool_interception():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_multi_turn_internal_tool_sequence():
-    """Verify 3-turn sequence: knowledge_search -> knowledge_save -> final answer."""
+async def test_provider_conversation_supports_search_only():
     mock_ks = MagicMock(spec=KnowledgeService)
     mock_ks.execute_tool = AsyncMock(side_effect=[
         ToolResult(
             tool_call_id="call_1",
             name="knowledge_search",
             content=json.dumps({"results": [], "count": 0}),
-            is_error=False,
-        ),
-        ToolResult(
-            tool_call_id="call_2",
-            name="knowledge_save",
-            content=json.dumps({"id": "item-123", "status": "created"}),
             is_error=False,
         ),
     ])
@@ -242,25 +234,11 @@ async def test_multi_turn_internal_tool_sequence():
     resp2 = CanonicalLLMResponse(
         id="resp_2",
         model="gpt-4o",
-        tool_calls=[
-            ToolCall(
-                id="call_2",
-                function=FunctionCall(
-                    name="knowledge_save",
-                    arguments='{"title": "Logging Standard", "content": "Use structured JSON logging."}',
-                ),
-            )
-        ],
-        finish_reason="tool_calls",
-    )
-    resp3 = CanonicalLLMResponse(
-        id="resp_3",
-        model="gpt-4o",
         content="Saved the new logging standard.",
         finish_reason="stop",
     )
 
-    llm_client = MockLLMClient([resp1, resp2, resp3])
+    llm_client = MockLLMClient([resp1, resp2])
     orchestrator = ChatOrchestratorService(
         llm_client=llm_client,
         knowledge_service=mock_ks,
@@ -275,8 +253,8 @@ async def test_multi_turn_internal_tool_sequence():
 
     assert result.finish_reason == "stop"
     assert "Saved the new logging standard." in result.content[0].text
-    assert llm_client.call_count == 3
-    assert mock_ks.execute_tool.await_count == 2
+    assert llm_client.call_count == 2
+    assert mock_ks.execute_tool.await_count == 1
 
 
 @pytest.mark.unit
@@ -426,16 +404,7 @@ async def test_internal_tool_execution_with_retrieval_service():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_internal_tool_error_handling_gracefully_fed_back():
-    """Verify tool errors (OCC conflict, not found, invalid JSON) are fed back to LLM with is_error=True."""
-    mock_ks = MagicMock(spec=KnowledgeService)
-    mock_ks.execute_tool = AsyncMock(return_value=ToolResult(
-        tool_call_id="call_occ_err",
-        name="knowledge_update",
-        content=json.dumps({"message": "Version conflict", "code": "version_mismatch", "type": "concurrency_conflict_error"}),
-        is_error=True,
-    ))
-
+async def test_unavailable_search_executor_errors_are_fed_back():
     resp1 = CanonicalLLMResponse(
         id="resp_1",
         model="gpt-4o",
@@ -443,8 +412,8 @@ async def test_internal_tool_error_handling_gracefully_fed_back():
             ToolCall(
                 id="call_occ_err",
                 function=FunctionCall(
-                    name="knowledge_update",
-                    arguments='{"item_id": "00000000-0000-0000-0000-000000000001", "expected_version": 1, "content": "Updated"}',
+                    name="knowledge_search",
+                    arguments='{"limit": 99}',
                 ),
             )
         ],
@@ -453,28 +422,25 @@ async def test_internal_tool_error_handling_gracefully_fed_back():
     resp2 = CanonicalLLMResponse(
         id="resp_2",
         model="gpt-4o",
-        content="I encountered a concurrency version conflict while updating the knowledge item.",
+        content="The search request was invalid.",
         finish_reason="stop",
     )
 
     llm_client = MockLLMClient([resp1, resp2])
     orchestrator = ChatOrchestratorService(
         llm_client=llm_client,
-        knowledge_service=mock_ks,
     )
 
     request = CanonicalChatRequest(
         model="gpt-4o",
-        messages=[CanonicalMessage(role="user", content="Update item 1.")],
+        messages=[CanonicalMessage(role="user", content="Search knowledge.")],
     )
 
     result = await orchestrator.orchestrate_chat(request)
 
     assert result.finish_reason == "stop"
-    assert "concurrency version conflict" in result.content[0].text
     assert llm_client.call_count == 2
-    # Verify second LLM turn received the tool message with error content
     second_turn_messages = llm_client.call_history[1]["messages"]
     tool_msg = next((m for m in second_turn_messages if m["role"] == "tool"), None)
     assert tool_msg is not None
-    assert "version_mismatch" in tool_msg["content"]
+    assert "retrieval_error" in tool_msg["content"]

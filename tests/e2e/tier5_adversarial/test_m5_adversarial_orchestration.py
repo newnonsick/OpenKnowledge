@@ -400,8 +400,7 @@ class TestAdversarialMalformedToolArguments:
         assert tool_msg is not None
         assert "Invalid JSON" in tool_msg["content"] or "validation_error" in tool_msg["content"]
 
-    async def test_missing_required_parameter_in_knowledge_get(self):
-        """LLM calls knowledge_get without item_id -> returns validation error block."""
+    async def test_unavailable_reserved_knowledge_get_fails_closed(self):
         missing_param_response = CanonicalLLMResponse(
             id="missing-param-1",
             model="test-model",
@@ -432,9 +431,11 @@ class TestAdversarialMalformedToolArguments:
             messages=[CanonicalMessage(role="user", content="Get item")],
         )
 
-        response = await orchestrator.orchestrate_chat(request)
-        assert llm_client.call_count == 2
-        assert response.finish_reason == "stop"
+        with pytest.raises(ToolExecutionException) as exc_info:
+            await orchestrator.orchestrate_chat(request)
+
+        assert exc_info.value.code == "unsupported_internal_tool"
+        assert llm_client.call_count == 1
 
 
 # ==============================================================================
@@ -470,7 +471,7 @@ class TestAdversarialExtremePayloads:
         assert _get_response_text(response) == "Handled huge context successfully."
         assert response.usage.prompt_tokens == 25000
 
-    async def test_50_tool_calls_in_single_turn(self):
+    async def test_50_tool_calls_in_single_turn_exceeds_safe_budget(self):
         """Stress: Upstream LLM returns 50 simultaneous internal tool calls in a single turn."""
         tool_calls = [
             ToolCall(
@@ -491,15 +492,7 @@ class TestAdversarialExtremePayloads:
             usage=CanonicalUsage(prompt_tokens=100, completion_tokens=500, total_tokens=600),
         )
 
-        final_response = CanonicalLLMResponse(
-            id="bulk-final-2",
-            model="test-model",
-            content="Aggregated all 50 search results.",
-            finish_reason="stop",
-            usage=CanonicalUsage(prompt_tokens=800, completion_tokens=50, total_tokens=850),
-        )
-
-        llm_client = ScriptedLLMClient([bulk_response, final_response])
+        llm_client = ScriptedLLMClient([bulk_response])
         orchestrator = ChatOrchestratorService(llm_client=llm_client, max_tool_iterations=5)
 
         request = CanonicalChatRequest(
@@ -507,8 +500,7 @@ class TestAdversarialExtremePayloads:
             messages=[CanonicalMessage(role="user", content="Search 50 topics in parallel")],
         )
 
-        response = await orchestrator.orchestrate_chat(request)
-        assert llm_client.call_count == 2
-        assert response.finish_reason == "stop"
-        assert _get_response_text(response) == "Aggregated all 50 search results."
-        assert response.usage.total_tokens == 1450
+        with pytest.raises(ToolExecutionException) as exc_info:
+            await orchestrator.orchestrate_chat(request)
+        assert exc_info.value.code == "tool_call_limit"
+        assert llm_client.call_count == 1

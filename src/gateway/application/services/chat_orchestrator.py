@@ -41,11 +41,12 @@ from src.gateway.domain.exceptions import (
 from src.gateway.domain.prompts import compose_system_prompt
 from src.gateway.domain.tools import (
     FunctionCall,
+    get_internal_tool_definitions,
     ToolCall,
     ToolDefinition,
     ToolResult,
-    get_internal_tool_definitions,
     is_internal_tool,
+    is_supported_internal_tool,
 )
 from src.gateway.infrastructure.persistence.principal_context import get_bound_principal
 from src.gateway.observability import increment_metric, observe_metric
@@ -81,6 +82,9 @@ class ChatOrchestratorService(IChatOrchestrator):
         retrieval_service: Optional[IRetrievalService | AuthorizedRetrievalService] = None,
         max_tool_iterations: Optional[int] = None,
         tool_timeout_seconds: Optional[float] = None,
+        max_internal_tool_calls: Optional[int] = None,
+        max_repeated_tool_signatures: Optional[int] = None,
+        max_tool_wall_clock_seconds: Optional[float] = None,
         max_hidden_turn_bytes: int = 8 * 1024 * 1024,
     ) -> None:
         self.llm_client = llm_client
@@ -96,9 +100,101 @@ class ChatOrchestratorService(IChatOrchestrator):
             if tool_timeout_seconds is not None
             else getattr(get_settings().gateway, "tool_timeout_seconds", 15.0)
         )
-        if self.tool_timeout_seconds <= 0 or max_hidden_turn_bytes <= 0:
+        self.max_internal_tool_calls = (
+            max_internal_tool_calls
+            if max_internal_tool_calls is not None
+            else get_settings().gateway.max_internal_tool_calls
+        )
+        self.max_repeated_tool_signatures = (
+            max_repeated_tool_signatures
+            if max_repeated_tool_signatures is not None
+            else get_settings().gateway.max_repeated_tool_signatures
+        )
+        self.max_tool_wall_clock_seconds = (
+            max_tool_wall_clock_seconds
+            if max_tool_wall_clock_seconds is not None
+            else get_settings().gateway.max_tool_wall_clock_seconds
+        )
+        if (
+            self.tool_timeout_seconds <= 0
+            or self.max_internal_tool_calls <= 0
+            or self.max_repeated_tool_signatures <= 0
+            or self.max_tool_wall_clock_seconds <= 0
+            or max_hidden_turn_bytes <= 0
+        ):
             raise ValueError("Tool timeout and hidden turn buffer limit must be positive")
         self.max_hidden_turn_bytes = max_hidden_turn_bytes
+
+    def _remaining_wall_clock(self, started_at: float) -> float:
+        remaining = self.max_tool_wall_clock_seconds - (time.monotonic() - started_at)
+        if remaining <= 0:
+            raise self._wall_clock_error()
+        return remaining
+
+    def _wall_clock_error(self) -> ToolExecutionException:
+        return ToolExecutionException(
+            "Tool wall-clock budget exhausted.",
+            code="tool_wall_clock_limit",
+        )
+
+    async def _iterate_with_wall_clock(
+        self,
+        stream: AsyncIterator[CanonicalLLMStreamChunk],
+        started_at: float,
+    ) -> AsyncIterator[CanonicalLLMStreamChunk]:
+        iterator = aiter(stream)
+        while True:
+            try:
+                chunk = await asyncio.wait_for(
+                    anext(iterator),
+                    timeout=self._remaining_wall_clock(started_at),
+                )
+            except StopAsyncIteration:
+                return
+            except TimeoutError as exc:
+                raise self._wall_clock_error() from exc
+            yield chunk
+
+    def _enforce_internal_budgets(
+        self,
+        tool_calls: List[ToolCall],
+        total_calls: int,
+        signature_counts: Dict[str, int],
+    ) -> int:
+        next_total = total_calls + len(tool_calls)
+        if next_total > self.max_internal_tool_calls:
+            raise ToolExecutionException(
+                "Internal tool call budget exhausted.",
+                code="tool_call_limit",
+            )
+        for tool_call in tool_calls:
+            arguments = tool_call.function.arguments
+            if isinstance(arguments, str):
+                try:
+                    normalized_arguments = json.dumps(
+                        json.loads(arguments),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                except (TypeError, ValueError):
+                    normalized_arguments = arguments
+            else:
+                normalized_arguments = json.dumps(
+                    arguments or {},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            signature = f"{tool_call.function.name}:{normalized_arguments}"
+            count = signature_counts.get(signature, 0) + 1
+            if count > self.max_repeated_tool_signatures:
+                raise ToolExecutionException(
+                    "Repeated internal tool call budget exhausted.",
+                    code="repeated_tool_call_limit",
+                )
+            signature_counts[signature] = count
+        return next_total
 
     def _prepare_tools(
         self, client_tools: List[ToolDefinition]
@@ -114,7 +210,14 @@ class ChatOrchestratorService(IChatOrchestrator):
         combined_tools: List[ToolDefinition] = list(client_tools)
         existing_names = {t.function.name for t in client_tools}
 
-        for internal_td in get_internal_tool_definitions():
+        principal = get_bound_principal()
+        search_allowed = principal is None or "*" in principal.scopes or "knowledge:read" in principal.scopes
+        internal_definitions = (
+            [tool for tool in get_internal_tool_definitions() if tool.function.name == "knowledge_search"]
+            if search_allowed
+            else []
+        )
+        for internal_td in internal_definitions:
             if internal_td.function.name not in existing_names:
                 combined_tools.append(internal_td)
                 existing_names.add(internal_td.function.name)
@@ -266,13 +369,32 @@ class ChatOrchestratorService(IChatOrchestrator):
                     is_error=True,
                 )
 
+            if (
+                name == "knowledge_search"
+                and self.retrieval_service is None
+                and self.knowledge_service is None
+            ):
+                    return CanonicalToolResultBlock(
+                        tool_use_id=call_id,
+                        content=json.dumps(
+                            {
+                                "error": "Knowledge retrieval is unavailable.",
+                                "type": "retrieval_error",
+                            }
+                        ),
+                        is_error=True,
+                    )
+
             if name == "knowledge_search" and self.retrieval_service is not None:
                 query = str(args.get("query", ""))
                 if not query or not query.strip():
                     return CanonicalToolResultBlock(
                         tool_use_id=call_id,
                         content=json.dumps(
-                            {"error": "Missing required 'query' parameter.", "type": "validation_error"}
+                            {
+                                "error": "Missing required 'query' parameter.",
+                                "type": "validation_error",
+                            }
                         ),
                         is_error=True,
                     )
@@ -437,9 +559,13 @@ class ChatOrchestratorService(IChatOrchestrator):
         conversation_messages: List[CanonicalMessage] = list(request.messages)
         iteration = 0
         total_usage = CanonicalUsage()
+        total_internal_calls = 0
+        signature_counts: Dict[str, int] = {}
+        started_at = time.monotonic()
 
         while iteration < self.max_tool_iterations:
             iteration += 1
+            remaining = self._remaining_wall_clock(started_at)
 
             upstream_messages = self._prepare_upstream_messages(
                 conversation_messages,
@@ -447,17 +573,21 @@ class ChatOrchestratorService(IChatOrchestrator):
             )
 
             extra_kwargs = getattr(request, "extra_params", {}) or {}
-            llm_response: CanonicalLLMResponse = await self.llm_client.generate(
-                messages=upstream_messages,
-                tools=upstream_tools,
-                model=request.model,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                top_p=request.top_p,
-                stop=request.stop if request.stop else None,
-                tool_choice=request.tool_choice,
-                **extra_kwargs,
-            )
+            try:
+                async with asyncio.timeout(remaining):
+                    llm_response: CanonicalLLMResponse = await self.llm_client.generate(
+                        messages=upstream_messages,
+                        tools=upstream_tools,
+                        model=request.model,
+                        temperature=request.temperature,
+                        max_tokens=request.max_tokens,
+                        top_p=request.top_p,
+                        stop=request.stop if request.stop else None,
+                        tool_choice=request.tool_choice,
+                        **extra_kwargs,
+                    )
+            except TimeoutError as exc:
+                raise self._wall_clock_error() from exc
 
             if llm_response.usage:
                 total_usage.prompt_tokens += llm_response.usage.prompt_tokens
@@ -488,14 +618,20 @@ class ChatOrchestratorService(IChatOrchestrator):
             if len(llm_response.tool_calls) > 64:
                 raise ToolExecutionException("Upstream returned too many tool calls.")
             has_internal_tool = any(
-                is_internal_tool(tc.function.name) for tc in llm_response.tool_calls
+                is_supported_internal_tool(tc.function.name) for tc in llm_response.tool_calls
             )
             has_external_tool = any(
                 not is_internal_tool(tc.function.name) for tc in llm_response.tool_calls
             )
+            if any(is_internal_tool(tc.function.name) and not is_supported_internal_tool(tc.function.name) for tc in llm_response.tool_calls):
+                raise ToolExecutionException(
+                    "Requested gateway tool is unavailable.",
+                    code="unsupported_internal_tool",
+                )
             if has_internal_tool and has_external_tool:
                 raise ToolExecutionException(
-                    "Mixed internal and external tool calls are not supported."
+                    "Mixed internal and external tool calls are not supported.",
+                    code="mixed_tool_calls",
                 )
             if has_external_tool:
                 observe_metric("gateway_tool_iteration_count", iteration, outcome="external_handoff")
@@ -532,6 +668,12 @@ class ChatOrchestratorService(IChatOrchestrator):
                     usage=total_usage,
                 )
 
+            total_internal_calls = self._enforce_internal_budgets(
+                llm_response.tool_calls,
+                total_internal_calls,
+                signature_counts,
+            )
+
             assistant_blocks: List[CanonicalBlock] = []
             if llm_response.reasoning_content:
                 assistant_blocks.append(
@@ -567,6 +709,7 @@ class ChatOrchestratorService(IChatOrchestrator):
 
             tool_result_blocks: List[CanonicalToolResultBlock] = []
             for tc in llm_response.tool_calls:
+                self._remaining_wall_clock(started_at)
                 result_block = await self._execute_internal_tool_bounded(
                     tc,
                     effective_workspace,
@@ -585,7 +728,10 @@ class ChatOrchestratorService(IChatOrchestrator):
 
         observe_metric("gateway_tool_iteration_count", iteration, outcome="exhausted")
         increment_metric("gateway_tool_events_total", event="budget", outcome="exhausted")
-        raise ToolExecutionException("Tool execution budget exhausted.")
+        raise ToolExecutionException(
+            "Tool execution budget exhausted.",
+            code="tool_iteration_limit",
+        )
 
     async def orchestrate_chat_stream(
         self,
@@ -599,8 +745,12 @@ class ChatOrchestratorService(IChatOrchestrator):
 
         conversation_messages: List[CanonicalMessage] = list(request.messages)
         iteration = 0
+        total_internal_calls = 0
+        signature_counts: Dict[str, int] = {}
+        started_at = time.monotonic()
         while iteration < self.max_tool_iterations:
             iteration += 1
+            self._remaining_wall_clock(started_at)
 
             upstream_messages = self._prepare_upstream_messages(
                 conversation_messages,
@@ -628,7 +778,7 @@ class ChatOrchestratorService(IChatOrchestrator):
             last_model = request.model
             buffered_bytes = 0
 
-            async for chunk in stream_iter:
+            async for chunk in self._iterate_with_wall_clock(stream_iter, started_at):
                 turn_chunks.append(chunk)
                 buffered_bytes += len((chunk.delta_content or "").encode("utf-8"))
                 buffered_bytes += len((chunk.delta_reasoning_content or "").encode("utf-8"))
@@ -685,16 +835,26 @@ class ChatOrchestratorService(IChatOrchestrator):
                 )
 
             has_internal_tool = any(
-                is_internal_tool(tool.function.name)
+                is_supported_internal_tool(tool.function.name)
                 for tool in reconstructed_tool_calls
             )
             has_external_tool = any(
                 not is_internal_tool(tool.function.name)
                 for tool in reconstructed_tool_calls
             )
+            if any(
+                is_internal_tool(tool.function.name)
+                and not is_supported_internal_tool(tool.function.name)
+                for tool in reconstructed_tool_calls
+            ):
+                raise ToolExecutionException(
+                    "Requested gateway tool is unavailable.",
+                    code="unsupported_internal_tool",
+                )
             if has_internal_tool and has_external_tool:
                 raise ToolExecutionException(
-                    "Mixed internal and external tool calls are not supported."
+                    "Mixed internal and external tool calls are not supported.",
+                    code="mixed_tool_calls",
                 )
 
             if not has_internal_tool:
@@ -723,6 +883,12 @@ class ChatOrchestratorService(IChatOrchestrator):
                 return
 
             if has_internal_tool:
+
+                total_internal_calls = self._enforce_internal_budgets(
+                    reconstructed_tool_calls,
+                    total_internal_calls,
+                    signature_counts,
+                )
 
                 full_text = "".join(turn_text_fragments)
                 full_thinking = "".join(turn_thinking_fragments)
@@ -759,6 +925,7 @@ class ChatOrchestratorService(IChatOrchestrator):
 
                 tool_result_blocks: List[CanonicalToolResultBlock] = []
                 for tc in reconstructed_tool_calls:
+                    self._remaining_wall_clock(started_at)
                     result_block = await self._execute_internal_tool_bounded(
                         tc,
                         effective_workspace,
@@ -780,4 +947,7 @@ class ChatOrchestratorService(IChatOrchestrator):
 
         observe_metric("gateway_tool_iteration_count", iteration, outcome="exhausted")
         increment_metric("gateway_tool_events_total", event="budget", outcome="exhausted")
-        raise ToolExecutionException("Tool execution budget exhausted.")
+        raise ToolExecutionException(
+            "Tool execution budget exhausted.",
+            code="tool_iteration_limit",
+        )

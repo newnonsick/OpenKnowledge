@@ -5,7 +5,7 @@ from uuid import UUID
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.gateway.application.security.passwords import PasswordService
@@ -26,6 +26,7 @@ from src.gateway.presentation.schemas.management_responses import (
     MANAGEMENT_ERROR_RESPONSES,
     SessionAuthentication,
     SessionRefresh,
+    SessionStepUp,
     SignOut,
     TotpConfirmation,
     TotpEnrollment,
@@ -45,13 +46,57 @@ class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=255)
     password: str = Field(min_length=1, max_length=128)
     totp_code: str | None = Field(default=None, min_length=6, max_length=8)
+    recovery_code: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_second_factor(self) -> "LoginRequest":
+        if self.totp_code and self.recovery_code:
+            raise ValueError("Provide one authentication factor")
+        return self
 
 
 class PasswordChangeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    current_password: str | None = Field(default=None, min_length=1, max_length=128)
+    current_totp_code: str | None = Field(default=None, min_length=6, max_length=8)
+    recovery_code: str | None = Field(default=None, min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=128)
     confirmation: str = Field(min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_second_factor(self) -> "PasswordChangeRequest":
+        if self.current_totp_code and self.recovery_code:
+            raise ValueError("Provide one authentication factor")
+        return self
+
+
+class StepUpRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    password: str = Field(min_length=1, max_length=128)
+    totp_code: str | None = Field(default=None, min_length=6, max_length=8)
+    recovery_code: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_second_factor(self) -> "StepUpRequest":
+        if self.totp_code and self.recovery_code:
+            raise ValueError("Provide one authentication factor")
+        return self
+
+
+class TotpEnrollRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str | None = Field(default=None, min_length=1, max_length=128)
+    current_totp_code: str | None = Field(default=None, min_length=6, max_length=8)
+    recovery_code: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_second_factor(self) -> "TotpEnrollRequest":
+        if self.current_totp_code and self.recovery_code:
+            raise ValueError("Provide one authentication factor")
+        return self
 
 
 class TotpConfirmRequest(BaseModel):
@@ -59,6 +104,15 @@ class TotpConfirmRequest(BaseModel):
 
     factor_id: UUID
     code: str = Field(min_length=6, max_length=8)
+    current_password: str | None = Field(default=None, min_length=1, max_length=128)
+    current_totp_code: str | None = Field(default=None, min_length=6, max_length=8)
+    recovery_code: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_second_factor(self) -> "TotpConfirmRequest":
+        if self.current_totp_code and self.recovery_code:
+            raise ValueError("Provide one authentication factor")
+        return self
 
 
 class EmptyRequest(BaseModel):
@@ -91,6 +145,45 @@ def _member_id(principal: Principal) -> UUID:
         return UUID(principal.subject_id)
     except ValueError as exc:
         raise AuthenticationException("Authentication required.") from exc
+
+
+def _credential_id(principal: Principal) -> UUID:
+    if principal.credential_id is None:
+        raise AuthenticationException("Authentication required.")
+    try:
+        return UUID(principal.credential_id)
+    except ValueError as exc:
+        raise AuthenticationException("Authentication required.") from exc
+
+
+async def _verify_current_credentials(
+    identity: IdentityService,
+    member: MemberModel,
+    *,
+    password: str | None,
+    totp_code: str | None,
+    recovery_code: str | None,
+    request_id: str,
+) -> None:
+    if not password:
+        raise AuthenticationException("Invalid current credentials.")
+    authenticated = await identity.authenticate_password(member.username, password)
+    if authenticated.principal.subject_id != str(member.id) or authenticated.principal.restricted:
+        raise AuthenticationException("Invalid current credentials.")
+    if member.system_role != SystemRole.SUPER_ADMIN.value:
+        return
+    if totp_code:
+        verified = await identity.verify_totp_login(member.id, totp_code)
+    elif recovery_code:
+        verified = await identity.consume_recovery_code(
+            member.id,
+            recovery_code,
+            request_id=request_id,
+        )
+    else:
+        verified = False
+    if not verified:
+        raise AuthenticationException("Invalid current credentials.")
 
 
 def _verify_origin(request: Request) -> None:
@@ -188,12 +281,19 @@ async def login(
         )
         principal = authenticated.principal
         member_id = _member_id(principal)
-        if (
-            principal.system_role is SystemRole.SUPER_ADMIN
-            and not principal.restricted
-            and not await identity.verify_totp_login(member_id, payload.totp_code or "")
-        ):
-            raise AuthenticationException("Invalid username or password.")
+        if principal.system_role is SystemRole.SUPER_ADMIN and not principal.restricted:
+            if payload.totp_code:
+                second_factor_valid = await identity.verify_totp_login(member_id, payload.totp_code)
+            elif payload.recovery_code:
+                second_factor_valid = await identity.consume_recovery_code(
+                    member_id,
+                    payload.recovery_code,
+                    request_id=get_request_id(request),
+                )
+            else:
+                second_factor_valid = False
+            if not second_factor_valid:
+                raise AuthenticationException("Invalid username or password.")
     except AuthenticationException:
         async with throttle_factory.begin() as throttle_session:
             retry_after = await LoginThrottleService(throttle_session).record_failure(payload.username, client_ip)
@@ -243,6 +343,35 @@ async def refresh(
     )
 
 
+@router.post("/step-up", response_model=SessionStepUp)
+async def step_up(
+    payload: StepUpRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+) -> SessionStepUp:
+    principal = _principal(request)
+    member = await session.get(MemberModel, _member_id(principal))
+    if member is None or principal.restricted:
+        raise AuthenticationException("Authentication required.")
+    identity = _identity_service(session)
+    await _verify_current_credentials(
+        identity,
+        member,
+        password=payload.password,
+        totp_code=payload.totp_code,
+        recovery_code=payload.recovery_code,
+        request_id=get_request_id(request),
+    )
+    credential = await session.get(SessionCredentialModel, _credential_id(principal))
+    if credential is None:
+        raise AuthenticationException("Authentication required.")
+    expires_at = await SessionService(session).record_step_up(
+        credential.family_id,
+        request_id=get_request_id(request),
+    )
+    return SessionStepUp(status="reauthenticated", step_up_expires_at=expires_at)
+
+
 @router.post("/password", response_model=SessionAuthentication, response_model_exclude_none=True)
 async def change_password(
     payload: PasswordChangeRequest,
@@ -253,7 +382,20 @@ async def change_password(
     principal = _principal(request)
     member_id = _member_id(principal)
     current_time = datetime.now(timezone.utc)
-    await _identity_service(session).change_password(
+    identity = _identity_service(session)
+    member = await session.get(MemberModel, member_id)
+    if member is None:
+        raise AuthenticationException("Authentication required.")
+    if not principal.restricted:
+        await _verify_current_credentials(
+            identity,
+            member,
+            password=payload.current_password,
+            totp_code=payload.current_totp_code,
+            recovery_code=payload.recovery_code,
+            request_id=get_request_id(request),
+        )
+    await identity.change_password(
         member_id,
         new_password=payload.password,
         confirmation=payload.confirmation,
@@ -299,14 +441,28 @@ async def change_password(
 
 @router.post("/mfa/totp/enroll", response_model=TotpEnrollment)
 async def enroll_totp(
-    payload: EmptyRequest,
+    payload: TotpEnrollRequest,
     request: Request,
     response: Response,
     session: AsyncSession = Depends(get_db_session),
 ) -> TotpEnrollment:
     principal = _principal(request)
-    enrollment = await _identity_service(session).begin_totp_enrollment(
-        _member_id(principal),
+    member_id = _member_id(principal)
+    identity = _identity_service(session)
+    member = await session.get(MemberModel, member_id)
+    if member is None:
+        raise AuthenticationException("Authentication required.")
+    if not principal.restricted:
+        await _verify_current_credentials(
+            identity,
+            member,
+            password=payload.current_password,
+            totp_code=payload.current_totp_code,
+            recovery_code=payload.recovery_code,
+            request_id=get_request_id(request),
+        )
+    enrollment = await identity.begin_totp_enrollment(
+        member_id,
         request_id=get_request_id(request),
     )
     response.headers["Cache-Control"] = "no-store"
@@ -326,7 +482,20 @@ async def confirm_totp(
     principal = _principal(request)
     member_id = _member_id(principal)
     current_time = datetime.now(timezone.utc)
-    recovery_codes = await _identity_service(session).confirm_totp_enrollment(
+    identity = _identity_service(session)
+    member = await session.get(MemberModel, member_id)
+    if member is None:
+        raise AuthenticationException("Authentication required.")
+    if not principal.restricted:
+        await _verify_current_credentials(
+            identity,
+            member,
+            password=payload.current_password,
+            totp_code=payload.current_totp_code,
+            recovery_code=payload.recovery_code,
+            request_id=get_request_id(request),
+        )
+    recovery_codes = await identity.confirm_totp_enrollment(
         member_id,
         payload.factor_id,
         payload.code,

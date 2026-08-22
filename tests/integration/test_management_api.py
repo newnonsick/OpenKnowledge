@@ -34,6 +34,7 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
     now = datetime.now(timezone.utc)
     admin_id = uuid4()
     member_id = uuid4()
+    repair_target_id = uuid4()
     mfa_key = Fernet.generate_key().decode("ascii")
     settings = Settings(
         gateway={
@@ -69,7 +70,17 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                         system_role=SystemRole.MEMBER.value,
                         force_password_change=False,
                     ),
+                    MemberModel(
+                        id=repair_target_id,
+                        username="repair-target",
+                        username_normalized="repair-target",
+                        display_name="Repair Target",
+                        status=MemberStatus.ACTIVE.value,
+                        system_role=SystemRole.MEMBER.value,
+                        force_password_change=False,
+                    ),
                     Workspace(id="global", name="Family Shared", created_by_member_id=admin_id),
+                    Workspace(id="repair-space", name="Private repair space", created_by_member_id=member_id),
                     EmbeddingGenerationModel(
                         id=uuid4(),
                         purpose="retrieval",
@@ -94,6 +105,12 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                         space_id="global",
                         member_id=member_id,
                         role=SpaceRole.EDITOR.value,
+                    ),
+                    SpaceMembershipModel(
+                        id=uuid4(),
+                        space_id="repair-space",
+                        member_id=member_id,
+                        role=SpaceRole.OWNER.value,
                     ),
                 ]
             )
@@ -141,7 +158,12 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
 
                 spaces = await member_client.get("/api/v1/spaces?limit=20")
                 assert spaces.status_code == 200
-                assert [(item["id"], item["role"]) for item in spaces.json()["items"]] == [("global", "editor")]
+                assert [(item["id"], item["role"]) for item in spaces.json()["items"]] == [
+                    ("global", "editor"),
+                    ("repair-space", "owner"),
+                ]
+                denied_admin_spaces = await member_client.get("/api/v1/admin/spaces")
+                assert denied_admin_spaces.status_code == 404
 
                 created_space = await member_client.post(
                     "/api/v1/spaces",
@@ -164,13 +186,9 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                     f"/api/v1/spaces/{private_space_id}/member-candidates"
                 )
                 assert candidates.status_code == 200
-                assert candidates.json()["items"] == [
-                    {
-                        "member_id": str(admin_id),
-                        "username": "admin",
-                        "display_name": "Admin",
-                    }
-                ]
+                assert {
+                    item["username"] for item in candidates.json()["items"]
+                } == {"admin", "repair-target"}
 
                 membership = await member_client.put(
                     f"/api/v1/spaces/{private_space_id}/members/{admin_id}",
@@ -362,6 +380,28 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 assert "temporary_password" not in str(member_list.json())
                 assert any(item["username"] == "new-member" for item in member_list.json()["items"])
                 created_member_id = created_member.json()["id"]
+                admin_spaces = await admin_client.get("/api/v1/admin/spaces?limit=100")
+                assert admin_spaces.status_code == 200
+                repair_space = next(
+                    item for item in admin_spaces.json()["items"] if item["id"] == "repair-space"
+                )
+                assert repair_space["owner_member_id"] == str(member_id)
+                assert repair_space["owner_username"] == "member"
+                repaired_ownership = await admin_client.put(
+                    "/api/v1/admin/spaces/repair-space/ownership",
+                    headers={
+                        "Origin": "https://gateway.test",
+                        "X-CSRF-Token": admin_session.csrf_token.reveal(),
+                        "Idempotency-Key": "repair-space-owner",
+                    },
+                    json={
+                        "target_member_id": str(repair_target_id),
+                        "expected_revision": repair_space["revision"],
+                        "reason": "Restore ownership after account recovery",
+                    },
+                )
+                assert repaired_ownership.status_code == 200
+                assert repaired_ownership.json()["member_id"] == str(repair_target_id)
                 reset_member = await admin_client.post(
                     f"/api/v1/members/{created_member_id}/password-reset",
                     headers={

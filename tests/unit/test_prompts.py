@@ -16,11 +16,10 @@ def test_compose_system_prompt_default_when_no_client_prompt():
     """Verify compose_system_prompt returns the default knowledge directive when client prompt is None or empty."""
     prompt = compose_system_prompt(client_system_prompt=None, enabled=True)
     assert prompt is not None
-    assert "# Long-Term Knowledge and Memory" in prompt
+    assert "# Shared Knowledge Retrieval" in prompt
     assert "knowledge_search" in prompt
-    assert "knowledge_save" in prompt
-    assert "Only save or update knowledge when the user explicitly asks you to do so." in prompt
-    assert "Never delete or archive knowledge without explicit user confirmation." in prompt
+    for unavailable_tool in ("knowledge_get", "knowledge_save", "knowledge_update", "knowledge_delete"):
+        assert unavailable_tool not in prompt
 
     prompt_empty = compose_system_prompt(client_system_prompt="   ", enabled=True)
     assert prompt_empty == DEFAULT_KNOWLEDGE_SYSTEM_PROMPT.strip()
@@ -34,8 +33,8 @@ def test_compose_system_prompt_appends_to_client_prompt():
     assert composed is not None
     assert composed.startswith("You are an expert Python developer assistant.")
     assert "\n\n---\n\n" in composed
-    assert "# Long-Term Knowledge and Memory" in composed
-    assert "Only save or update knowledge when the user explicitly asks you to do so." in composed
+    assert "# Shared Knowledge Retrieval" in composed
+    assert "knowledge_search" in composed
 
 
 def test_compose_system_prompt_disabled():
@@ -55,7 +54,7 @@ def test_compose_system_prompt_custom_override():
         custom_prompt=custom_directive,
     )
     assert "CUSTOM DIRECTIVE" in composed
-    assert "# Long-Term Knowledge and Memory" not in composed
+    assert "# Shared Knowledge Retrieval" not in composed
     assert composed.startswith("Client prompt\n\n---\n\nCUSTOM DIRECTIVE")
 
 
@@ -73,8 +72,8 @@ def test_orchestrator_prepares_enriched_system_prompt_from_request():
     assert len(upstream) == 2
     assert upstream[0]["role"] == "system"
     assert "You are a helpful coding assistant." in upstream[0]["content"]
-    assert "# Long-Term Knowledge and Memory" in upstream[0]["content"]
-    assert "Only save or update knowledge when the user explicitly asks you to do so." in upstream[0]["content"]
+    assert "# Shared Knowledge Retrieval" in upstream[0]["content"]
+    assert "knowledge_search" in upstream[0]["content"]
     assert upstream[1]["role"] == "user"
     assert upstream[1]["content"] == "How do I configure the database?"
 
@@ -93,8 +92,8 @@ def test_orchestrator_prepares_enriched_system_prompt_from_system_message():
     assert len(upstream) == 2
     assert upstream[0]["role"] == "system"
     assert "System base rule." in upstream[0]["content"]
-    assert "# Long-Term Knowledge and Memory" in upstream[0]["content"]
-    assert "Only save or update knowledge when the user explicitly asks you to do so." in upstream[0]["content"]
+    assert "# Shared Knowledge Retrieval" in upstream[0]["content"]
+    assert "knowledge_search" in upstream[0]["content"]
     assert upstream[1]["role"] == "user"
 
 

@@ -341,15 +341,13 @@ async def test_orchestrator_sends_reasoning_upstream_in_tool_loop():
                     id="chatcmpl-tool",
                     model=model or "qwen3-test",
                     content=None,
-                    reasoning_content="I should save this.",
+                    reasoning_content="I should check stored context.",
                     tool_calls=[
                         ToolCall(
                             id="call_1",
                             function=FunctionCall(
-                                name="knowledge_save",
-                                arguments=json.dumps({
-                                    "title": "T", "content": "C",
-                                }),
+                                name="knowledge_search",
+                                arguments=json.dumps({"query": "remember this"}),
                             ),
                         )
                     ],
@@ -363,7 +361,7 @@ async def test_orchestrator_sends_reasoning_upstream_in_tool_loop():
             return ToolResult(
                 tool_call_id=tool_call_id,
                 name=name,
-                content=json.dumps({"status": "created", "id": "x"}),
+                    content=json.dumps({"results": [], "count": 0}),
                 is_error=False,
             )
 
@@ -378,4 +376,4 @@ async def test_orchestrator_sends_reasoning_upstream_in_tool_loop():
     second_round = client.captured_messages[1]
     assistant_round = [m for m in second_round if m["role"] == "assistant"]
     assert assistant_round, "assistant tool-call round must be replayed upstream"
-    assert assistant_round[0].get("reasoning_content") == "I should save this."
+    assert assistant_round[0].get("reasoning_content") == "I should check stored context."

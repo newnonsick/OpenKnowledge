@@ -213,6 +213,13 @@ INTERNAL_TOOL_NAMES: frozenset[str] = frozenset({
     "knowledge_delete",
 })
 
+SUPPORTED_TOOL_NAMES: frozenset[str] = frozenset({"knowledge_search"})
+
+
+def is_supported_internal_tool(name: str) -> bool:
+
+    return name in SUPPORTED_TOOL_NAMES
+
 def is_internal_tool(name: str) -> bool:
 
     return name in INTERNAL_TOOL_NAMES

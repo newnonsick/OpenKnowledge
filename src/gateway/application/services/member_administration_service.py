@@ -13,7 +13,7 @@ from src.gateway.application.security.passwords import PasswordService
 from src.gateway.application.security.tokens import SecretValue
 from src.gateway.application.services.audit_service import AuditService
 from src.gateway.domain.authorization import Action, AuthorizationContext, is_allowed
-from src.gateway.domain.exceptions import AuthorizationException, ResourceConflictException
+from src.gateway.domain.exceptions import AuthorizationException, RecentAuthenticationRequiredException, ResourceConflictException
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SpaceRole, SystemRole, normalize_username
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
 from src.gateway.infrastructure.persistence.identity_models import MFAFactorModel, MemberModel, PasswordCredentialModel, PersonalAPIKeyModel, SessionCredentialModel, SessionFamilyModel, SpaceMembershipModel
@@ -332,5 +332,5 @@ class MemberAdministrationService:
             or family.last_step_up_at is None
             or current_time - family.last_step_up_at > self._step_up_window
         ):
-            raise AuthorizationException()
+            raise RecentAuthenticationRequiredException()
         return actor_id
