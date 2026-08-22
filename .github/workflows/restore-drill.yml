@@ -40,16 +40,21 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install --yes age postgresql-client
       - run: python -m pip install --disable-pip-version-check --require-hashes -r requirements/dev.lock
       - run: python -c "import asyncio; from src.gateway.infrastructure.migrations import run_migrations_async; asyncio.run(run_migrations_async())"
+      - run: sh tests/operations/test_restore_guards.sh
       - run: pytest tests/integration/test_storage_consistency.py -q
       - run: |
           set -eu
           mkdir -p /tmp/kinbase-backups /tmp/kinbase-source-storage /tmp/kinbase-restore-storage /tmp/kinbase-metrics
           age-keygen -o /tmp/kinbase-age-key.txt
           recipient="$(age-keygen -y /tmp/kinbase-age-key.txt)"
+          python -m scripts.restore_drill seed --database-url "$DATABASE_URL" --storage-dir /tmp/kinbase-source-storage
           BACKUP_DIR=/tmp/kinbase-backups BACKUP_AGE_RECIPIENT="$recipient" STORAGE_DIR=/tmp/kinbase-source-storage BACKUP_WRITERS_QUIESCED=true BACKUP_METRICS_FILE=/tmp/kinbase-metrics/backup.prom sh scripts/backup.sh
-          createdb "$RESTORE_DATABASE_URL"
+          psql "$BACKUP_DATABASE_URL" --set=ON_ERROR_STOP=1 --command='CREATE DATABASE gateway_restore'
           backup_file="$(find /tmp/kinbase-backups -type f -name '*.tar.age' -print -quit)"
-          BACKUP_FILE="$backup_file" RESTORE_STORAGE_DIR=/tmp/kinbase-restore-storage BACKUP_AGE_IDENTITY=/tmp/kinbase-age-key.txt RESTORE_METRICS_FILE=/tmp/kinbase-metrics/restore.prom sh scripts/restore.sh
+          BACKUP_FILE="$backup_file" RESTORE_STORAGE_DIR=/tmp/kinbase-restore-storage BACKUP_AGE_IDENTITY=/tmp/kinbase-age-key.txt RESTORE_CONFIRM_ISOLATED=true RESTORE_EXPECTED_DATABASE=gateway_restore sh scripts/restore.sh
+          python -m scripts.restore_drill verify --database-url "$RESTORE_DATABASE_URL" --storage-dir /tmp/kinbase-restore-storage
           test "$(psql "$RESTORE_DATABASE_URL" -AtX -c 'SELECT count(*) FROM alembic_version')" = "1"
+          python -m scripts.recovery_verify --database-url "$RESTORE_DATABASE_URL"
+          python -m scripts.recovery_metric restore --output /tmp/kinbase-metrics/restore.prom
           grep -q gateway_backup_last_success_unixtime /tmp/kinbase-metrics/backup.prom
           grep -q gateway_restore_test_last_success_unixtime /tmp/kinbase-metrics/restore.prom

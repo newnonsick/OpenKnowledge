@@ -26,6 +26,9 @@ async def run(action: str, database_url: str, storage_dir: Path, manifest_path: 
             raise RuntimeError(
                 f"Storage manifest verification failed: missing={len(verification.missing_keys)}, "
                 f"size={len(verification.invalid_size_keys)}, checksum={len(verification.invalid_checksum_keys)}, "
+                f"database_missing_manifest={len(verification.database_missing_manifest_keys)}, "
+                f"manifest_missing_database={len(verification.manifest_missing_database_keys)}, "
+                f"duplicates={len(verification.duplicate_manifest_keys)}, "
                 f"manifest_digest={verification.manifest_digest_valid}"
             )
     finally:

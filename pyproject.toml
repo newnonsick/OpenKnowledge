@@ -48,6 +48,8 @@ python_files = ["test_*.py"]
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",
+    "live_provider: Tests that call configured live model providers",
+    "legacy_contract: Quarantined pre-v1 contracts owned by platform, expires 2026-10-31",
     "tier1: Tier 1 Feature Coverage tests",
     "tier2: Tier 2 Boundary & Corner Case tests",
     "tier3: Tier 3 Combinations & Pairwise tests",

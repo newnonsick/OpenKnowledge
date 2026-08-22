@@ -1,15 +1,17 @@
-name: Quality
+name: Legacy contract quarantine
 
 on:
-  push:
-  pull_request:
+  schedule:
+    - cron: "41 5 1 * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  python:
+  legacy-contracts:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     services:
       postgres:
         image: pgvector/pgvector:pg17@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f
@@ -37,42 +39,22 @@ jobs:
           python-version: "3.13"
           cache: pip
       - run: python -m pip install --disable-pip-version-check --require-hashes -r requirements/dev.lock
-      - run: python -m pip check
-      - run: python -m compileall -q src/gateway
-      - run: pytest -q -m "not legacy_contract"
-
-  web:
-    runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: web
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+      - id: legacy
+        run: timeout 20m pytest tests/e2e -q -m legacy_contract --junitxml=legacy-contract-results.xml
+      - if: always()
+        env:
+          RESULT: ${{ steps.legacy.outcome }}
+        run: |
+          {
+            echo "## Legacy contract quarantine"
+            echo "- Owner: platform"
+            echo "- Modernization deadline: 2026-10-31"
+            echo "- Result: $RESULT"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci
-      - run: npm run generate:api
-      - run: git diff --exit-code -- lib/generated/openapi.ts
-      - run: npm test -- --run
-      - run: npm run typecheck
-      - run: npm run build
-
-  browser:
-    runs-on: windows-2022
-    needs: web
-    defaults:
-      run:
-        working-directory: web
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci
-      - run: npx playwright install chromium
-      - run: npm run test:browser
+          name: legacy-contract-results
+          path: legacy-contract-results.xml
+          retention-days: 90
+          if-no-files-found: error

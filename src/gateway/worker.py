@@ -12,6 +12,7 @@ from sqlalchemy.engine import make_url
 from src.gateway.application.services.bounded_document_parser import BoundedDocumentParser
 from src.gateway.application.services.document_ingestion_worker import DocumentIngestionWorker
 from src.gateway.application.services.job_outbox_dispatcher import JobOutboxDispatcher
+from src.gateway.application.services.retention_service import RetentionMaintenanceRunner, RetentionService
 from src.gateway.application.services.storage_consistency_service import StorageConsistencyService
 from src.gateway.application.services.storage_maintenance_runner import StorageMaintenanceRunner
 from src.gateway.config import get_settings
@@ -89,6 +90,15 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
         staging_ttl_seconds=settings.gateway.storage_staging_ttl_seconds,
         orphan_grace_seconds=settings.gateway.storage_orphan_grace_seconds,
     )
+    retention = RetentionMaintenanceRunner(
+        RetentionService(factory, storage),
+        interval_seconds=settings.gateway.retention_interval_seconds,
+        archive_days=settings.gateway.retention_archive_days,
+        revision_days=settings.gateway.retention_revision_days,
+        operational_days=settings.gateway.retention_operational_days,
+        batch_size=settings.gateway.retention_batch_size,
+        max_batches_per_cycle=settings.gateway.retention_max_batches_per_cycle,
+    )
     stopping = stop_event or asyncio.Event()
     async with asyncio.TaskGroup() as tasks:
         tasks.create_task(
@@ -104,6 +114,8 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
             )
         )
         tasks.create_task(maintenance.run_until_stopped(stopping))
+        if settings.gateway.retention_purge_enabled:
+            tasks.create_task(retention.run_until_stopped(stopping))
 
 
 async def _main() -> None:

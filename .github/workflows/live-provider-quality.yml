@@ -1,0 +1,58 @@
+name: Live provider quality
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-provider-quality
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    environment: live-provider-quality
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f
+        env:
+          POSTGRES_DB: gateway_live_quality
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d gateway_live_quality"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/gateway_live_quality
+      EMBEDDING_URL: ${{ secrets.EMBEDDING_URL }}
+      EMBEDDING_API_KEY: ${{ secrets.EMBEDDING_API_KEY }}
+      EMBEDDING_MODEL_ID: ${{ vars.EMBEDDING_MODEL_ID }}
+      EMBEDDING_DIMENSION: ${{ vars.EMBEDDING_DIMENSION }}
+      LLM_URL: ${{ secrets.LLM_URL }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_MODEL_ID: ${{ vars.LLM_MODEL_ID }}
+      RUN_LIVE_PROVIDER_TESTS: "true"
+      LIVE_PROVIDER_EVIDENCE_FILE: live-provider-evidence.json
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: python -m pip install --disable-pip-version-check --require-hashes -r requirements/dev.lock
+      - run: >-
+          python -m pytest
+          tests/integration/test_retrieval_quality_gate.py
+          tests/integration/test_live_embedding_pgvector_quality.py
+          tests/integration/test_live_llm_provider.py
+          -q
+      - run: cat "$LIVE_PROVIDER_EVIDENCE_FILE" >> "$GITHUB_STEP_SUMMARY"

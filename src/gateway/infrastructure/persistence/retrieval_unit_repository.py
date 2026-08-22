@@ -52,6 +52,40 @@ ru.source_metadata
 """
 
 
+_VECTOR_SEARCH_SQL = (
+    "WITH nearest AS MATERIALIZED ("
+    "SELECT ru.id, ru.embedding <=> CAST(:query_vector AS vector) AS distance "
+    "FROM retrieval_units ru "
+    "WHERE ru.active AND ru.embedding IS NOT NULL "
+    "AND ru.embedding_generation_id = :generation_id "
+    "AND ru.space_id = ANY(CAST(:space_ids AS text[])) "
+    "AND (ru.embedding <=> CAST(:query_vector AS vector)) <= :maximum_distance "
+    "AND EXISTS ("
+    "SELECT 1 FROM space_memberships sm "
+    "JOIN members m ON m.id = sm.member_id AND m.status = 'active' "
+    "JOIN workspaces w ON w.id = sm.space_id AND w.archived_at IS NULL "
+    "WHERE sm.space_id = ru.space_id AND sm.member_id = :member_id"
+    ") ORDER BY ru.embedding <=> CAST(:query_vector AS vector) "
+    "LIMIT :candidate_limit"
+    "), ranked AS ("
+    "SELECT "
+    + _CANDIDATE_COLUMNS
+    + ", 1.0 - nearest.distance AS vector_similarity "
+    "FROM nearest JOIN retrieval_units ru ON ru.id = nearest.id "
+    "LEFT JOIN knowledge_revisions kr "
+    "ON kr.id = ru.knowledge_revision_id AND kr.space_id = ru.space_id "
+    "LEFT JOIN document_revision_chunks drc "
+    "ON drc.id = ru.document_revision_chunk_id AND drc.space_id = ru.space_id "
+    "LEFT JOIN document_revisions dr "
+    "ON dr.id = drc.document_revision_id "
+    "AND dr.document_id = drc.document_id "
+    "AND dr.space_id = drc.space_id"
+    ") SELECT * FROM ranked "
+    "WHERE canonical_id IS NOT NULL AND revision_id IS NOT NULL "
+    "ORDER BY vector_similarity DESC, unit_id ASC LIMIT :limit"
+)
+
+
 class PostgresRetrievalUnitRepository:
     def __init__(
         self,
@@ -166,26 +200,14 @@ class PostgresRetrievalUnitRepository:
     ) -> list[RetrievalCandidate]:
         if not space_ids or limit <= 0:
             return []
-        vector = [float(value) for value in query_vector]
-        if len(vector) != EMBED_DIM or any(not math.isfinite(value) for value in vector):
-            raise ValueError(f"Query embedding must contain {EMBED_DIM} finite values")
         member_id = self._member_id(principal)
-        vector_literal = "[" + ",".join(format(value, ".17g") for value in vector) + "]"
-        statement = text(
-            "WITH ranked AS ("
-            "SELECT "
-            + _CANDIDATE_COLUMNS
-            + ", 1.0 - (ru.embedding <=> CAST(:query_vector AS vector)) AS vector_similarity "
-            + _AUTHORIZED_SOURCE
-            + "WHERE ru.active AND ru.embedding IS NOT NULL "
-            "AND ru.embedding_generation_id = :generation_id "
-            "AND ru.space_id = ANY(CAST(:space_ids AS text[])) "
-            "AND (ru.embedding <=> CAST(:query_vector AS vector)) <= :maximum_distance "
-            "ORDER BY ru.embedding <=> CAST(:query_vector AS vector), ru.id "
-            "LIMIT :limit"
-            ") SELECT * FROM ranked "
-            "WHERE canonical_id IS NOT NULL AND revision_id IS NOT NULL "
-            "ORDER BY vector_similarity DESC, unit_id ASC"
+        parameters = self._vector_parameters(
+            member_id,
+            space_ids,
+            query_vector,
+            generation_id,
+            limit,
+            minimum_similarity,
         )
         async with principal_session(self._session_factory, principal) as session:
             if exact:
@@ -193,22 +215,77 @@ class PostgresRetrievalUnitRepository:
                 await session.execute(text("SET LOCAL enable_bitmapscan = off"))
             else:
                 resolved_ef_search = min(hnsw_ef_search, 1000)
+                await session.execute(text("SET LOCAL enable_sort = off"))
                 await session.execute(text(f"SET LOCAL hnsw.ef_search = {resolved_ef_search}"))
-                await session.execute(text("SET LOCAL hnsw.iterative_scan = 'relaxed_order'"))
+                await session.execute(
+                    text(f"SET LOCAL hnsw.max_scan_tuples = {max(20000, resolved_ef_search * 1000)}")
+                )
+                await session.execute(text("SET LOCAL hnsw.scan_mem_multiplier = 4"))
+                await session.execute(text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
             rows = (
                 await session.execute(
-                    statement,
-                    {
-                        "member_id": member_id,
-                        "space_ids": list(space_ids),
-                        "query_vector": vector_literal,
-                        "generation_id": generation_id,
-                        "maximum_distance": 1.0 - minimum_similarity,
-                        "limit": limit,
-                    },
+                    text(_VECTOR_SEARCH_SQL),
+                    parameters,
                 )
             ).mappings()
             return [self._candidate(row, vector_similarity=row["vector_similarity"]) for row in rows]
+
+    async def vector_search_plan(
+        self,
+        principal: Principal,
+        space_ids: Sequence[str],
+        query_vector: Sequence[float],
+        generation_id: UUID,
+        limit: int,
+        minimum_similarity: float,
+        hnsw_ef_search: int,
+    ) -> object:
+        if not space_ids or limit <= 0:
+            return []
+        member_id = self._member_id(principal)
+        parameters = self._vector_parameters(
+            member_id,
+            space_ids,
+            query_vector,
+            generation_id,
+            limit,
+            minimum_similarity,
+        )
+        async with principal_session(self._session_factory, principal) as session:
+            resolved_ef_search = min(hnsw_ef_search, 1000)
+            await session.execute(text("SET LOCAL enable_sort = off"))
+            await session.execute(text(f"SET LOCAL hnsw.ef_search = {resolved_ef_search}"))
+            await session.execute(
+                text(f"SET LOCAL hnsw.max_scan_tuples = {max(20000, resolved_ef_search * 1000)}")
+            )
+            await session.execute(text("SET LOCAL hnsw.scan_mem_multiplier = 4"))
+            await session.execute(text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
+            return await session.scalar(
+                text("EXPLAIN (FORMAT JSON, COSTS OFF) " + _VECTOR_SEARCH_SQL),
+                parameters,
+            )
+
+    @staticmethod
+    def _vector_parameters(
+        member_id: UUID,
+        space_ids: Sequence[str],
+        query_vector: Sequence[float],
+        generation_id: UUID,
+        limit: int,
+        minimum_similarity: float,
+    ) -> dict[str, object]:
+        vector = [float(value) for value in query_vector]
+        if len(vector) != EMBED_DIM or any(not math.isfinite(value) for value in vector):
+            raise ValueError(f"Query embedding must contain {EMBED_DIM} finite values")
+        return {
+            "member_id": member_id,
+            "space_ids": list(space_ids),
+            "query_vector": "[" + ",".join(format(value, ".17g") for value in vector) + "]",
+            "generation_id": generation_id,
+            "maximum_distance": 1.0 - minimum_similarity,
+            "candidate_limit": min(max(limit * 4, limit), 1000),
+            "limit": limit,
+        }
 
     @staticmethod
     def _member_id(principal: Principal) -> UUID:

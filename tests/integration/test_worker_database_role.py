@@ -30,6 +30,12 @@ async def test_worker_role_is_privileged_only_for_fenced_background_work() -> No
             )
             await connection.execute(
                 text(
+                    "GRANT EXECUTE ON FUNCTION gateway_run_retention(timestamptz, timestamptz, timestamptz, integer) "
+                    f'TO "{worker_role}"'
+                )
+            )
+            await connection.execute(
+                text(
                     "GRANT SELECT ON document_revision_chunks, document_revisions, documents, "
                     "embedding_generations, ingestion_jobs, job_outbox, members, retrieval_units, "
                     f'operational_alerts, space_memberships, workspaces TO "{worker_role}"'
@@ -92,9 +98,22 @@ async def test_worker_role_is_privileged_only_for_fenced_background_work() -> No
                         "'public.document_revisions', 'DELETE')"
                     )
                 )
+                assert await connection.scalar(
+                    text(
+                        "SELECT has_function_privilege(current_user, "
+                        "'public.gateway_run_retention(timestamp with time zone,timestamp with time zone,"
+                        "timestamp with time zone,integer)', 'EXECUTE')"
+                    )
+                )
         finally:
             async with engine.begin() as connection:
                 await connection.execute(text("RESET ROLE"))
+                await connection.execute(
+                    text(
+                        "REVOKE EXECUTE ON FUNCTION gateway_run_retention(timestamptz, timestamptz, timestamptz, integer) "
+                        f'FROM "{worker_role}"'
+                    )
+                )
                 await connection.execute(
                     text(f'DROP OWNED BY "{worker_role}"')
                 )

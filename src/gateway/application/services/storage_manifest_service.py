@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -76,6 +77,9 @@ class StorageManifestVerification:
     invalid_size_keys: tuple[str, ...]
     invalid_checksum_keys: tuple[str, ...]
     manifest_digest_valid: bool
+    database_missing_manifest_keys: tuple[str, ...]
+    manifest_missing_database_keys: tuple[str, ...]
+    duplicate_manifest_keys: tuple[str, ...]
 
 
 class StorageManifestService:
@@ -90,31 +94,7 @@ class StorageManifestService:
     async def create(self) -> StorageManifest:
         async with self._session_factory.begin() as session:
             created_at = await session.scalar(select(func.now()))
-            rows = (
-                await session.execute(
-                    select(
-                        DocumentRevisionModel.space_id,
-                        DocumentRevisionModel.document_id,
-                        DocumentRevisionModel.id,
-                        DocumentRevisionModel.storage_key,
-                        DocumentRevisionModel.size_bytes,
-                        DocumentRevisionModel.checksum_sha256,
-                    )
-                    .where(DocumentRevisionModel.storage_key.is_not(None))
-                    .order_by(DocumentRevisionModel.space_id, DocumentRevisionModel.document_id, DocumentRevisionModel.version)
-                )
-            ).all()
-        entries = tuple(
-            StorageManifestEntry(
-                space_id=row.space_id,
-                document_id=row.document_id,
-                revision_id=row.id,
-                storage_key=row.storage_key,
-                size_bytes=row.size_bytes,
-                checksum_sha256=row.checksum_sha256,
-            )
-            for row in rows
-        )
+            entries = await self._database_entries(session)
         normalized_created_at = created_at or datetime.now(timezone.utc)
         digest = self._digest(1, normalized_created_at, entries)
         return StorageManifest(1, normalized_created_at, entries, digest)
@@ -128,6 +108,21 @@ class StorageManifestService:
         missing = []
         invalid_size = []
         invalid_checksum = []
+        manifest_keys = [entry.storage_key for entry in manifest.entries]
+        key_counts = Counter(manifest_keys)
+        duplicate_manifest = sorted(
+            key for key, count in key_counts.items() if count > 1
+        )
+        async with self._session_factory.begin() as session:
+            database_entries = await self._database_entries(session)
+        manifest_set = set(manifest.entries)
+        database_set = set(database_entries)
+        database_missing_manifest = sorted(
+            entry.storage_key for entry in database_set - manifest_set
+        )
+        manifest_missing_database = sorted(
+            entry.storage_key for entry in manifest_set - database_set
+        )
         for entry in manifest.entries:
             if not await self._storage.exists(entry.storage_key):
                 missing.append(entry.storage_key)
@@ -139,12 +134,55 @@ class StorageManifestService:
             if hashlib.sha256(content).hexdigest() != entry.checksum_sha256:
                 invalid_checksum.append(entry.storage_key)
         return StorageManifestVerification(
-            valid=digest_valid and not missing and not invalid_size and not invalid_checksum,
+            valid=(
+                digest_valid
+                and not missing
+                and not invalid_size
+                and not invalid_checksum
+                and not database_missing_manifest
+                and not manifest_missing_database
+                and not duplicate_manifest
+            ),
             checked_objects=len(manifest.entries),
             missing_keys=tuple(missing),
             invalid_size_keys=tuple(invalid_size),
             invalid_checksum_keys=tuple(invalid_checksum),
             manifest_digest_valid=digest_valid,
+            database_missing_manifest_keys=tuple(database_missing_manifest),
+            manifest_missing_database_keys=tuple(manifest_missing_database),
+            duplicate_manifest_keys=tuple(duplicate_manifest),
+        )
+
+    @staticmethod
+    async def _database_entries(session) -> tuple[StorageManifestEntry, ...]:
+        rows = (
+            await session.execute(
+                select(
+                    DocumentRevisionModel.space_id,
+                    DocumentRevisionModel.document_id,
+                    DocumentRevisionModel.id,
+                    DocumentRevisionModel.storage_key,
+                    DocumentRevisionModel.size_bytes,
+                    DocumentRevisionModel.checksum_sha256,
+                )
+                .where(DocumentRevisionModel.storage_key.is_not(None))
+                .order_by(
+                    DocumentRevisionModel.space_id,
+                    DocumentRevisionModel.document_id,
+                    DocumentRevisionModel.version,
+                )
+            )
+        ).all()
+        return tuple(
+            StorageManifestEntry(
+                space_id=row.space_id,
+                document_id=row.document_id,
+                revision_id=row.id,
+                storage_key=row.storage_key,
+                size_bytes=row.size_bytes,
+                checksum_sha256=row.checksum_sha256,
+            )
+            for row in rows
         )
 
     @staticmethod

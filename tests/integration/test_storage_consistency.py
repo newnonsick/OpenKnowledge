@@ -8,7 +8,7 @@ from src.gateway.application.services.bounded_document_parser import ParsedDocum
 from src.gateway.application.services.document_ingestion_worker import DocumentIngestionWorker
 from src.gateway.application.services.document_upload_service import DocumentUploadService
 from src.gateway.application.services.storage_consistency_service import StorageConsistencyService
-from src.gateway.application.services.storage_manifest_service import StorageManifestService
+from src.gateway.application.services.storage_manifest_service import StorageManifest, StorageManifestService
 from src.gateway.domain.identity import Principal, PrincipalKind, SystemRole
 from src.gateway.infrastructure.persistence.ingestion_models import DocumentModel, DocumentRevisionModel, EmbeddingGenerationModel, OperationalAlertModel, RetrievalUnitModel
 from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
@@ -178,3 +178,13 @@ async def test_restore_manifest_detects_checksum_invalid_backup(tmp_path) -> Non
         invalid = await service.verify(manifest)
         assert not invalid.valid
         assert invalid.invalid_checksum_keys == (key,)
+
+        omitted = StorageManifest(
+            version=manifest.version,
+            created_at=manifest.created_at,
+            entries=(),
+            digest_sha256=service._digest(manifest.version, manifest.created_at, ()),
+        )
+        missing_reference = await service.verify(omitted)
+        assert not missing_reference.valid
+        assert missing_reference.database_missing_manifest_keys == (key,)

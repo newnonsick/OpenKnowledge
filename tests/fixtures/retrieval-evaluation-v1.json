@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "minimum_lexical_recall": 1.0,
+  "minimum_ann_recall": 0.99,
+  "minimum_semantic_recall": 0.85,
+  "cases": [
+    {
+      "id": "thai-family-schedule",
+      "slice": "thai",
+      "query": "ตารางนัดหมายโรงพยาบาลคุณยาย",
+      "semantic_query": "คุณยายต้องไปพบแพทย์เมื่อไร",
+      "space_index": 0,
+      "slot": 0,
+      "title": "ตารางครอบครัว",
+      "content": "ตารางนัดหมายโรงพยาบาลของคุณยายเดือนหน้า"
+    },
+    {
+      "id": "english-orchard",
+      "slice": "english",
+      "query": "orchard irrigation schedule",
+      "semantic_query": "When should the fruit trees be watered during the dry season?",
+      "space_index": 1,
+      "slot": 0,
+      "title": "Orchard plan",
+      "content": "Family orchard irrigation schedule for the dry season"
+    },
+    {
+      "id": "mixed-backup",
+      "slice": "mixed",
+      "query": "PostgreSQL สำรองข้อมูลครอบครัว",
+      "semantic_query": "ฐานข้อมูลของครอบครัวถูก backup เมื่อไหร่",
+      "space_index": 2,
+      "slot": 0,
+      "title": "Database backup",
+      "content": "PostgreSQL สำรองข้อมูลครอบครัวทุกคืน"
+    },
+    {
+      "id": "person-name",
+      "slice": "name",
+      "query": "Somchai Wattanakul insurance",
+      "semantic_query": "Who is the renewal contact for the family insurance?",
+      "space_index": 3,
+      "slot": 0,
+      "title": "Insurance contact",
+      "content": "Somchai Wattanakul insurance renewal contact"
+    },
+    {
+      "id": "filename",
+      "slice": "filename",
+      "query": "tax-2025-final.pdf",
+      "semantic_query": "Which PDF contains the final household tax archive for 2025?",
+      "space_index": 4,
+      "slot": 0,
+      "title": "tax-2025-final.pdf",
+      "content": "Household tax archive"
+    },
+    {
+      "id": "exact-identifier",
+      "slice": "exact_identifier",
+      "query": "POLICY-TH-99817",
+      "semantic_query": "Find the active Thai household policy numbered 99817",
+      "space_index": 5,
+      "slot": 0,
+      "title": "Policy identifier",
+      "content": "POLICY-TH-99817 active household policy"
+    },
+    {
+      "id": "code-disabled-member",
+      "slice": "code",
+      "query": "member.status != active AuthorizationException",
+      "semantic_query": "Where does the API reject a disabled member account?",
+      "space_index": 6,
+      "slot": 0,
+      "title": "Authorization guard",
+      "content": "def authorize(member):\n    if member.status != 'active':\n        raise AuthorizationException()"
+    }
+  ]
+}

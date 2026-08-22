@@ -701,6 +701,99 @@ async def _validate_worker_database_connection(connection) -> None:
         text("SELECT has_schema_privilege(current_user, 'public', 'CREATE')")
     ):
         violations.append("public:CREATE:FORBIDDEN")
+    retention_signature = (
+        "public.gateway_run_retention(timestamp with time zone,timestamp with time zone,"
+        "timestamp with time zone,integer)"
+    )
+    if not await connection.scalar(
+        text(
+            "SELECT has_function_privilege(current_user, :signature, 'EXECUTE')"
+        ),
+        {"signature": retention_signature},
+    ):
+        violations.append("gateway_run_retention:EXECUTE")
+    retention_function = (
+        await connection.execute(
+            text(
+                "SELECT owner.rolname AS owner, owner.rolcanlogin, owner.rolsuper, "
+                "owner.rolbypassrls, p.prosecdef, p.proconfig, "
+                "pg_get_function_identity_arguments(p.oid) AS identity_arguments, "
+                "EXISTS ("
+                "SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl "
+                "WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'"
+                ") AS public_execute "
+                "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+                "JOIN pg_roles owner ON owner.oid = p.proowner "
+                "WHERE n.nspname = 'public' AND p.proname = 'gateway_run_retention' "
+                "AND pg_get_function_identity_arguments(p.oid) = "
+                "'archived_before timestamp with time zone, revision_before timestamp with time zone, "
+                "operational_before timestamp with time zone, max_rows integer'"
+            )
+        )
+    ).one_or_none()
+    if retention_function is None:
+        violations.append("gateway_run_retention:MISSING")
+    else:
+        if retention_function.owner != "gateway_maintenance":
+            violations.append("gateway_run_retention:OWNER")
+        if retention_function.rolcanlogin or retention_function.rolsuper or not retention_function.rolbypassrls:
+            violations.append("gateway_run_retention:OWNER_CAPABILITIES")
+        if not retention_function.prosecdef:
+            violations.append("gateway_run_retention:SECURITY_DEFINER")
+        if not retention_function.proconfig or "search_path=pg_catalog, public" not in retention_function.proconfig:
+            violations.append("gateway_run_retention:SEARCH_PATH")
+        if retention_function.public_execute:
+            violations.append("gateway_run_retention:PUBLIC_EXECUTE:FORBIDDEN")
+    provenance_guard = (
+        await connection.execute(
+            text(
+                "SELECT owner.rolname AS owner, p.prosecdef, p.proconfig, "
+                "EXISTS ("
+                "SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl "
+                "WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'"
+                ") AS public_execute "
+                "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+                "JOIN pg_roles owner ON owner.oid = p.proowner "
+                "WHERE n.nspname = 'public' "
+                "AND p.proname = 'gateway_reject_archived_document_provenance' "
+                "AND pg_get_function_identity_arguments(p.oid) = ''"
+            )
+        )
+    ).one_or_none()
+    if provenance_guard is None:
+        violations.append("gateway_reject_archived_document_provenance:MISSING")
+    else:
+        if provenance_guard.owner != "gateway_maintenance":
+            violations.append("gateway_reject_archived_document_provenance:OWNER")
+        if not provenance_guard.prosecdef:
+            violations.append("gateway_reject_archived_document_provenance:SECURITY_DEFINER")
+        if not provenance_guard.proconfig or "search_path=pg_catalog, public" not in provenance_guard.proconfig:
+            violations.append("gateway_reject_archived_document_provenance:SEARCH_PATH")
+        if provenance_guard.public_execute:
+            violations.append("gateway_reject_archived_document_provenance:PUBLIC_EXECUTE:FORBIDDEN")
+    provenance_trigger = (
+        await connection.execute(
+            text(
+                "SELECT trigger.tgenabled::text AS tgenabled, trigger.tgtype, function.proname AS function_name "
+                "FROM pg_trigger trigger "
+                "JOIN pg_class relation ON relation.oid = trigger.tgrelid "
+                "JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace "
+                "JOIN pg_proc function ON function.oid = trigger.tgfoid "
+                "WHERE namespace.nspname = 'public' AND relation.relname = 'provenance_links' "
+                "AND trigger.tgname = 'trg_provenance_reject_archived_document' "
+                "AND NOT trigger.tgisinternal"
+            )
+        )
+    ).one_or_none()
+    if provenance_trigger is None:
+        violations.append("trg_provenance_reject_archived_document:MISSING")
+    else:
+        if provenance_trigger.tgenabled not in {"O", "A"}:
+            violations.append("trg_provenance_reject_archived_document:ENABLEMENT")
+        if provenance_trigger.tgtype != 23:
+            violations.append("trg_provenance_reject_archived_document:EVENTS")
+        if provenance_trigger.function_name != "gateway_reject_archived_document_provenance":
+            violations.append("trg_provenance_reject_archived_document:FUNCTION")
     all_table_privileges = (
         "SELECT",
         "INSERT",
@@ -750,7 +843,10 @@ async def _validate_worker_database_connection(connection) -> None:
             elif column_name not in permitted_columns and granted:
                 violations.append(f"{table_name}.{column_name}:FORBIDDEN_UPDATE")
     if violations:
-        raise RuntimeError("Worker database role violates the least-privilege contract")
+        raise RuntimeError(
+            "Worker database role violates the least-privilege contract: "
+            + ", ".join(sorted(violations))
+        )
 
 
 async def validate_worker_database_role(engine: AsyncEngine | None = None) -> None:

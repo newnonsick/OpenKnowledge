@@ -23,3 +23,18 @@ GRANT UPDATE (staging_storage_key, parser_version, status, failure_code, ready_a
 GRANT UPDATE (state, progress, attempt_count, next_attempt_at, cancellation_requested, retry_requested, last_error_code, last_error_detail, lease_owner, lease_expires_at, claim_token, updated_at, started_at, finished_at) ON ingestion_jobs TO gateway_worker;
 GRANT UPDATE (state, attempt_count, last_error_code, lease_owner, lease_expires_at, claim_token, available_at, published_at, updated_at) ON job_outbox TO gateway_worker;
 GRANT UPDATE (active, deactivated_at) ON retrieval_units TO gateway_worker;
+DO $$
+DECLARE
+    retained_membership boolean := pg_has_role(current_user, 'gateway_maintenance', 'MEMBER');
+BEGIN
+    IF NOT retained_membership THEN
+        EXECUTE format('GRANT gateway_maintenance TO %I', current_user);
+    END IF;
+    EXECUTE 'ALTER FUNCTION gateway_run_retention(timestamptz, timestamptz, timestamptz, integer) OWNER TO gateway_maintenance';
+    EXECUTE 'ALTER FUNCTION gateway_reject_archived_document_provenance() OWNER TO gateway_maintenance';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION gateway_run_retention(timestamptz, timestamptz, timestamptz, integer) TO gateway_worker';
+    IF NOT retained_membership THEN
+        EXECUTE format('REVOKE gateway_maintenance FROM %I', current_user);
+    END IF;
+END
+$$;

@@ -410,6 +410,45 @@ class GatewaySettings(BaseSettings):
             "storage_orphan_grace_seconds",
         ),
     )
+    retention_purge_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("RETENTION_PURGE_ENABLED", "retention_purge_enabled"),
+    )
+    retention_interval_seconds: int = Field(
+        default=86_400,
+        ge=300,
+        validation_alias=AliasChoices("RETENTION_INTERVAL_SECONDS", "retention_interval_seconds"),
+    )
+    retention_archive_days: int = Field(
+        default=365,
+        ge=365,
+        validation_alias=AliasChoices("RETENTION_ARCHIVE_DAYS", "retention_archive_days"),
+    )
+    retention_revision_days: int = Field(
+        default=1095,
+        ge=1095,
+        validation_alias=AliasChoices("RETENTION_REVISION_DAYS", "retention_revision_days"),
+    )
+    retention_operational_days: int = Field(
+        default=30,
+        ge=30,
+        validation_alias=AliasChoices("RETENTION_OPERATIONAL_DAYS", "retention_operational_days"),
+    )
+    retention_batch_size: int = Field(
+        default=100,
+        ge=1,
+        le=1000,
+        validation_alias=AliasChoices("RETENTION_BATCH_SIZE", "retention_batch_size"),
+    )
+    retention_max_batches_per_cycle: int = Field(
+        default=100,
+        ge=1,
+        le=1000,
+        validation_alias=AliasChoices(
+            "RETENTION_MAX_BATCHES_PER_CYCLE",
+            "retention_max_batches_per_cycle",
+        ),
+    )
     default_workspace_id: str = Field(
         default="global",
         validation_alias=AliasChoices("DEFAULT_WORKSPACE_ID", "default_workspace_id"),

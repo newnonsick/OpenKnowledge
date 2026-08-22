@@ -1,0 +1,80 @@
+name: Production restore rehearsal
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    - cron: "30 2 1 * *"
+  workflow_dispatch:
+
+concurrency:
+  group: production-restore-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    runs-on: [self-hosted, recovery]
+    environment: production-recovery
+    timeout-minutes: 240
+    env:
+      DATABASE_URL: ${{ secrets.RECOVERY_DATABASE_URL }}
+      RESTORE_DATABASE_URL: ${{ secrets.RECOVERY_DATABASE_URL }}
+      BACKUP_FILE: ${{ vars.RECOVERY_BACKUP_FILE }}
+      BACKUP_AGE_IDENTITY: ${{ vars.RECOVERY_AGE_IDENTITY_FILE }}
+      RESTORE_STORAGE_DIR: ${{ vars.RECOVERY_STORAGE_DIR }}
+      RESTORE_EXPECTED_DATABASE: ${{ vars.RECOVERY_EXPECTED_DATABASE }}
+      RESTORE_CONFIRM_ISOLATED: "true"
+      RECOVERY_METRICS_DIR: ${{ vars.RECOVERY_METRICS_DIR }}
+      RECOVERY_RUNTIME_ENV_FILE: ${{ vars.RECOVERY_RUNTIME_ENV_FILE }}
+      RECOVERY_RUNTIME_DATABASE_URL: ${{ secrets.RECOVERY_RUNTIME_DATABASE_URL }}
+      RECOVERY_WORKER_DATABASE_URL: ${{ secrets.RECOVERY_WORKER_DATABASE_URL }}
+      RESTORE_EXPECTED_BACKUP_SHA256: ${{ secrets.RECOVERY_EXPECTED_BACKUP_SHA256 }}
+      RESTORE_MAX_BACKUP_AGE_SECONDS: "3600"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: python -m pip install --disable-pip-version-check --require-hashes -r requirements/dev.lock
+      - run: |
+          set -eu
+          test -n "$DATABASE_URL"
+          test -f "$BACKUP_FILE"
+          test -f "$BACKUP_AGE_IDENTITY"
+          test -d "$RESTORE_STORAGE_DIR"
+          test -d "$RECOVERY_METRICS_DIR"
+          test -f "$RECOVERY_RUNTIME_ENV_FILE"
+          test -n "$RECOVERY_RUNTIME_DATABASE_URL"
+          test -n "$RECOVERY_WORKER_DATABASE_URL"
+          test -n "$RESTORE_EXPECTED_BACKUP_SHA256"
+          test -n "$RESTORE_EXPECTED_DATABASE"
+          sh scripts/restore.sh
+          python -m alembic -c alembic.ini upgrade head
+          psql "$RESTORE_DATABASE_URL" --set=ON_ERROR_STOP=1 --file=deploy/grant-runtime.sql
+          python -m scripts.recovery_verify --database-url "$RESTORE_DATABASE_URL"
+          python -m scripts.recovery_roles_verify --runtime-database-url "$RECOVERY_RUNTIME_DATABASE_URL" --worker-database-url "$RECOVERY_WORKER_DATABASE_URL"
+          python -m scripts.restore_drill seed --database-url "$RESTORE_DATABASE_URL" --storage-dir "$RESTORE_STORAGE_DIR"
+          python -m scripts.restore_drill verify --database-url "$RECOVERY_RUNTIME_DATABASE_URL" --storage-dir "$RESTORE_STORAGE_DIR"
+          set -a
+          . "$RECOVERY_RUNTIME_ENV_FILE"
+          set +a
+          export DATABASE_URL="$RECOVERY_RUNTIME_DATABASE_URL"
+          python -m uvicorn src.gateway.main:app --host 127.0.0.1 --port 18080 >recovery-api.log 2>&1 &
+          api_pid="$!"
+          trap 'kill "$api_pid" 2>/dev/null || true' EXIT INT TERM
+          ready=false
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:18080/healthz/ready >/dev/null; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          test "$ready" = "true"
+          kill "$api_pid"
+          wait "$api_pid" || true
+          trap - EXIT INT TERM
+          python -m scripts.recovery_metric restore --output "$RECOVERY_METRICS_DIR/restore.prom"
+          grep -q gateway_restore_test_last_success_unixtime "$RECOVERY_METRICS_DIR/restore.prom"
