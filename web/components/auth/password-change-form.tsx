@@ -4,20 +4,10 @@ import { FormEvent, useState } from "react";
 import { Check, Copy, Eye, EyeOff, KeyRound, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { ApiError, apiRequest } from "@/lib/api-client";
+import { ApiError, contractClient, contractData } from "@/lib/api-client";
+import type { components } from "@/lib/generated/openapi";
 
-type PasswordResponse = {
-  requires_mfa_enrollment: boolean;
-  initial_api_key?: InitialAPIKey | null;
-};
-
-type InitialAPIKey = {
-  id: string;
-  public_id: string;
-  name: string;
-  secret: string;
-  scopes: string[];
-};
+type InitialAPIKey = components["schemas"]["InitialAPIKey"];
 
 export function PasswordChangeForm() {
   const router = useRouter();
@@ -40,11 +30,9 @@ export function PasswordChangeForm() {
     setSubmitting(true);
     setError(null);
     try {
-      const session = await apiRequest<PasswordResponse>("/api/v1/auth/password", {
+      const session = await contractData(contractClient.POST("/api/v1/auth/password", {
         body: { confirmation, password },
-        method: "POST",
-        retryAuthentication: false,
-      });
+      }));
       if (session.requires_mfa_enrollment) {
         router.replace("/first-use/mfa");
       } else if (session.initial_api_key) {

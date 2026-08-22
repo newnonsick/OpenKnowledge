@@ -4,8 +4,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,9 +22,21 @@ from src.gateway.infrastructure.database import get_db_session, get_session_fact
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, SessionCredentialModel
 from src.gateway.presentation.api_keys import configured_api_key_codec
 from src.gateway.presentation.request_context import get_request_id
+from src.gateway.presentation.schemas.management_responses import (
+    MANAGEMENT_ERROR_RESPONSES,
+    SessionAuthentication,
+    SessionRefresh,
+    SignOut,
+    TotpConfirmation,
+    TotpEnrollment,
+)
 
 
-router = APIRouter(prefix="/api/v1/auth", tags=["Management authentication"])
+router = APIRouter(
+    prefix="/api/v1/auth",
+    tags=["Management authentication"],
+    responses=MANAGEMENT_ERROR_RESPONSES,
+)
 
 
 class LoginRequest(BaseModel):
@@ -90,7 +101,7 @@ def _verify_origin(request: Request) -> None:
         raise CSRFException()
 
 
-def _apply_session_cookies(response: JSONResponse, secrets: SessionSecrets) -> None:
+def _apply_session_cookies(response: Response, secrets: SessionSecrets) -> None:
     now = datetime.now(timezone.utc)
     access_max_age = max(0, int((secrets.access_expires_at - now).total_seconds()))
     refresh_max_age = max(0, int((secrets.idle_expires_at - now).total_seconds()))
@@ -125,13 +136,14 @@ def _apply_session_cookies(response: JSONResponse, secrets: SessionSecrets) -> N
 
 
 def _session_response(
+    response: Response,
     principal: Principal,
     secrets: SessionSecrets,
     *,
     requires_password_change: bool,
     requires_mfa_enrollment: bool,
     initial_api_key: CreatedAPIKey | None = None,
-) -> JSONResponse:
+) -> SessionAuthentication:
     payload = {
         "member_id": principal.subject_id,
         "system_role": principal.system_role.value,
@@ -141,9 +153,8 @@ def _session_response(
     }
     if initial_api_key is not None:
         payload["initial_api_key"] = _initial_api_key_payload(initial_api_key)
-    response = JSONResponse(payload)
     _apply_session_cookies(response, secrets)
-    return response
+    return SessionAuthentication.model_validate(payload)
 
 
 def _initial_api_key_payload(created: CreatedAPIKey) -> dict:
@@ -157,12 +168,13 @@ def _initial_api_key_payload(created: CreatedAPIKey) -> dict:
     }
 
 
-@router.post("/login")
+@router.post("/login", response_model=SessionAuthentication, response_model_exclude_none=True)
 async def login(
     payload: LoginRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_db_session),
-) -> JSONResponse:
+) -> SessionAuthentication:
     gateway = get_settings().gateway
     client_ip = request_client_ip(request, gateway.trusted_proxy_cidrs)
     throttle_factory = get_session_factory()
@@ -197,6 +209,7 @@ async def login(
         step_up_at=current_time,
     )
     return _session_response(
+        response,
         principal,
         secrets,
         requires_password_change=principal.restricted,
@@ -204,12 +217,13 @@ async def login(
     )
 
 
-@router.post("/refresh")
+@router.post("/refresh", response_model=SessionRefresh)
 async def refresh(
     payload: EmptyRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_db_session),
-) -> JSONResponse:
+) -> SessionRefresh:
     _verify_origin(request)
     refresh_token = request.cookies.get("__Secure-aigw-refresh")
     if not refresh_token:
@@ -222,22 +236,20 @@ async def refresh(
     )
     if rotation.status is not RefreshStatus.ROTATED or rotation.session is None:
         raise AuthenticationException("Invalid session.")
-    response = JSONResponse(
-        {
-            "status": "refreshed",
-            "access_expires_at": rotation.session.access_expires_at.isoformat(),
-        }
-    )
     _apply_session_cookies(response, rotation.session)
-    return response
+    return SessionRefresh(
+        status="refreshed",
+        access_expires_at=rotation.session.access_expires_at,
+    )
 
 
-@router.post("/password")
+@router.post("/password", response_model=SessionAuthentication, response_model_exclude_none=True)
 async def change_password(
     payload: PasswordChangeRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_db_session),
-) -> JSONResponse:
+) -> SessionAuthentication:
     principal = _principal(request)
     member_id = _member_id(principal)
     current_time = datetime.now(timezone.utc)
@@ -276,6 +288,7 @@ async def change_password(
             now=current_time,
         )
     return _session_response(
+        response,
         next_principal,
         secrets,
         requires_password_change=False,
@@ -284,33 +297,32 @@ async def change_password(
     )
 
 
-@router.post("/mfa/totp/enroll")
+@router.post("/mfa/totp/enroll", response_model=TotpEnrollment)
 async def enroll_totp(
     payload: EmptyRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_db_session),
-) -> JSONResponse:
+) -> TotpEnrollment:
     principal = _principal(request)
     enrollment = await _identity_service(session).begin_totp_enrollment(
         _member_id(principal),
         request_id=get_request_id(request),
     )
-    response = JSONResponse(
-        {
-            "factor_id": str(enrollment.factor_id),
-            "secret": enrollment.secret.reveal(),
-        }
-    )
     response.headers["Cache-Control"] = "no-store"
-    return response
+    return TotpEnrollment(
+        factor_id=str(enrollment.factor_id),
+        secret=enrollment.secret.reveal(),
+    )
 
 
-@router.post("/mfa/totp/confirm")
+@router.post("/mfa/totp/confirm", response_model=TotpConfirmation)
 async def confirm_totp(
     payload: TotpConfirmRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_db_session),
-) -> JSONResponse:
+) -> TotpConfirmation:
     principal = _principal(request)
     member_id = _member_id(principal)
     current_time = datetime.now(timezone.utc)
@@ -341,27 +353,25 @@ async def confirm_totp(
         request_id=get_request_id(request),
         now=current_time,
     )
-    response = JSONResponse(
-        {
-            "member_id": str(member_id),
-            "system_role": principal.system_role.value,
-            "requires_password_change": False,
-            "requires_mfa_enrollment": False,
-            "access_expires_at": secrets.access_expires_at.isoformat(),
-            "recovery_codes": [value.reveal() for value in recovery_codes],
-            "initial_api_key": _initial_api_key_payload(initial_api_key) if initial_api_key else None,
-        }
-    )
     _apply_session_cookies(response, secrets)
-    return response
+    return TotpConfirmation(
+        member_id=str(member_id),
+        system_role=principal.system_role,
+        requires_password_change=False,
+        requires_mfa_enrollment=False,
+        access_expires_at=secrets.access_expires_at,
+        recovery_codes=[value.reveal() for value in recovery_codes],
+        initial_api_key=_initial_api_key_payload(initial_api_key) if initial_api_key else None,
+    )
 
 
-@router.post("/logout")
+@router.post("/logout", response_model=SignOut)
 async def logout(
     payload: EmptyRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_db_session),
-) -> JSONResponse:
+) -> SignOut:
     principal = _principal(request)
     if principal.credential_id is None:
         raise AuthenticationException("Authentication required.")
@@ -371,9 +381,8 @@ async def logout(
             credential.family_id,
             reason="sign_out",
         )
-    response = JSONResponse({"status": "signed_out"})
     response.delete_cookie("__Host-aigw-access", path="/", secure=True, httponly=True, samesite="strict")
     response.delete_cookie("__Secure-aigw-refresh", path="/api/v1/auth/refresh", secure=True, httponly=True, samesite="strict")
     response.delete_cookie("aigw-csrf", path="/", secure=True, httponly=False, samesite="strict")
     response.headers["Cache-Control"] = "no-store"
-    return response
+    return SignOut(status="signed_out")

@@ -2,22 +2,9 @@
 
 import { useEffect, useState } from "react";
 
-import { apiRequest } from "@/lib/api-client";
+import { contractClient, contractData } from "@/lib/api-client";
 import { useCurrentMember } from "@/components/auth/session-gate";
 import { DashboardOperations, DashboardShell, DashboardSpace } from "@/components/dashboard-shell";
-
-type SpacesResponse = {
-  items: Array<{
-    created_at: string;
-    id: string;
-    name: string;
-    role: string;
-  }>;
-};
-
-type HealthResponse = {
-  status: "not_ready" | "ready";
-};
 
 export function DashboardController() {
   const member = useCurrentMember();
@@ -28,9 +15,9 @@ export function DashboardController() {
   useEffect(() => {
     let active = true;
     Promise.allSettled([
-      apiRequest<SpacesResponse>("/api/v1/spaces"),
-      apiRequest<HealthResponse>("/healthz/ready", { retryAuthentication: false }),
-      apiRequest<DashboardOperations>("/api/v1/operations/summary"),
+      contractData(contractClient.GET("/api/v1/spaces")),
+      contractData(contractClient.GET("/healthz/ready")),
+      contractData(contractClient.GET("/api/v1/operations/summary")),
     ]).then(([spacesResult, healthResult, operationsResult]) => {
       if (!active) {
         return;
@@ -56,6 +43,7 @@ export function DashboardController() {
       member={{
         displayName: member.display_name,
         role: member.system_role === "super_admin" ? "Super admin" : "Member",
+        systemRole: member.system_role,
       }}
       operations={operations}
       ready={ready}

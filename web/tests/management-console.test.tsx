@@ -18,7 +18,66 @@ vi.mock("@/components/auth/session-gate", () => ({
 
 vi.mock("@/lib/api-client", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/api-client")>();
-  return { ...original, apiMultipart: vi.fn(), apiRequest: vi.fn() };
+  const apiRequest = vi.fn();
+  const request = (method: "DELETE" | "GET" | "PATCH" | "POST" | "PUT") => (
+    path: string,
+    options: {
+      body?: unknown;
+      params?: {
+        header?: Record<string, string>;
+        path?: Record<string, string>;
+        query?: Record<string, boolean | number | string | null | undefined>;
+      };
+    } = {},
+  ) => {
+    let resolvedPath = path;
+    for (const [name, value] of Object.entries(options.params?.path || {})) {
+      resolvedPath = resolvedPath.replace(`{${name}}`, encodeURIComponent(value));
+    }
+    const query = new URLSearchParams();
+    const queryEntries = Object.entries(options.params?.query || {}).sort(([left], [right]) => {
+      const order = ["limit", "cursor"];
+      const leftIndex = order.indexOf(left);
+      const rightIndex = order.indexOf(right);
+      return (leftIndex < 0 ? order.length : leftIndex) - (rightIndex < 0 ? order.length : rightIndex) || left.localeCompare(right);
+    });
+    for (const [name, value] of queryEntries) {
+      if (value !== undefined && value !== null) {
+        query.set(name, String(value));
+      }
+    }
+    if (query.size > 0) {
+      resolvedPath += `?${query.toString()}`;
+    }
+    const legacyOptions: {
+      body?: unknown;
+      idempotent?: boolean;
+      method?: "DELETE" | "PATCH" | "POST" | "PUT";
+    } = {};
+    if (options.body !== undefined) {
+      legacyOptions.body = options.body;
+    }
+    if (options.params?.header?.["Idempotency-Key"]) {
+      legacyOptions.idempotent = true;
+    }
+    if (method !== "GET") {
+      legacyOptions.method = method;
+    }
+    return apiRequest(resolvedPath, legacyOptions);
+  };
+  return {
+    ...original,
+    apiMultipart: vi.fn(),
+    apiRequest,
+    contractClient: {
+      DELETE: request("DELETE"),
+      GET: request("GET"),
+      PATCH: request("PATCH"),
+      POST: request("POST"),
+      PUT: request("PUT"),
+    },
+    contractData: async <T,>(pending: Promise<T>) => pending,
+  };
 });
 
 describe("management console", () => {

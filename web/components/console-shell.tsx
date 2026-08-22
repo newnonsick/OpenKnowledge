@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode, useState } from "react";
+import { ReactNode, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -21,7 +21,8 @@ import {
   X,
 } from "lucide-react";
 
-import { apiRequest } from "@/lib/api-client";
+import { contractClient, contractData } from "@/lib/api-client";
+import { useAlertDialogFocus, useDrawerFocus } from "@/lib/focus-management";
 
 const workspaceNavigation = [
   { label: "For you", icon: Grid2X2, href: "/" },
@@ -44,7 +45,7 @@ type ConsoleShellProps = {
   children: ReactNode;
   description: string;
   eyebrow: string;
-  member: { displayName: string; role: string };
+  member: { displayName: string; role: string; systemRole: "member" | "super_admin" };
   spaceCount: number;
   title: string;
 };
@@ -78,6 +79,12 @@ export function ConsoleShell({ actions, children, description, eyebrow, member, 
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const { closeRef, drawerRef, triggerRef } = useDrawerFocus(menuOpen, setMenuOpen);
+  useAlertDialogFocus(contentRef);
+  const visibleManageNavigation = member.systemRole === "super_admin"
+    ? manageNavigation
+    : manageNavigation.filter((item) => item.href === "/settings");
   const initials = member.displayName.split(/\s+/).map((value) => value[0]).join("").slice(0, 2).toUpperCase();
 
   const signOut = async () => {
@@ -86,7 +93,7 @@ export function ConsoleShell({ actions, children, description, eyebrow, member, 
     }
     setSigningOut(true);
     try {
-      await apiRequest("/api/v1/auth/logout", { body: {}, method: "POST" });
+      await contractData(contractClient.POST("/api/v1/auth/logout", { body: {} }));
     } finally {
       router.replace("/login");
     }
@@ -94,12 +101,12 @@ export function ConsoleShell({ actions, children, description, eyebrow, member, 
 
   return (
     <div className={`app-frame console-frame${menuOpen ? " menu-open" : ""}`}>
-      <aside className="sidebar console-sidebar">
+      <aside className="sidebar console-sidebar" id="console-navigation" ref={drawerRef}>
         <div className="brand-lockup">
           <span className="brand-mark"><Boxes aria-hidden="true" size={18} /></span>
           <span>Kinbase</span>
           <span className="brand-edition">HOME</span>
-          <button aria-label="Close navigation" className="mobile-menu-button close" onClick={() => setMenuOpen(false)} type="button"><X aria-hidden="true" size={18} /></button>
+          <button aria-label="Close navigation" className="mobile-menu-button close" onClick={() => setMenuOpen(false)} ref={closeRef} type="button"><X aria-hidden="true" size={18} /></button>
         </div>
 
         <div className="family-switcher console-family-card">
@@ -112,7 +119,7 @@ export function ConsoleShell({ actions, children, description, eyebrow, member, 
 
         <nav aria-label="Primary navigation" className="primary-navigation">
           <NavigationGroup items={workspaceNavigation} label="Workspace" pathname={pathname} />
-          <NavigationGroup items={manageNavigation} label="Manage" pathname={pathname} />
+          <NavigationGroup items={visibleManageNavigation} label="Manage" pathname={pathname} />
         </nav>
 
         <div className="sidebar-footer console-account">
@@ -127,10 +134,10 @@ export function ConsoleShell({ actions, children, description, eyebrow, member, 
 
       <main className="main-canvas console-main">
         <header className="console-mobile-bar">
-          <button aria-label="Open navigation" className="mobile-menu-button" onClick={() => setMenuOpen(true)} type="button"><Menu aria-hidden="true" size={19} /></button>
+          <button aria-controls="console-navigation" aria-expanded={menuOpen} aria-label="Open navigation" className="mobile-menu-button" onClick={() => setMenuOpen(true)} ref={triggerRef} type="button"><Menu aria-hidden="true" size={19} /></button>
           <span><Boxes aria-hidden="true" size={17} /> Kinbase</span>
         </header>
-        <div className="console-content">
+        <div className="console-content" ref={contentRef}>
           <header className="console-page-header">
             <div>
               <p className="console-eyebrow">{eyebrow}</p>

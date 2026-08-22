@@ -1,3 +1,7 @@
+import createClient from "openapi-fetch";
+
+import type { paths } from "@/lib/generated/openapi";
+
 export type ApiErrorPayload = {
   error?: {
     code?: string;
@@ -43,6 +47,10 @@ export type RefreshResponse = {
 };
 
 let refreshInFlight: Promise<RefreshResponse> | null = null;
+const refreshCoordinationWindow = 30 * 1000;
+const refreshRecordKey = "aigw-last-session-refresh";
+
+type SharedRefreshRecord = RefreshResponse & { completed_at: number };
 
 function traceparent(): string {
   const traceId = globalThis.crypto.randomUUID().replaceAll("-", "");
@@ -106,18 +114,51 @@ async function rawRequest<T>(path: string, options: ApiRequestOptions = {}): Pro
   return decodeResponse<T>(response);
 }
 
+function sharedRefreshRecord(): SharedRefreshRecord | null {
+  if (typeof localStorage === "undefined") {
+    return null;
+  }
+  try {
+    const value = JSON.parse(localStorage.getItem(refreshRecordKey) || "null") as SharedRefreshRecord | null;
+    return value && value.status === "refreshed" && typeof value.completed_at === "number" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+async function rotateSession(): Promise<RefreshResponse> {
+  const recent = sharedRefreshRecord();
+  if (recent && Date.now() - recent.completed_at < refreshCoordinationWindow) {
+    return recent;
+  }
+  const refreshed = await rawRequest<RefreshResponse>("/api/v1/auth/refresh", {
+    body: {},
+    method: "POST",
+    retryAuthentication: false,
+  });
+  localStorage.setItem(refreshRecordKey, JSON.stringify({ ...refreshed, completed_at: Date.now() }));
+  return refreshed;
+}
+
 export function refreshSession(): Promise<RefreshResponse> {
   if (refreshInFlight) {
     return refreshInFlight;
   }
-  refreshInFlight = rawRequest<RefreshResponse>("/api/v1/auth/refresh", {
-    body: {},
-    method: "POST",
-    retryAuthentication: false,
-  }).finally(() => {
+  if (typeof navigator === "undefined" || !navigator.locks) {
+    return Promise.reject(new ApiError(409, {
+      error: {
+        code: "refresh_coordination_unavailable",
+        message: "Safe session refresh is unavailable in this browser.",
+        type: "conflict_error",
+      },
+    }));
+  }
+  const coordinated = navigator.locks.request("aigw-session-refresh", rotateSession) as unknown as Promise<RefreshResponse>;
+  const inFlight = coordinated.finally(() => {
     refreshInFlight = null;
   });
-  return refreshInFlight;
+  refreshInFlight = inFlight;
+  return inFlight;
 }
 
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
@@ -129,6 +170,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       error instanceof ApiError &&
       error.status === 401 &&
       tracedOptions.retryAuthentication !== false &&
+      (tracedOptions.method === undefined || tracedOptions.method === "GET" || tracedOptions.idempotent === true) &&
       !path.startsWith("/api/v1/auth/")
     ) {
       await refreshSession();
@@ -143,15 +185,17 @@ export async function apiMultipart<T>(
   body: FormData,
   options: ApiMultipartOptions = {},
 ): Promise<T> {
-  const headers = tracedHeaders(options.headers);
-  const token = csrfToken();
-  if (token) {
-    headers.set("X-CSRF-Token", token);
-  }
+  const baseHeaders = tracedHeaders(options.headers);
   if (options.idempotent) {
-    headers.set("Idempotency-Key", globalThis.crypto.randomUUID());
+    baseHeaders.set("Idempotency-Key", globalThis.crypto.randomUUID());
   }
-  const execute = () => fetch(path, {
+  const execute = () => {
+    const headers = new Headers(baseHeaders);
+    const token = csrfToken();
+    if (token) {
+      headers.set("X-CSRF-Token", token);
+    }
+    return fetch(path, {
       body,
       cache: "no-store",
       credentials: "include",
@@ -159,13 +203,68 @@ export async function apiMultipart<T>(
       method: "POST",
       signal: options.signal,
     }).then(decodeResponse<T>);
+  };
   try {
     return await execute();
   } catch (error) {
-    if (error instanceof ApiError && error.status === 401 && options.retryAuthentication !== false) {
+    if (
+      error instanceof ApiError &&
+      error.status === 401 &&
+      options.retryAuthentication !== false &&
+      options.idempotent === true
+    ) {
       await refreshSession();
       return execute();
     }
     throw error;
   }
+}
+
+function prepareContractRequest(request: Request): Request {
+  const headers = tracedHeaders(request.headers);
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    const token = csrfToken();
+    if (token) {
+      headers.set("X-CSRF-Token", token);
+    }
+  }
+  return new Request(request, {
+    cache: "no-store",
+    credentials: "include",
+    headers,
+  });
+}
+
+const contractFetch: typeof fetch = async (input, init) => {
+  const initial = prepareContractRequest(
+    input instanceof Request ? input : new Request(input, init),
+  );
+  const retry = initial.clone();
+  let response = await fetch(initial);
+  const pathname = new URL(initial.url).pathname;
+  const retryable = initial.method === "GET" || initial.method === "HEAD" || initial.headers.has("Idempotency-Key");
+  if (response.status === 401 && retryable && !pathname.startsWith("/api/v1/auth/")) {
+    await refreshSession();
+    response = await fetch(prepareContractRequest(retry));
+  }
+  return response;
+};
+
+export const contractClient = createClient<paths>({
+  baseUrl: typeof location === "undefined" ? "http://localhost" : location.origin,
+  fetch: contractFetch,
+});
+
+export async function contractData<T>(
+  pending: Promise<{ data?: T; error?: unknown; response: Response }>,
+): Promise<T> {
+  const result = await pending;
+  if (result.data !== undefined || result.response.ok) {
+    return result.data as T;
+  }
+  throw new ApiError(result.response.status, (result.error || {}) as ApiErrorPayload);
+}
+
+export function idempotencyKey(): string {
+  return globalThis.crypto.randomUUID();
 }

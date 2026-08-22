@@ -4,15 +4,7 @@ import { FormEvent, useState } from "react";
 import { Eye, EyeOff, LoaderCircle, LockKeyhole, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { ApiError, apiRequest } from "@/lib/api-client";
-
-type LoginResponse = {
-  access_expires_at: string;
-  member_id: string;
-  requires_mfa_enrollment: boolean;
-  requires_password_change: boolean;
-  system_role: "member" | "super_admin";
-};
+import { ApiError, contractClient, contractData } from "@/lib/api-client";
 
 export function LoginForm() {
   const router = useRouter();
@@ -28,15 +20,13 @@ export function LoginForm() {
     const fields = new FormData(event.currentTarget);
     const totpCode = String(fields.get("totp_code") || "").trim();
     try {
-      const session = await apiRequest<LoginResponse>("/api/v1/auth/login", {
+      const session = await contractData(contractClient.POST("/api/v1/auth/login", {
         body: {
           password: String(fields.get("password") || ""),
           totp_code: totpCode || null,
           username: String(fields.get("username") || ""),
         },
-        method: "POST",
-        retryAuthentication: false,
-      });
+      }));
       if (session.requires_password_change) {
         router.replace("/first-use/password");
       } else if (session.requires_mfa_enrollment) {

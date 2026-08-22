@@ -7,7 +7,7 @@ describe("DashboardShell", () => {
   it("leads with unified search and keeps system health visually secondary", () => {
     render(
       <DashboardShell
-        member={{ displayName: "Mai", role: "Member" }}
+        member={{ displayName: "Mai", role: "Member", systemRole: "member" }}
         operations={{
           ingestion: { cancelled: 0, cancellation_requested: 0, failed: 0, queued: 1, retry_wait: 0, running: 2, succeeded: 8 },
           observed_at: "2026-08-20T12:01:00Z",
@@ -32,10 +32,12 @@ describe("DashboardShell", () => {
     expect(screen.getByText("Revision 3")).toBeInTheDocument();
     expect(screen.queryByText("100")).not.toBeInTheDocument();
     expect(screen.queryByText(/chat/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "People & access" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Activity" })).not.toBeInTheDocument();
   });
 
   it("routes every quick action to a working management surface", () => {
-    render(<DashboardShell member={{ displayName: "Mai", role: "Member" }} operations={null} ready spaces={[]} />);
+    render(<DashboardShell member={{ displayName: "Mai", role: "Member", systemRole: "member" }} operations={null} ready spaces={[]} />);
 
     expect(screen.getByRole("link", { name: /upload source/i })).toHaveAttribute("href", "/sources");
     expect(screen.getByRole("link", { name: /capture knowledge/i })).toHaveAttribute("href", "/knowledge");
@@ -43,5 +45,12 @@ describe("DashboardShell", () => {
     expect(screen.getByRole("link", { name: /test retrieval/i })).toHaveAttribute("href", "/explore");
     expect(screen.getByRole("link", { name: /command/i })).toHaveAttribute("href", "/explore");
     expect(screen.getByRole("link", { name: "Open profile" })).toHaveAttribute("href", "/settings");
+  });
+
+  it("shows administration destinations to a super admin", () => {
+    render(<DashboardShell member={{ displayName: "Admin", role: "Super admin", systemRole: "super_admin" }} operations={null} ready spaces={[]} />);
+
+    expect(screen.getByRole("link", { name: "People & access" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Activity" })).toBeInTheDocument();
   });
 });

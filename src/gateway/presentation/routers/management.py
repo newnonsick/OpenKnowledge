@@ -7,7 +7,6 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, Response, UploadFile, status
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError as PydanticValidationError
 from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,14 +44,44 @@ from src.gateway.infrastructure.runtime_settings_provider import load_active_ret
 from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
 from src.gateway.presentation.authorization import require_principal, require_scope
 from src.gateway.presentation.request_context import get_request_id
+from src.gateway.presentation.schemas.management_responses import (
+    MANAGEMENT_ERROR_RESPONSES,
+    APIKeySummary,
+    AIToolExecution,
+    AIToolList,
+    AuditEvent,
+    ConfirmedAIAction,
+    CreatedAPIKey,
+    CreatedMember,
+    CreatedSpace,
+    CurrentMember,
+    IngestionJob,
+    IngestionMutation,
+    KnowledgeDetail,
+    KnowledgeSummary,
+    MemberSummary,
+    OperationSummary,
+    Page,
+    PendingAIAction,
+    ResetMemberPassword,
+    RetrievalResult,
+    RuntimeSettings,
+    SessionSummary,
+    SourceSummary,
+    SourceUploadReceipt,
+    SpaceMember,
+    SpaceMemberCandidate,
+    SpaceMembership,
+    SpaceSummary,
+)
 from src.gateway.observability import increment_metric, set_metric_gauge
 
 
-router = APIRouter(prefix="/api/v1", tags=["Management"])
+router = APIRouter(prefix="/api/v1", tags=["Management"], responses=MANAGEMENT_ERROR_RESPONSES)
 KnowledgeTag = Annotated[str, Field(min_length=1, max_length=80)]
 
 
-@router.get("/operations/summary")
+@router.get("/operations/summary", response_model=OperationSummary)
 async def operations_summary(
     principal: Principal = Depends(require_scope("settings:read")),
     session: AsyncSession = Depends(get_db_session),
@@ -589,7 +618,7 @@ async def _ai_job_items(session: AsyncSession, principal: Principal, arguments: 
     ]
 
 
-@router.get("/ai-tools")
+@router.get("/ai-tools", response_model=AIToolList)
 async def list_ai_tools(
     principal: Principal = Depends(require_principal),
 ) -> dict:
@@ -608,15 +637,21 @@ async def list_ai_tools(
     }
 
 
-@router.post("/ai-tools/{tool_name}", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/ai-tools/{tool_name}",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=AIToolExecution,
+    responses={200: {"model": AIToolExecution}, 201: {"model": AIToolExecution}},
+)
 async def execute_ai_tool(
     tool_name: str,
     payload: AIToolExecutionRequest,
     request: Request,
+    response: Response,
     idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
     principal: Principal = Depends(require_principal),
     session: AsyncSession = Depends(get_db_session),
-) -> JSONResponse:
+) -> dict:
     definition = AI_TOOL_DEFINITIONS.get(tool_name)
     if definition is None:
         raise ValidationException("Unknown or unavailable AI tool.")
@@ -661,15 +696,12 @@ async def execute_ai_tool(
                 resource_ids=[str(pending_id)],
             )
             increment_metric("gateway_tool_events_total", event="confirmation", outcome="proposed")
-        return JSONResponse(
-            status_code=202,
-            content={
-                "status": "confirmation_required",
-                "pending_action_id": str(pending_id),
-                "tool_name": tool_name,
-                "expires_at": expires_at.isoformat(),
-            },
-        )
+        return {
+            "status": "confirmation_required",
+            "pending_action_id": str(pending_id),
+            "tool_name": tool_name,
+            "expires_at": expires_at.isoformat(),
+        }
     if tool_name == "spaces.list.v1":
         rows = list(
             await session.execute(
@@ -693,7 +725,8 @@ async def execute_ai_tool(
                 response_status=200,
                 resource_ids=[space["id"] for space in result],
             )
-        return JSONResponse(content={"items": result, "next_cursor": None})
+        response.status_code = status.HTTP_200_OK
+        return {"items": result, "next_cursor": None}
     if tool_name == "spaces.create.v1":
         if reservation.status is ReservationStatus.REPLAY:
             space = await session.get(Workspace, reservation.resource_ids[0])
@@ -712,7 +745,8 @@ async def execute_ai_tool(
                 response_status=201,
                 resource_ids=[created.space_id],
             )
-        return JSONResponse(status_code=201, content={"status": "executed", "tool_name": tool_name, "result": result})
+        response.status_code = status.HTTP_201_CREATED
+        return {"status": "executed", "tool_name": tool_name, "result": result}
     result: dict
     response_status = 200
     resource_ids: list[str] = []
@@ -812,17 +846,15 @@ async def execute_ai_tool(
             response_status=response_status,
             resource_ids=resource_ids,
         )
-    return JSONResponse(
-        status_code=response_status,
-        content={
-            "status": "executed",
-            "tool_name": tool_name,
-            "result": result,
-        },
-    )
+    response.status_code = response_status
+    return {
+        "status": "executed",
+        "tool_name": tool_name,
+        "result": result,
+    }
 
 
-@router.post("/ai-actions/{action_id}/confirm")
+@router.post("/ai-actions/{action_id}/confirm", response_model=ConfirmedAIAction)
 async def confirm_ai_action(
     action_id: UUID,
     request: Request,
@@ -861,7 +893,7 @@ async def confirm_ai_action(
     }
 
 
-@router.get("/ai-actions")
+@router.get("/ai-actions", response_model=Page[PendingAIAction])
 async def list_ai_actions(
     principal: Principal = Depends(require_principal),
     session: AsyncSession = Depends(get_db_session),
@@ -898,7 +930,7 @@ async def list_ai_actions(
     }
 
 
-@router.get("/me")
+@router.get("/me", response_model=CurrentMember)
 async def me(
     principal: Principal = Depends(require_scope("spaces:read")),
     session: AsyncSession = Depends(get_db_session),
@@ -916,7 +948,7 @@ async def me(
     }
 
 
-@router.get("/spaces")
+@router.get("/spaces", response_model=Page[SpaceSummary])
 async def list_spaces(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
@@ -955,7 +987,7 @@ async def list_spaces(
     }
 
 
-@router.post("/spaces", status_code=status.HTTP_201_CREATED)
+@router.post("/spaces", status_code=status.HTTP_201_CREATED, response_model=CreatedSpace)
 async def create_space(
     payload: SpaceCreateRequest,
     request: Request,
@@ -1003,7 +1035,7 @@ async def create_space(
     }
 
 
-@router.get("/spaces/{space_id}/members")
+@router.get("/spaces/{space_id}/members", response_model=Page[SpaceMember])
 async def list_space_members(
     space_id: str,
     principal: Principal = Depends(require_scope("spaces:members")),
@@ -1041,7 +1073,7 @@ async def list_space_members(
     }
 
 
-@router.get("/spaces/{space_id}/member-candidates")
+@router.get("/spaces/{space_id}/member-candidates", response_model=Page[SpaceMemberCandidate])
 async def list_space_member_candidates(
     space_id: str,
     limit: int = Query(default=50, ge=1, le=100),
@@ -1087,7 +1119,7 @@ async def list_space_member_candidates(
     }
 
 
-@router.put("/spaces/{space_id}/members/{member_id}")
+@router.put("/spaces/{space_id}/members/{member_id}", response_model=SpaceMembership)
 async def set_space_membership(
     space_id: str,
     member_id: UUID,
@@ -1181,7 +1213,7 @@ async def archive_space(
     return Response(status_code=204)
 
 
-@router.get("/knowledge")
+@router.get("/knowledge", response_model=Page[KnowledgeSummary])
 async def list_knowledge(
     space_id: str | None = Query(default=None, max_length=64),
     limit: int = Query(default=50, ge=1, le=100),
@@ -1212,7 +1244,7 @@ async def list_knowledge(
     }
 
 
-@router.post("/knowledge", status_code=status.HTTP_201_CREATED)
+@router.post("/knowledge", status_code=status.HTTP_201_CREATED, response_model=KnowledgeDetail)
 async def create_knowledge(
     payload: KnowledgeCreateRequest,
     request: Request,
@@ -1251,7 +1283,7 @@ async def create_knowledge(
     return _knowledge_payload(created)
 
 
-@router.get("/knowledge/{item_id}")
+@router.get("/knowledge/{item_id}", response_model=KnowledgeDetail)
 async def get_knowledge(
     item_id: UUID,
     principal: Principal = Depends(require_scope("knowledge:read")),
@@ -1263,7 +1295,7 @@ async def get_knowledge(
     return _knowledge_payload(item)
 
 
-@router.put("/knowledge/{item_id}")
+@router.put("/knowledge/{item_id}", response_model=KnowledgeDetail)
 async def update_knowledge(
     item_id: UUID,
     payload: KnowledgeUpdateRequest,
@@ -1334,7 +1366,7 @@ async def delete_knowledge(
     return Response(status_code=204)
 
 
-@router.post("/retrieval/search")
+@router.post("/retrieval/search", response_model=RetrievalResult)
 async def search_retrieval(
     payload: RetrievalSearchRequest,
     principal: Principal = Depends(require_scope("knowledge:read")),
@@ -1384,7 +1416,7 @@ async def search_retrieval(
     }
 
 
-@router.post("/sources/upload", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/sources/upload", status_code=status.HTTP_202_ACCEPTED, response_model=SourceUploadReceipt)
 async def upload_source(
     file: UploadFile = File(...),
     space_id: str = Form(min_length=1, max_length=64),
@@ -1416,7 +1448,7 @@ async def upload_source(
     }
 
 
-@router.get("/sources")
+@router.get("/sources", response_model=Page[SourceSummary])
 async def list_sources(
     space_id: str | None = Query(default=None, max_length=64),
     limit: int = Query(default=50, ge=1, le=100),
@@ -1528,7 +1560,7 @@ async def archive_source(
     return Response(status_code=204)
 
 
-@router.get("/ingestion-jobs")
+@router.get("/ingestion-jobs", response_model=Page[IngestionJob])
 async def list_ingestion_jobs(
     space_id: str | None = Query(default=None, max_length=64),
     limit: int = Query(default=50, ge=1, le=100),
@@ -1621,7 +1653,7 @@ async def _mutate_ingestion_job(
     return {"id": str(job_id), "state": state}
 
 
-@router.post("/ingestion-jobs/{job_id}/cancel")
+@router.post("/ingestion-jobs/{job_id}/cancel", response_model=IngestionMutation)
 async def cancel_ingestion_job(
     job_id: UUID,
     request: Request,
@@ -1632,7 +1664,7 @@ async def cancel_ingestion_job(
     return await _mutate_ingestion_job(job_id, "cancel", request, idempotency_key, principal, session)
 
 
-@router.post("/ingestion-jobs/{job_id}/retry")
+@router.post("/ingestion-jobs/{job_id}/retry", response_model=IngestionMutation)
 async def retry_ingestion_job(
     job_id: UUID,
     request: Request,
@@ -1643,7 +1675,7 @@ async def retry_ingestion_job(
     return await _mutate_ingestion_job(job_id, "retry", request, idempotency_key, principal, session)
 
 
-@router.get("/api-keys")
+@router.get("/api-keys", response_model=Page[APIKeySummary])
 async def list_api_keys(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
@@ -1706,14 +1738,15 @@ async def list_api_keys(
     }
 
 
-@router.post("/api-keys", status_code=status.HTTP_201_CREATED)
+@router.post("/api-keys", status_code=status.HTTP_201_CREATED, response_model=CreatedAPIKey)
 async def create_api_key(
     payload: APIKeyCreateRequest,
     request: Request,
+    response: Response,
     idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
     principal: Principal = Depends(require_scope("api_keys:write")),
     session: AsyncSession = Depends(get_db_session),
-) -> JSONResponse:
+) -> CreatedAPIKey:
     reservation = await _reserve(
         session,
         principal,
@@ -1739,18 +1772,14 @@ async def create_api_key(
         response_status=201,
         resource_ids=[str(created.key_id)],
     )
-    response = JSONResponse(
-        status_code=201,
-        content={
-            "id": str(created.key_id),
-            "public_id": created.public_id,
-            "secret": created.secret.reveal(),
-            "scopes": sorted(created.scopes),
-            "expires_at": created.expires_at.isoformat() if created.expires_at else None,
-        },
-    )
     response.headers["Cache-Control"] = "no-store"
-    return response
+    return CreatedAPIKey(
+        id=str(created.key_id),
+        public_id=created.public_id,
+        secret=created.secret.reveal(),
+        scopes=sorted(created.scopes),
+        expires_at=created.expires_at,
+    )
 
 
 @router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1782,7 +1811,7 @@ async def revoke_api_key(
     return Response(status_code=204)
 
 
-@router.get("/members")
+@router.get("/members", response_model=Page[MemberSummary])
 async def list_members(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
@@ -1815,14 +1844,15 @@ async def list_members(
     }
 
 
-@router.post("/members", status_code=status.HTTP_201_CREATED)
+@router.post("/members", status_code=status.HTTP_201_CREATED, response_model=CreatedMember)
 async def create_member(
     payload: MemberCreateRequest,
     request: Request,
+    response: Response,
     idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
     principal: Principal = Depends(require_scope("members:write")),
     session: AsyncSession = Depends(get_db_session),
-) -> JSONResponse:
+) -> CreatedMember:
     reservation = await _reserve(
         session,
         principal,
@@ -1847,22 +1877,18 @@ async def create_member(
         response_status=201,
         resource_ids=[str(created.member_id)],
     )
-    response = JSONResponse(
-        status_code=201,
-        content={
-            "id": str(created.member_id),
-            "username": created.username,
-            "display_name": created.display_name,
-            "temporary_password": created.temporary_password.reveal(),
-            "temporary_password_expires_at": created.expires_at.isoformat(),
-            "requires_password_change": True,
-        },
-    )
     response.headers["Cache-Control"] = "no-store"
-    return response
+    return CreatedMember(
+        id=str(created.member_id),
+        username=created.username,
+        display_name=created.display_name,
+        temporary_password=created.temporary_password.reveal(),
+        temporary_password_expires_at=created.expires_at,
+        requires_password_change=True,
+    )
 
 
-@router.patch("/members/{member_id}")
+@router.patch("/members/{member_id}", response_model=MemberSummary)
 async def update_member(
     member_id: UUID,
     payload: MemberUpdateRequest,
@@ -1909,14 +1935,15 @@ async def update_member(
     }
 
 
-@router.post("/members/{member_id}/password-reset")
+@router.post("/members/{member_id}/password-reset", response_model=ResetMemberPassword)
 async def reset_member_password(
     member_id: UUID,
     request: Request,
+    response: Response,
     idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
     principal: Principal = Depends(require_scope("members:write")),
     session: AsyncSession = Depends(get_db_session),
-) -> JSONResponse:
+) -> ResetMemberPassword:
     reservation = await _reserve(
         session,
         principal,
@@ -1937,19 +1964,16 @@ async def reset_member_password(
         response_status=200,
         resource_ids=[str(member_id)],
     )
-    response = JSONResponse(
-        content={
-            "id": str(reset.member_id),
-            "temporary_password": reset.temporary_password.reveal(),
-            "temporary_password_expires_at": reset.expires_at.isoformat(),
-            "requires_password_change": True,
-        }
-    )
     response.headers["Cache-Control"] = "no-store"
-    return response
+    return ResetMemberPassword(
+        id=str(reset.member_id),
+        temporary_password=reset.temporary_password.reveal(),
+        temporary_password_expires_at=reset.expires_at,
+        requires_password_change=True,
+    )
 
 
-@router.get("/sessions")
+@router.get("/sessions", response_model=Page[SessionSummary])
 async def list_sessions(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
@@ -2033,7 +2057,7 @@ async def revoke_session(
     return Response(status_code=204)
 
 
-@router.get("/audit-events")
+@router.get("/audit-events", response_model=Page[AuditEvent])
 async def list_audit_events(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
@@ -2077,7 +2101,7 @@ async def list_audit_events(
     }
 
 
-@router.get("/settings")
+@router.get("/settings", response_model=RuntimeSettings)
 async def active_runtime_settings(
     principal: Principal = Depends(require_scope("settings:read")),
     session: AsyncSession = Depends(get_db_session),
@@ -2085,7 +2109,7 @@ async def active_runtime_settings(
     return _settings_payload(await RuntimeSettingsService(session).active())
 
 
-@router.get("/settings/history")
+@router.get("/settings/history", response_model=Page[RuntimeSettings])
 async def runtime_settings_history(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
@@ -2103,7 +2127,7 @@ async def runtime_settings_history(
     }
 
 
-@router.post("/settings/drafts", status_code=status.HTTP_201_CREATED)
+@router.post("/settings/drafts", status_code=status.HTTP_201_CREATED, response_model=RuntimeSettings)
 async def create_runtime_settings_draft(
     payload: RuntimeSettingsDraftRequest,
     request: Request,
@@ -2144,7 +2168,7 @@ async def create_runtime_settings_draft(
     return _settings_payload(draft)
 
 
-@router.post("/settings/drafts/{draft_id}/activate")
+@router.post("/settings/drafts/{draft_id}/activate", response_model=RuntimeSettings)
 async def activate_runtime_settings_draft(
     draft_id: UUID,
     payload: RuntimeSettingsActivationRequest,
@@ -2189,7 +2213,7 @@ async def activate_runtime_settings_draft(
     return _settings_payload(activated)
 
 
-@router.post("/settings/rollback/{target_revision}")
+@router.post("/settings/rollback/{target_revision}", response_model=RuntimeSettings)
 async def rollback_runtime_settings(
     target_revision: int,
     payload: RuntimeSettingsRollbackRequest,

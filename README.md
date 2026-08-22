@@ -422,14 +422,33 @@ Most unit and protocol-contract tests need no running services. The SQLite fallb
 ```bash
 pytest                                # everything
 pytest tests/unit -m unit             # unit tests
-pytest tests/integration -m integration
+pytest tests/integration              # complete PostgreSQL integration suite
 ```
 
 To run the integration layer against the PostgreSQL/pgvector URL already configured in `.env`, load it as `TEST_DATABASE_URL` or use the test environment loader. Each test lifecycle creates and drops a guarded unique schema:
 
 ```powershell
 $env:TEST_DATABASE_URL = $env:DATABASE_URL
-pytest tests/integration -m integration
+pytest tests/integration
+```
+
+The FastAPI OpenAPI document is the authoritative browser transport contract. Regenerate and compile the Next.js client after changing an HTTP schema:
+
+```powershell
+uv run --no-sync --env-file .env python -m scripts.export_openapi --output web/lib/generated/openapi.json
+Set-Location web
+npm run generate:api
+npx tsc --noEmit
+```
+
+Frontend behavior and browser accessibility use separate runners:
+
+```powershell
+Set-Location web
+npm test -- --run
+npx playwright install chromium
+npm run test:browser
+npm run build
 ```
 
 The end-to-end suite is organized in five tiers and driven by its own runner:

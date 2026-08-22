@@ -4,25 +4,11 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { Check, Copy, KeySquare, LoaderCircle, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { ApiError, apiRequest } from "@/lib/api-client";
+import { ApiError, contractClient, contractData } from "@/lib/api-client";
+import type { components } from "@/lib/generated/openapi";
 
-type Enrollment = {
-  factor_id: string;
-  secret: string;
-};
-
-type Confirmation = {
-  recovery_codes: string[];
-  initial_api_key?: InitialAPIKey | null;
-};
-
-type InitialAPIKey = {
-  id: string;
-  public_id: string;
-  name: string;
-  secret: string;
-  scopes: string[];
-};
+type Enrollment = components["schemas"]["TotpEnrollment"];
+type InitialAPIKey = components["schemas"]["InitialAPIKey"];
 
 export function MfaEnrollmentForm() {
   const router = useRouter();
@@ -41,7 +27,7 @@ export function MfaEnrollmentForm() {
       return;
     }
     started.current = true;
-    apiRequest<Enrollment>("/api/v1/auth/mfa/totp/enroll", { body: {}, method: "POST", retryAuthentication: false })
+    contractData(contractClient.POST("/api/v1/auth/mfa/totp/enroll", { body: {} }))
       .then(setEnrollment)
       .catch((requestError) => setError(requestError instanceof ApiError ? requestError.message : "Authenticator setup could not start."))
       .finally(() => setLoading(false));
@@ -55,11 +41,9 @@ export function MfaEnrollmentForm() {
     setSubmitting(true);
     setError(null);
     try {
-      const confirmation = await apiRequest<Confirmation>("/api/v1/auth/mfa/totp/confirm", {
+      const confirmation = await contractData(contractClient.POST("/api/v1/auth/mfa/totp/confirm", {
         body: { code, factor_id: enrollment.factor_id },
-        method: "POST",
-        retryAuthentication: false,
-      });
+      }));
       setRecoveryCodes(confirmation.recovery_codes);
       setInitialKey(confirmation.initial_api_key ?? null);
     } catch (requestError) {

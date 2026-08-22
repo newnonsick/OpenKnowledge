@@ -6,146 +6,28 @@ import { useSearchParams } from "next/navigation";
 
 import { useCurrentMember } from "@/components/auth/session-gate";
 import { ConsoleShell } from "@/components/console-shell";
-import { ApiError, apiMultipart, apiRequest } from "@/lib/api-client";
+import { ApiError, apiMultipart, contractClient, contractData, idempotencyKey } from "@/lib/api-client";
+import type { components } from "@/lib/generated/openapi";
 
-type Space = {
-  id: string;
-  name: string;
-  personal?: boolean;
-  revision: number;
-  role: "editor" | "owner" | "reader";
-};
-
-type SpaceListResponse = {
-  items: Space[];
-  next_cursor: string | null;
-};
-
-type SpaceMember = {
-  display_name: string;
-  member_id: string;
-  role: "editor" | "owner" | "reader";
-  status: string;
-  username: string;
-};
-
-type SpaceMemberCandidate = {
-  display_name: string;
-  member_id: string;
-  username: string;
-};
-
-type SpaceMemberListResponse = {
-  items: SpaceMember[];
-  next_cursor: string | null;
-};
-
-type SpaceMemberCandidateListResponse = {
-  items: SpaceMemberCandidate[];
-  next_cursor: string | null;
-};
-
-type KnowledgeSummary = {
-  id: string;
-  space_id: string;
-  tags: string[];
-  title: string;
-  updated_at: string;
-  version: number;
-};
-
-type KnowledgeListResponse = {
-  items: KnowledgeSummary[];
-  next_cursor: string | null;
-};
-
-type KnowledgeDetail = KnowledgeSummary & {
-  content: string;
-};
-
-type RetrievalHit = {
-  canonical_id: string;
-  citation_uri: string | null;
-  content_excerpt: string;
-  rank: number;
-  rank_score: number;
-  source_type: string;
-  space_id: string;
-  title: string;
-  version: number | null;
-};
-
-type RetrievalResponse = {
-  explanation: { abstained: boolean; effective_space_ids: string[] };
-  health: { degraded_reasons: string[]; semantic_status: string };
-  hits: RetrievalHit[];
-};
-
-type SourceSummary = {
-  display_name: string;
-  id: string;
-  original_filename: string | null;
-  revision: number;
-  size_bytes: number | null;
-  space_id: string;
-  status: string;
-  updated_at: string;
-};
-
-type SourceListResponse = {
-  items: SourceSummary[];
-  next_cursor: string | null;
-};
-
-type MemberSummary = {
-  display_name: string;
-  id: string;
-  requires_password_change: boolean;
-  status: string;
-  system_role: string;
-  username: string;
-};
-
-type MemberListResponse = {
-  items: MemberSummary[];
-  next_cursor: string | null;
-};
-
-type CreatedMember = {
-  display_name: string;
-  id: string;
-  temporary_password: string;
-  temporary_password_expires_at: string;
-  username: string;
-};
-
-type ResetMemberPassword = {
-  id: string;
-  requires_password_change: boolean;
-  temporary_password: string;
-  temporary_password_expires_at: string;
-};
-
-type APIKeySummary = {
-  created_at: string;
-  id: string;
-  name: string;
-  public_id: string;
-  scopes: string[];
-  status: string;
-};
-
-type APIKeyListResponse = {
-  items: APIKeySummary[];
-  next_cursor: string | null;
-};
-
-type CreatedAPIKey = {
-  id: string;
-  public_id: string;
-  scopes: string[];
-  secret: string;
-};
+type Space = components["schemas"]["SpaceSummary"];
+type SpaceListResponse = components["schemas"]["Page_SpaceSummary_"];
+type SpaceMember = components["schemas"]["SpaceMember"];
+type SpaceMemberCandidate = components["schemas"]["SpaceMemberCandidate"];
+type SpaceMemberListResponse = components["schemas"]["Page_SpaceMember_"];
+type SpaceMemberCandidateListResponse = components["schemas"]["Page_SpaceMemberCandidate_"];
+type KnowledgeSummary = components["schemas"]["KnowledgeSummary"];
+type KnowledgeListResponse = components["schemas"]["Page_KnowledgeSummary_"];
+type KnowledgeDetail = components["schemas"]["KnowledgeDetail"];
+type RetrievalResponse = components["schemas"]["RetrievalResult"];
+type SourceSummary = components["schemas"]["SourceSummary"];
+type SourceListResponse = components["schemas"]["Page_SourceSummary_"];
+type MemberSummary = components["schemas"]["MemberSummary"];
+type MemberListResponse = components["schemas"]["Page_MemberSummary_"];
+type CreatedMember = components["schemas"]["CreatedMember"];
+type ResetMemberPassword = components["schemas"]["ResetMemberPassword"];
+type APIKeySummary = components["schemas"]["APIKeySummary"];
+type APIKeyListResponse = components["schemas"]["Page_APIKeySummary_"];
+type CreatedAPIKey = components["schemas"]["CreatedAPIKey"];
 
 const API_KEY_SCOPE_OPTIONS = [
   { description: "Search and read knowledge you can access", label: "Read knowledge", value: "knowledge:read" },
@@ -160,73 +42,20 @@ const API_KEY_SCOPE_OPTIONS = [
 
 const DEFAULT_API_KEY_SCOPES = ["knowledge:read"];
 
-type SessionSummary = {
-  created_at: string;
-  current: boolean;
-  id: string;
-  last_activity_at: string;
-  status: string;
-};
-
-type SessionListResponse = {
-  items: SessionSummary[];
-  next_cursor: string | null;
-};
-
-type RuntimeSettings = {
-  base_revision?: number;
-  id?: string | null;
-  revision: number;
-  state: string;
-  values: {
-    retrieval: { limit: number; [key: string]: unknown };
-    [key: string]: unknown;
-  };
-};
-
-type RuntimeSettingsHistoryResponse = {
-  items: RuntimeSettings[];
-  next_cursor: string | null;
-};
-
-type IngestionJob = {
-  attempt_count: number;
-  created_at: string;
-  document_id: string;
-  id: string;
-  last_error_code?: string | null;
-  max_attempts: number;
-  progress: number;
-  space_id: string;
-  state: string;
-  updated_at: string;
-};
-
-type IngestionListResponse = {
-  items: IngestionJob[];
-  next_cursor: string | null;
-};
-
-type AuditEvent = {
-  action: string;
-  actor_kind: string;
-  id: string;
-  occurred_at: string;
-  outcome: string;
-  request_id: string;
-  resource_id: string | null;
-  resource_type: string;
-};
-
-type AuditListResponse = {
-  items: AuditEvent[];
-  next_cursor: string | null;
-};
+type SessionSummary = components["schemas"]["SessionSummary"];
+type SessionListResponse = components["schemas"]["Page_SessionSummary_"];
+type RuntimeSettings = components["schemas"]["RuntimeSettings"];
+type RuntimeSettingsHistoryResponse = components["schemas"]["Page_RuntimeSettings_"];
+type IngestionJob = components["schemas"]["IngestionJob"];
+type IngestionListResponse = components["schemas"]["Page_IngestionJob_"];
+type AuditEvent = components["schemas"]["AuditEvent"];
+type AuditListResponse = components["schemas"]["Page_AuditEvent_"];
 
 function memberView(member: ReturnType<typeof useCurrentMember>) {
   return {
     displayName: member.display_name,
     role: member.system_role === "super_admin" ? "Super admin" : "Member",
+    systemRole: member.system_role,
   };
 }
 
@@ -252,7 +81,7 @@ export function SpacesConsole() {
 
   const load = useCallback(async () => {
     try {
-      const response = await apiRequest<SpaceListResponse>("/api/v1/spaces?limit=100");
+      const response = await contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } }));
       setSpaces(response.items);
       setError(null);
     } catch (loadError) {
@@ -271,8 +100,8 @@ export function SpacesConsole() {
     setError(null);
     try {
       const [membersResponse, candidatesResponse] = await Promise.all([
-        apiRequest<SpaceMemberListResponse>(`/api/v1/spaces/${space.id}/members`),
-        apiRequest<SpaceMemberCandidateListResponse>(`/api/v1/spaces/${space.id}/member-candidates`),
+        contractData(contractClient.GET("/api/v1/spaces/{space_id}/members", { params: { path: { space_id: space.id } } })),
+        contractData(contractClient.GET("/api/v1/spaces/{space_id}/member-candidates", { params: { path: { space_id: space.id } } })),
       ]);
       setSelectedSpace(space);
       setSpaceMembers(membersResponse.items);
@@ -295,7 +124,7 @@ export function SpacesConsole() {
     setSaving(true);
     setError(null);
     try {
-      await apiRequest("/api/v1/spaces", { body: { name: value }, idempotent: true, method: "POST" });
+      await contractData(contractClient.POST("/api/v1/spaces", { body: { name: value }, params: { header: { "Idempotency-Key": idempotencyKey() } } }));
       setName("");
       await load();
     } catch (createError) {
@@ -313,11 +142,10 @@ export function SpacesConsole() {
     setSaving(true);
     setError(null);
     try {
-      await apiRequest(`/api/v1/spaces/${selectedSpace.id}/members/${candidateId}`, {
+      await contractData(contractClient.PUT("/api/v1/spaces/{space_id}/members/{member_id}", {
         body: { role: candidateRole },
-        idempotent: true,
-        method: "PUT",
-      });
+        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { member_id: candidateId, space_id: selectedSpace.id } },
+      }));
       await loadAccess(selectedSpace);
     } catch (updateError) {
       setError(message(updateError));
@@ -333,11 +161,10 @@ export function SpacesConsole() {
     setSaving(true);
     setError(null);
     try {
-      await apiRequest(`/api/v1/spaces/${selectedSpace.id}/members/${spaceMember.member_id}`, {
+      await contractData(contractClient.PUT("/api/v1/spaces/{space_id}/members/{member_id}", {
         body: { role },
-        idempotent: true,
-        method: "PUT",
-      });
+        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { member_id: spaceMember.member_id, space_id: selectedSpace.id } },
+      }));
       await loadAccess(selectedSpace);
     } catch (updateError) {
       setError(message(updateError));
@@ -353,10 +180,9 @@ export function SpacesConsole() {
     setSaving(true);
     setError(null);
     try {
-      await apiRequest(`/api/v1/spaces/${selectedSpace.id}/members/${pendingRemoval.member_id}`, {
-        idempotent: true,
-        method: "DELETE",
-      });
+      await contractData(contractClient.DELETE("/api/v1/spaces/{space_id}/members/{member_id}", {
+        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { member_id: pendingRemoval.member_id, space_id: selectedSpace.id } },
+      }));
       setPendingRemoval(null);
       await loadAccess(selectedSpace);
     } catch (removeError) {
@@ -373,10 +199,9 @@ export function SpacesConsole() {
     setSaving(true);
     setError(null);
     try {
-      await apiRequest(`/api/v1/spaces/${selectedSpace.id}`, {
-        idempotent: true,
-        method: "DELETE",
-      });
+      await contractData(contractClient.DELETE("/api/v1/spaces/{space_id}", {
+        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { space_id: selectedSpace.id } },
+      }));
       setSelectedSpace(null);
       setConfirmSpaceArchive(false);
       await load();
@@ -505,15 +330,15 @@ export function KnowledgeConsole() {
   const [error, setError] = useState<string | null>(null);
 
   const loadItems = useCallback(async () => {
-    const response = await apiRequest<KnowledgeListResponse>("/api/v1/knowledge?limit=100");
+    const response = await contractData(contractClient.GET("/api/v1/knowledge", { params: { query: { limit: 100 } } }));
     setItems(response.items);
   }, []);
 
   useEffect(() => {
     let active = true;
     Promise.all([
-      apiRequest<SpaceListResponse>("/api/v1/spaces?limit=100"),
-      apiRequest<KnowledgeListResponse>("/api/v1/knowledge?limit=100"),
+      contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })),
+      contractData(contractClient.GET("/api/v1/knowledge", { params: { query: { limit: 100 } } })),
     ]).then(([spaceResponse, knowledgeResponse]) => {
       if (!active) {
         return;
@@ -544,16 +369,15 @@ export function KnowledgeConsole() {
     setSaving(true);
     setError(null);
     try {
-      await apiRequest("/api/v1/knowledge", {
+      await contractData(contractClient.POST("/api/v1/knowledge", {
         body: {
           content: content.trim(),
           space_id: spaceId,
           tags: tags.split(",").map((value) => value.trim()).filter(Boolean),
           title: title.trim(),
         },
-        idempotent: true,
-        method: "POST",
-      });
+        params: { header: { "Idempotency-Key": idempotencyKey() } },
+      }));
       setTitle("");
       setContent("");
       setTags("");
@@ -569,7 +393,7 @@ export function KnowledgeConsole() {
     setLoading(true);
     setError(null);
     try {
-      const detail = await apiRequest<KnowledgeDetail>(`/api/v1/knowledge/${item.id}`);
+      const detail = await contractData(contractClient.GET("/api/v1/knowledge/{item_id}", { params: { path: { item_id: item.id } } }));
       setEditing(detail);
       setEditTitle(detail.title);
       setEditContent(detail.content);
@@ -590,7 +414,7 @@ export function KnowledgeConsole() {
     setSaving(true);
     setError(null);
     try {
-      const updated = await apiRequest<KnowledgeDetail>(`/api/v1/knowledge/${editing.id}`, {
+      const updated = await contractData(contractClient.PUT("/api/v1/knowledge/{item_id}", {
         body: {
           change_summary: "Updated through the management console",
           content: editContent.trim(),
@@ -598,9 +422,8 @@ export function KnowledgeConsole() {
           tags: editTags.split(",").map((value) => value.trim()).filter(Boolean),
           title: editTitle.trim(),
         },
-        idempotent: true,
-        method: "PUT",
-      });
+        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { item_id: editing.id } },
+      }));
       setEditing(updated);
       setEditTitle(updated.title);
       setEditContent(updated.content);
@@ -620,10 +443,13 @@ export function KnowledgeConsole() {
     setSaving(true);
     setError(null);
     try {
-      await apiRequest(`/api/v1/knowledge/${editing.id}?expected_version=${editing.version}`, {
-        idempotent: true,
-        method: "DELETE",
-      });
+      await contractData(contractClient.DELETE("/api/v1/knowledge/{item_id}", {
+        params: {
+          header: { "Idempotency-Key": idempotencyKey() },
+          path: { item_id: editing.id },
+          query: { expected_version: editing.version },
+        },
+      }));
       setEditing(null);
       setConfirmArchive(false);
       await loadItems();
@@ -726,7 +552,7 @@ export function ExploreConsole() {
 
   useEffect(() => {
     let active = true;
-    apiRequest<SpaceListResponse>("/api/v1/spaces?limit=100")
+    contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } }))
       .then((response) => {
         if (active) {
           setSpaces(response.items);
@@ -755,15 +581,14 @@ export function ExploreConsole() {
     setSearching(true);
     setError(null);
     try {
-      const response = await apiRequest<RetrievalResponse>("/api/v1/retrieval/search", {
+      const response = await contractData(contractClient.POST("/api/v1/retrieval/search", {
         body: {
           limit: 20,
           query: query.trim(),
-          semantic_policy: "best_effort",
+          semantic_policy: "prefer",
           space_ids: spaces.map((space) => space.id),
         },
-        method: "POST",
-      });
+      }));
       setResult(response);
       const params = new URLSearchParams(searchParams.toString());
       params.set("q", query.trim());
@@ -841,7 +666,7 @@ export function SourcesConsole() {
   const [error, setError] = useState<string | null>(null);
 
   const loadSources = useCallback(async () => {
-    const response = await apiRequest<SourceListResponse>("/api/v1/sources?limit=100");
+    const response = await contractData(contractClient.GET("/api/v1/sources", { params: { query: { limit: 100 } } }));
     setSources(response.items);
     setSourceCursor(response.next_cursor);
   }, []);
@@ -852,7 +677,7 @@ export function SourcesConsole() {
     }
     setLoading(true);
     try {
-      const response = await apiRequest<SourceListResponse>(`/api/v1/sources?limit=100&cursor=${encodeURIComponent(sourceCursor)}`);
+      const response = await contractData(contractClient.GET("/api/v1/sources", { params: { query: { cursor: sourceCursor, limit: 100 } } }));
       setSources((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
       setSourceCursor(response.next_cursor);
     } catch (loadError) {
@@ -865,8 +690,8 @@ export function SourcesConsole() {
   useEffect(() => {
     let active = true;
     Promise.all([
-      apiRequest<SpaceListResponse>("/api/v1/spaces?limit=100"),
-      apiRequest<SourceListResponse>("/api/v1/sources?limit=100"),
+      contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })),
+      contractData(contractClient.GET("/api/v1/sources", { params: { query: { limit: 100 } } })),
     ]).then(([spaceResponse, sourceResponse]) => {
       if (!active) {
         return;
@@ -902,7 +727,7 @@ export function SourcesConsole() {
     setQueued(false);
     setError(null);
     try {
-      await apiMultipart("/api/v1/sources/upload", body, { idempotent: true });
+      await apiMultipart<components["schemas"]["SourceUploadReceipt"]>("/api/v1/sources/upload", body, { idempotent: true });
       setQueued(true);
       setDisplayName("");
       setFile(null);
@@ -921,7 +746,13 @@ export function SourcesConsole() {
     setSaving(true);
     setError(null);
     try {
-      await apiRequest(`/api/v1/sources/${pendingArchive.id}?expected_revision=${pendingArchive.revision}`, { idempotent: true, method: "DELETE" });
+      await contractData(contractClient.DELETE("/api/v1/sources/{document_id}", {
+        params: {
+          header: { "Idempotency-Key": idempotencyKey() },
+          path: { document_id: pendingArchive.id },
+          query: { expected_revision: pendingArchive.revision },
+        },
+      }));
       setPendingArchive(null);
       await loadSources();
     } catch (archiveError) {
@@ -998,15 +829,15 @@ export function PeopleConsole() {
   const isAdmin = member.system_role === "super_admin";
 
   const loadMembers = useCallback(async () => {
-    const response = await apiRequest<MemberListResponse>("/api/v1/members?limit=100");
+    const response = await contractData(contractClient.GET("/api/v1/members", { params: { query: { limit: 100 } } }));
     setMembers(response.items);
   }, []);
 
   useEffect(() => {
     let active = true;
     const requests: [Promise<SpaceListResponse>, Promise<MemberListResponse | null>] = [
-      apiRequest<SpaceListResponse>("/api/v1/spaces?limit=100"),
-      isAdmin ? apiRequest<MemberListResponse>("/api/v1/members?limit=100") : Promise.resolve(null),
+      contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })),
+      isAdmin ? contractData(contractClient.GET("/api/v1/members", { params: { query: { limit: 100 } } })) : Promise.resolve(null),
     ];
     Promise.all(requests).then(([spaceResponse, memberResponse]) => {
       if (!active) {
@@ -1037,11 +868,10 @@ export function PeopleConsole() {
     setCreated(null);
     setError(null);
     try {
-      const response = await apiRequest<CreatedMember>("/api/v1/members", {
+      const response = await contractData(contractClient.POST("/api/v1/members", {
         body: { display_name: displayName.trim(), username: username.trim() },
-        idempotent: true,
-        method: "POST",
-      });
+        params: { header: { "Idempotency-Key": idempotencyKey() } },
+      }));
       setCreated(response);
       setUsername("");
       setDisplayName("");
@@ -1060,15 +890,14 @@ export function PeopleConsole() {
     setSaving(true);
     setError(null);
     try {
-      const response = await apiRequest<MemberSummary>(`/api/v1/members/${selectedMember.id}`, {
+      const response = await contractData(contractClient.PATCH("/api/v1/members/{member_id}", {
         body: {
           display_name: selectedMember.display_name,
           status,
           system_role: selectedMember.system_role,
         },
-        idempotent: true,
-        method: "PATCH",
-      });
+        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { member_id: selectedMember.id } },
+      }));
       setSelectedMember(response);
       setPendingMemberAction(null);
       await loadMembers();
@@ -1086,10 +915,9 @@ export function PeopleConsole() {
     setSaving(true);
     setError(null);
     try {
-      const response = await apiRequest<ResetMemberPassword>(`/api/v1/members/${selectedMember.id}/password-reset`, {
-        idempotent: true,
-        method: "POST",
-      });
+      const response = await contractData(contractClient.POST("/api/v1/members/{member_id}/password-reset", {
+        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { member_id: selectedMember.id } },
+      }));
       setResetPassword(response);
       setPendingMemberAction(null);
       setSelectedMember({ ...selectedMember, requires_password_change: true });
@@ -1131,7 +959,7 @@ export function PeopleConsole() {
                 <div className="space-access-heading"><div><span>Account controls</span><h2>{selectedMember.display_name}</h2></div><button aria-label="Close member manager" className="icon-button" onClick={() => setSelectedMember(null)} type="button"><X size={16} /></button></div>
                 <div className="member-admin-form">
                   <div><label htmlFor="member-admin-display-name">Display name</label><input id="member-admin-display-name" maxLength={255} onChange={(event) => setSelectedMember({ ...selectedMember, display_name: event.target.value })} value={selectedMember.display_name} /></div>
-                  <div><label htmlFor="member-admin-system-role">System role</label><select id="member-admin-system-role" onChange={(event) => setSelectedMember({ ...selectedMember, system_role: event.target.value })} value={selectedMember.system_role}><option value="member">Member</option><option value="super_admin">Super admin</option></select></div>
+                  <div><label htmlFor="member-admin-system-role">System role</label><select id="member-admin-system-role" onChange={(event) => setSelectedMember({ ...selectedMember, system_role: event.target.value as MemberSummary["system_role"] })} value={selectedMember.system_role}><option value="member">Member</option><option value="super_admin">Super admin</option></select></div>
                   <button className="secondary-button" disabled={saving} onClick={() => void updateSelectedMember()} type="button"><Save size={14} /> Save account</button>
                 </div>
                 <div className="member-security-actions">
@@ -1203,13 +1031,13 @@ export function SettingsConsole() {
   const [error, setError] = useState<string | null>(null);
 
   const loadKeys = useCallback(async () => {
-    const response = await apiRequest<APIKeyListResponse>("/api/v1/api-keys");
+    const response = await contractData(contractClient.GET("/api/v1/api-keys"));
     setKeys(response.items);
     setKeyCursor(response.next_cursor);
   }, []);
 
   const loadSessions = useCallback(async () => {
-    const response = await apiRequest<SessionListResponse>("/api/v1/sessions");
+    const response = await contractData(contractClient.GET("/api/v1/sessions"));
     setSessions(response.items);
     setSessionCursor(response.next_cursor);
   }, []);
@@ -1218,7 +1046,7 @@ export function SettingsConsole() {
     if (member.system_role !== "super_admin") {
       return;
     }
-    const response = await apiRequest<RuntimeSettingsHistoryResponse>("/api/v1/settings/history?limit=20");
+    const response = await contractData(contractClient.GET("/api/v1/settings/history", { params: { query: { limit: 20 } } }));
     setSettingsHistory(response.items);
     setSettingsHistoryCursor(response.next_cursor);
   }, [member.system_role]);
@@ -1229,7 +1057,7 @@ export function SettingsConsole() {
     }
     setSaving(true);
     try {
-      const response = await apiRequest<APIKeyListResponse>(`/api/v1/api-keys?cursor=${encodeURIComponent(keyCursor)}`);
+      const response = await contractData(contractClient.GET("/api/v1/api-keys", { params: { query: { cursor: keyCursor } } }));
       setKeys((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
       setKeyCursor(response.next_cursor);
     } catch (loadError) {
@@ -1245,7 +1073,7 @@ export function SettingsConsole() {
     }
     setSaving(true);
     try {
-      const response = await apiRequest<SessionListResponse>(`/api/v1/sessions?cursor=${encodeURIComponent(sessionCursor)}`);
+      const response = await contractData(contractClient.GET("/api/v1/sessions", { params: { query: { cursor: sessionCursor } } }));
       setSessions((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
       setSessionCursor(response.next_cursor);
     } catch (loadError) {
@@ -1261,7 +1089,7 @@ export function SettingsConsole() {
     }
     setSaving(true);
     try {
-      const response = await apiRequest<RuntimeSettingsHistoryResponse>(`/api/v1/settings/history?limit=20&cursor=${encodeURIComponent(settingsHistoryCursor)}`);
+      const response = await contractData(contractClient.GET("/api/v1/settings/history", { params: { query: { cursor: settingsHistoryCursor, limit: 20 } } }));
       setSettingsHistory((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.revision === item.revision))]);
       setSettingsHistoryCursor(response.next_cursor);
     } catch (loadError) {
@@ -1274,11 +1102,11 @@ export function SettingsConsole() {
   useEffect(() => {
     let active = true;
     Promise.all([
-      apiRequest<SpaceListResponse>("/api/v1/spaces?limit=100"),
-      apiRequest<APIKeyListResponse>("/api/v1/api-keys"),
-      apiRequest<SessionListResponse>("/api/v1/sessions"),
-      apiRequest<RuntimeSettings>("/api/v1/settings"),
-      member.system_role === "super_admin" ? apiRequest<RuntimeSettingsHistoryResponse>("/api/v1/settings/history?limit=20") : Promise.resolve({ items: [], next_cursor: null }),
+      contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })),
+      contractData(contractClient.GET("/api/v1/api-keys")),
+      contractData(contractClient.GET("/api/v1/sessions")),
+      contractData(contractClient.GET("/api/v1/settings")),
+      member.system_role === "super_admin" ? contractData(contractClient.GET("/api/v1/settings/history", { params: { query: { limit: 20 } } })) : Promise.resolve({ items: [], next_cursor: null }),
     ]).then(([spaceResponse, keyResponse, sessionResponse, runtimeResponse, historyResponse]) => {
       if (!active) {
         return;
@@ -1291,7 +1119,7 @@ export function SettingsConsole() {
       setKeyCursor(keyResponse.next_cursor);
       setSessionCursor(sessionResponse.next_cursor);
       setSettingsHistoryCursor(historyResponse.next_cursor);
-      setRuntimeLimit(runtimeResponse.values.retrieval.limit);
+      setRuntimeLimit(runtimeResponse.values.retrieval?.limit ?? 20);
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
@@ -1315,11 +1143,10 @@ export function SettingsConsole() {
     setCreatedKey(null);
     setError(null);
     try {
-      const response = await apiRequest<CreatedAPIKey>("/api/v1/api-keys", {
+      const response = await contractData(contractClient.POST("/api/v1/api-keys", {
         body: { name: keyName.trim(), scopes: selectedKeyScopes },
-        idempotent: true,
-        method: "POST",
-      });
+        params: { header: { "Idempotency-Key": idempotencyKey() } },
+      }));
       setCreatedKey(response);
       setKeyName("");
       setSelectedKeyScopes(DEFAULT_API_KEY_SCOPES);
@@ -1344,10 +1171,9 @@ export function SettingsConsole() {
     setSaving(true);
     setError(null);
     try {
-      await apiRequest(`/api/v1/api-keys/${pendingKeyRevocation.id}`, {
-        idempotent: true,
-        method: "DELETE",
-      });
+      await contractData(contractClient.DELETE("/api/v1/api-keys/{key_id}", {
+        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { key_id: pendingKeyRevocation.id } },
+      }));
       setPendingKeyRevocation(null);
       await loadKeys();
     } catch (revokeError) {
@@ -1364,10 +1190,9 @@ export function SettingsConsole() {
     setSaving(true);
     setError(null);
     try {
-      await apiRequest(`/api/v1/sessions/${pendingSessionRevocation.id}`, {
-        idempotent: true,
-        method: "DELETE",
-      });
+      await contractData(contractClient.DELETE("/api/v1/sessions/{family_id}", {
+        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { family_id: pendingSessionRevocation.id } },
+      }));
       setPendingSessionRevocation(null);
       await loadSessions();
     } catch (revokeError) {
@@ -1379,13 +1204,13 @@ export function SettingsConsole() {
 
   const createRuntimeDraft = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!settings || runtimeReason.trim().length < 5 || saving) {
+    if (!settings?.values.retrieval || runtimeReason.trim().length < 5 || saving) {
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      const draft = await apiRequest<RuntimeSettings>("/api/v1/settings/drafts", {
+      const draft = await contractData(contractClient.POST("/api/v1/settings/drafts", {
         body: {
           base_revision: settings.revision,
           reason: runtimeReason.trim(),
@@ -1394,9 +1219,8 @@ export function SettingsConsole() {
             retrieval: { ...settings.values.retrieval, limit: runtimeLimit },
           },
         },
-        idempotent: true,
-        method: "POST",
-      });
+        params: { header: { "Idempotency-Key": idempotencyKey() } },
+      }));
       setRuntimeDraft(draft);
     } catch (draftError) {
       setError(message(draftError));
@@ -1412,16 +1236,15 @@ export function SettingsConsole() {
     setSaving(true);
     setError(null);
     try {
-      const activated = await apiRequest<RuntimeSettings>(`/api/v1/settings/drafts/${runtimeDraft.id}/activate`, {
+      const activated = await contractData(contractClient.POST("/api/v1/settings/drafts/{draft_id}/activate", {
         body: {
           expected_active_revision: settings.revision,
           reason: runtimeReason.trim(),
         },
-        idempotent: true,
-        method: "POST",
-      });
+        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { draft_id: runtimeDraft.id } },
+      }));
       setSettings(activated);
-      setRuntimeLimit(activated.values.retrieval.limit);
+      setRuntimeLimit(activated.values.retrieval?.limit ?? runtimeLimit);
       setRuntimeDraft(null);
       await loadSettingsHistory();
     } catch (activationError) {
@@ -1438,16 +1261,15 @@ export function SettingsConsole() {
     setSaving(true);
     setError(null);
     try {
-      const restored = await apiRequest<RuntimeSettings>(`/api/v1/settings/rollback/${pendingSettingsRestore.revision}`, {
+      const restored = await contractData(contractClient.POST("/api/v1/settings/rollback/{target_revision}", {
         body: {
           expected_active_revision: settings.revision,
           reason: runtimeReason.trim(),
         },
-        idempotent: true,
-        method: "POST",
-      });
+        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { target_revision: pendingSettingsRestore.revision } },
+      }));
       setSettings(restored);
-      setRuntimeLimit(restored.values.retrieval.limit);
+      setRuntimeLimit(restored.values.retrieval?.limit ?? runtimeLimit);
       setPendingSettingsRestore(null);
       await loadSettingsHistory();
     } catch (restoreError) {
@@ -1515,7 +1337,7 @@ export function SettingsConsole() {
             </form>
           ) : null}
           {runtimeDraft ? <div className="runtime-draft-review"><div><strong>Draft revision {runtimeDraft.revision} ready</strong><span>Validated against the typed safe-setting schema. Activation remains a separate audited step.</span></div><button className="primary-button" disabled={saving} onClick={() => void activateRuntimeDraft()} type="button">Activate settings</button></div> : null}
-          {settingsHistory.length > 0 ? <div className="data-list compact-list">{settingsHistory.map((revision) => <article className="data-row" key={revision.id || revision.revision}><span className="row-leading violet"><Settings2 size={16} /></span><div className="row-copy"><h3>Revision {revision.revision}</h3><p>Retrieval limit {revision.values.retrieval.limit} · {revision.state}</p></div>{revision.state === "superseded" ? <button aria-label={`Restore revision ${revision.revision}`} className="row-action-button" disabled={saving} onClick={() => setPendingSettingsRestore(revision)} type="button">Restore</button> : <span className="status-pill status-active">active</span>}</article>)}</div> : null}
+          {settingsHistory.length > 0 ? <div className="data-list compact-list">{settingsHistory.map((revision) => <article className="data-row" key={revision.id || revision.revision}><span className="row-leading violet"><Settings2 size={16} /></span><div className="row-copy"><h3>Revision {revision.revision}</h3><p>Retrieval limit {revision.values.retrieval?.limit ?? "default"} · {revision.state}</p></div>{revision.state === "superseded" ? <button aria-label={`Restore revision ${revision.revision}`} className="row-action-button" disabled={saving} onClick={() => setPendingSettingsRestore(revision)} type="button">Restore</button> : <span className="status-pill status-active">active</span>}</article>)}</div> : null}
           {settingsHistoryCursor ? <button className="secondary-button pagination-button" disabled={saving} onClick={() => void loadMoreSettingsHistory()} type="button">Load more settings history</button> : null}
           {pendingSettingsRestore ? <div aria-label={`Restore revision ${pendingSettingsRestore.revision}`} className="confirmation-strip" role="alertdialog"><div><strong>Restore revision {pendingSettingsRestore.revision}?</strong><span>This creates a new active revision from the historical values. The current revision remains preserved for audit and future recovery.</span></div><button className="secondary-button" onClick={() => setPendingSettingsRestore(null)} type="button">Keep current</button><button className="danger-button" disabled={saving || runtimeReason.trim().length < 5} onClick={() => void restoreRuntimeSettings()} type="button">Confirm restore revision {pendingSettingsRestore.revision}</button></div> : null}
           <pre>{JSON.stringify(runtimeDraft?.values || settings?.values || {}, null, 2)}</pre>
@@ -1538,7 +1360,7 @@ export function IngestionConsole() {
 
   const loadJobs = useCallback(async () => {
     try {
-      const response = await apiRequest<IngestionListResponse>("/api/v1/ingestion-jobs?limit=100");
+      const response = await contractData(contractClient.GET("/api/v1/ingestion-jobs", { params: { query: { limit: 100 } } }));
       setJobs(response.items);
       setJobCursor(response.next_cursor);
       setError(null);
@@ -1555,7 +1377,7 @@ export function IngestionConsole() {
     }
     setSaving(true);
     try {
-      const response = await apiRequest<IngestionListResponse>(`/api/v1/ingestion-jobs?limit=100&cursor=${encodeURIComponent(jobCursor)}`);
+      const response = await contractData(contractClient.GET("/api/v1/ingestion-jobs", { params: { query: { cursor: jobCursor, limit: 100 } } }));
       setJobs((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
       setJobCursor(response.next_cursor);
     } catch (loadError) {
@@ -1567,7 +1389,7 @@ export function IngestionConsole() {
 
   useEffect(() => {
     let active = true;
-    apiRequest<SpaceListResponse>("/api/v1/spaces?limit=100").then((response) => {
+    contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })).then((response) => {
       if (active) {
         setSpaces(response.items);
       }
@@ -1591,7 +1413,15 @@ export function IngestionConsole() {
     setSaving(true);
     setError(null);
     try {
-      await apiRequest(`/api/v1/ingestion-jobs/${pendingJobAction.job.id}/${pendingJobAction.operation}`, { idempotent: true, method: "POST" });
+      const params = {
+        header: { "Idempotency-Key": idempotencyKey() },
+        path: { job_id: pendingJobAction.job.id },
+      };
+      if (pendingJobAction.operation === "cancel") {
+        await contractData(contractClient.POST("/api/v1/ingestion-jobs/{job_id}/cancel", { params }));
+      } else {
+        await contractData(contractClient.POST("/api/v1/ingestion-jobs/{job_id}/retry", { params }));
+      }
       setPendingJobAction(null);
       await loadJobs();
     } catch (mutationError) {
@@ -1647,8 +1477,8 @@ export function ActivityConsole() {
   useEffect(() => {
     let active = true;
     Promise.all([
-      apiRequest<SpaceListResponse>("/api/v1/spaces?limit=100"),
-      isAdmin ? apiRequest<AuditListResponse>("/api/v1/audit-events?limit=100") : Promise.resolve(null),
+      contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })),
+      isAdmin ? contractData(contractClient.GET("/api/v1/audit-events", { params: { query: { limit: 100 } } })) : Promise.resolve(null),
     ]).then(([spaceResponse, auditResponse]) => {
       if (!active) {
         return;
@@ -1676,7 +1506,7 @@ export function ActivityConsole() {
     }
     setLoading(true);
     try {
-      const response = await apiRequest<AuditListResponse>(`/api/v1/audit-events?limit=100&cursor=${encodeURIComponent(eventCursor)}`);
+      const response = await contractData(contractClient.GET("/api/v1/audit-events", { params: { query: { cursor: eventCursor, limit: 100 } } }));
       setEvents((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
       setEventCursor(response.next_cursor);
     } catch (loadError) {
@@ -1710,22 +1540,8 @@ export function ActivityConsole() {
   );
 }
 
-type AIManagementTool = {
-  confirmation: string;
-  description: string;
-  name: string;
-  parameters: Record<string, unknown>;
-};
-
-type PendingAIAction = {
-  created_at: string;
-  expected_revision: number | null;
-  expires_at: string;
-  id: string;
-  status: string;
-  target_ids: string[];
-  tool_name: string;
-};
+type AIManagementTool = components["schemas"]["AIToolDescriptor"];
+type PendingAIAction = components["schemas"]["PendingAIAction"];
 
 function aiActionImpact(toolName: string) {
   if (toolName === "spaces.members.set.v1") {
@@ -1756,16 +1572,16 @@ export function AiActionsConsole() {
   const [error, setError] = useState<string | null>(null);
 
   const loadActions = useCallback(async () => {
-    const response = await apiRequest<{ items: PendingAIAction[] }>("/api/v1/ai-actions");
+    const response = await contractData(contractClient.GET("/api/v1/ai-actions"));
     setPendingActions(response.items);
   }, []);
 
   useEffect(() => {
     let active = true;
     Promise.all([
-      apiRequest<SpaceListResponse>("/api/v1/spaces?limit=100"),
-      apiRequest<{ items: AIManagementTool[] }>("/api/v1/ai-tools"),
-      apiRequest<{ items: PendingAIAction[] }>("/api/v1/ai-actions"),
+      contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })),
+      contractData(contractClient.GET("/api/v1/ai-tools")),
+      contractData(contractClient.GET("/api/v1/ai-actions")),
     ]).then(([spaceResponse, toolResponse, actionResponse]) => {
       if (!active) {
         return;
@@ -1790,10 +1606,9 @@ export function AiActionsConsole() {
     setSaving(true);
     setError(null);
     try {
-      await apiRequest(`/api/v1/ai-actions/${reviewing.id}/confirm`, {
-        idempotent: true,
-        method: "POST",
-      });
+      await contractData(contractClient.POST("/api/v1/ai-actions/{action_id}/confirm", {
+        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { action_id: reviewing.id } },
+      }));
       setReviewing(null);
       await loadActions();
     } catch (confirmError) {

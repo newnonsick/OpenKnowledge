@@ -11,6 +11,10 @@ downloads/
 eggs/
 .eggs/
 lib/
+!web/lib/
+!web/lib/generated/
+!web/lib/generated/openapi.json
+!web/lib/generated/openapi.ts
 lib64/
 parts/
 sdist/
@@ -83,4 +87,6 @@ ehthumbs.db
 web/node_modules/
 web/.next/
 web/coverage/
+web/playwright-report/
+web/test-results/
 web/*.tsbuildinfo

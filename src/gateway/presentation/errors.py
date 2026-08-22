@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -20,6 +21,7 @@ def protocol_error_response(
     error_type: str,
     code: str,
     message: str,
+    details: dict[str, Any] | None = None,
 ) -> JSONResponse:
     request_id = get_request_id(request)
     if request.url.path.startswith("/v1/messages"):
@@ -29,8 +31,11 @@ def protocol_error_response(
             "request_id": request_id,
         }
     else:
+        error = {"message": message, "type": error_type, "code": code}
+        if details and request.url.path.startswith("/api/v1/"):
+            error["details"] = details
         content = {
-            "error": {"message": message, "type": error_type, "code": code},
+            "error": error,
             "request_id": request_id,
         }
     response = JSONResponse(status_code=status_code, content=content)
@@ -38,6 +43,34 @@ def protocol_error_response(
     if status_code == 429:
         response.headers["Retry-After"] = str(max(1, int(getattr(request.state, "retry_after_seconds", 1))))
     return apply_security_headers(response, request.url.path)
+
+
+def _validation_details(exc: RequestValidationError) -> dict[str, Any]:
+    fields: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for error in exc.errors()[:20]:
+        field = ".".join(str(part) for part in error.get("loc", ()))[:255]
+        code = str(error.get("type", "invalid"))[:120]
+        key = (field, code)
+        if key not in seen:
+            seen.add(key)
+            fields.append({"field": field, "code": code})
+    return {"fields": fields}
+
+
+def _gateway_details(exc: GatewayException) -> dict[str, Any] | None:
+    details: dict[str, Any] = {}
+    retry_after = exc.details.get("retry_after_seconds")
+    if isinstance(retry_after, int) and not isinstance(retry_after, bool):
+        details["retry_after_seconds"] = max(1, retry_after)
+    item_id = exc.details.get("item_id")
+    if isinstance(item_id, str):
+        details["item_id"] = item_id[:255]
+    for key in ("expected_version", "actual_version"):
+        value = exc.details.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            details[key] = value
+    return details or None
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -52,6 +85,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             "invalid_request_error",
             "invalid_payload",
             "The request payload is invalid.",
+            details=_validation_details(exc),
         )
 
     @app.exception_handler(GatewayException)
@@ -68,6 +102,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             exc.error_type,
             exc.code,
             message,
+            details=_gateway_details(exc),
         )
 
     @app.exception_handler(HTTPException)

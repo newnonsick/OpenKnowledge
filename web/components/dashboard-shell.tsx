@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { useState } from "react";
 import {
   Activity,
   ArrowRight,
@@ -14,6 +17,7 @@ import {
   Grid2X2,
   KeyRound,
   Layers3,
+  Menu,
   Plus,
   Search,
   Settings2,
@@ -21,7 +25,10 @@ import {
   Upload,
   UsersRound,
   WandSparkles,
+  X,
 } from "lucide-react";
+
+import { useDrawerFocus } from "@/lib/focus-management";
 
 const navigation = [
   { label: "For you", icon: Grid2X2, active: true, href: "/" },
@@ -65,7 +72,7 @@ export type DashboardOperations = {
 };
 
 type DashboardShellProps = {
-  member: { displayName: string; role: string };
+  member: { displayName: string; role: string; systemRole: "member" | "super_admin" };
   operations: DashboardOperations | null;
   ready: boolean;
   spaces: DashboardSpace[];
@@ -101,15 +108,21 @@ function NavigationGroup({ label, items }: { label: string; items: typeof naviga
 }
 
 export function DashboardShell({ member, operations, ready, spaces }: DashboardShellProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const { closeRef, drawerRef, triggerRef } = useDrawerFocus(menuOpen, setMenuOpen);
+  const visibleAdministration = member.systemRole === "super_admin"
+    ? administration
+    : administration.filter((item) => item.href === "/settings");
   const initials = member.displayName.split(/\s+/).map((value) => value[0]).join("").slice(0, 2).toUpperCase();
   const queued = operations ? operations.ingestion.queued + operations.ingestion.retry_wait : 0;
   return (
-    <div className="app-frame">
-      <aside className="sidebar">
+    <div className={`app-frame${menuOpen ? " menu-open" : ""}`}>
+      <aside className="sidebar console-sidebar dashboard-sidebar" id="dashboard-navigation" ref={drawerRef}>
         <div className="brand-lockup">
           <span className="brand-mark"><Boxes aria-hidden="true" size={18} /></span>
           <span>Kinbase</span>
           <span className="brand-edition">HOME</span>
+          <button aria-label="Close navigation" className="mobile-menu-button close" onClick={() => setMenuOpen(false)} ref={closeRef} type="button"><X aria-hidden="true" size={18} /></button>
         </div>
 
         <div className="family-switcher console-family-card">
@@ -122,7 +135,7 @@ export function DashboardShell({ member, operations, ready, spaces }: DashboardS
 
         <nav aria-label="Primary navigation" className="primary-navigation">
           <NavigationGroup items={navigation} label="Workspace" />
-          <NavigationGroup items={administration} label="Manage" />
+          <NavigationGroup items={visibleAdministration} label="Manage" />
         </nav>
 
         <div className="sidebar-footer">
@@ -140,6 +153,10 @@ export function DashboardShell({ member, operations, ready, spaces }: DashboardS
       </aside>
 
       <main className="main-canvas">
+        <header className="console-mobile-bar">
+          <button aria-controls="dashboard-navigation" aria-expanded={menuOpen} aria-label="Open navigation" className="mobile-menu-button" onClick={() => setMenuOpen(true)} ref={triggerRef} type="button"><Menu aria-hidden="true" size={19} /></button>
+          <span><Boxes aria-hidden="true" size={17} /> Kinbase</span>
+        </header>
         <header className="topbar">
           <div className="scope-indicator"><span className="scope-dot" />Searching all accessible spaces</div>
           <div className="topbar-actions">
@@ -209,6 +226,7 @@ export function DashboardShell({ member, operations, ready, spaces }: DashboardS
           </section>
         </div>
       </main>
+      <button aria-label="Close navigation overlay" className="navigation-overlay" onClick={() => setMenuOpen(false)} type="button" />
     </div>
   );
 }

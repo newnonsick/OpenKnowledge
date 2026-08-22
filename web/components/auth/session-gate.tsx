@@ -2,40 +2,16 @@
 
 import { createContext, ReactNode, useContext, useEffect, useRef, useState } from "react";
 import { Boxes, LoaderCircle } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
-import { ApiError, apiRequest, refreshSession } from "@/lib/api-client";
+import { ApiError, contractClient, contractData, refreshSession } from "@/lib/api-client";
+import type { components } from "@/lib/generated/openapi";
 
-export type CurrentMember = {
-  display_name: string;
-  id: string;
-  requires_password_change: boolean;
-  status: string;
-  system_role: "member" | "super_admin";
-  username: string;
-};
+export type CurrentMember = components["schemas"]["CurrentMember"];
 
 const SessionContext = createContext<CurrentMember | null>(null);
 const activityWindow = 20 * 60 * 1000;
 const refreshInterval = 10 * 60 * 1000;
-const coordinationWindow = 30 * 1000;
-const refreshTimestampKey = "aigw-last-session-refresh";
-
-async function coordinatedRefresh(now: number): Promise<void> {
-  const execute = async () => {
-    const recent = Number(localStorage.getItem(refreshTimestampKey) || 0);
-    if (now - recent < coordinationWindow) {
-      return;
-    }
-    await refreshSession();
-    localStorage.setItem(refreshTimestampKey, String(Date.now()));
-  };
-  if (navigator.locks) {
-    await navigator.locks.request("aigw-session-refresh", execute);
-  } else {
-    await execute();
-  }
-}
 
 export function useCurrentMember(): CurrentMember {
   const member = useContext(SessionContext);
@@ -46,6 +22,7 @@ export function useCurrentMember(): CurrentMember {
 }
 
 export function SessionGate({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
   const router = useRouter();
   const [member, setMember] = useState<CurrentMember | null>(null);
   const [failed, setFailed] = useState(false);
@@ -55,13 +32,17 @@ export function SessionGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true;
-    apiRequest<CurrentMember>("/api/v1/me")
+    contractData(contractClient.GET("/api/v1/me"))
       .then((current) => {
         if (!active) {
           return;
         }
         if (current.requires_password_change) {
           router.replace("/first-use/password");
+          return;
+        }
+        if (current.system_role !== "super_admin" && (pathname.startsWith("/people") || pathname.startsWith("/activity"))) {
+          router.replace("/");
           return;
         }
         setMember(current);
@@ -75,7 +56,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
     return () => {
       active = false;
     };
-  }, [router]);
+  }, [pathname, router]);
 
   useEffect(() => {
     const recordActivity = () => {
@@ -88,12 +69,18 @@ export function SessionGate({ children }: { children: ReactNode }) {
     document.addEventListener("visibilitychange", recordActivity);
     const timer = window.setInterval(async () => {
       const now = Date.now();
-      if (refreshActive.current || now - lastActivity.current > activityWindow || now - lastRefresh.current < refreshInterval) {
+      if (
+        document.visibilityState !== "visible" ||
+        !navigator.locks ||
+        refreshActive.current ||
+        now - lastActivity.current > activityWindow ||
+        now - lastRefresh.current < refreshInterval
+      ) {
         return;
       }
       refreshActive.current = true;
       try {
-        await coordinatedRefresh(now);
+        await refreshSession();
         lastRefresh.current = Date.now();
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
