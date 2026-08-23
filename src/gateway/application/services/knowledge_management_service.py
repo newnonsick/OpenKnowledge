@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -17,11 +18,14 @@ from src.gateway.infrastructure.persistence.audit_repository import AuditReposit
 from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGenerationModel, ProvenanceLinkModel, RetrievalUnitModel
 from src.gateway.infrastructure.persistence.models import KnowledgeItem, KnowledgeRevision
 
+logger = logging.getLogger(__name__)
+
 
 class KnowledgeManagementService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, embedding_client=None) -> None:
         self._session = session
         self._audit = AuditService(AuditRepository(session))
+        self._embedding_client = embedding_client
 
     async def get(self, item_id: UUID) -> DomainKnowledgeItem | None:
         row = (
@@ -240,6 +244,8 @@ class KnowledgeManagementService:
         )
         if generation_id is None:
             return
+        embedding = await self._embed_revision(revision)
+        revision.embedding = embedding
         revision_ids = select(KnowledgeRevision.id).where(KnowledgeRevision.item_id == item.id)
         await self._session.execute(
             update(RetrievalUnitModel)
@@ -262,10 +268,28 @@ class KnowledgeManagementService:
                     "version": revision.version,
                     "tags": list(revision.tags),
                 },
-                embedding=None,
+                embedding=embedding,
                 active=True,
             )
         )
+
+    async def _embed_revision(self, revision: KnowledgeRevision) -> list[float] | None:
+        if self._embedding_client is None:
+            from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
+
+            self._embedding_client = HTTPEmbeddingClient()
+        text = f"{revision.title or ''}\n\n{revision.content}".strip()
+        if not text:
+            return None
+        try:
+            embeddings = await self._embedding_client.embed_texts([text])
+        except Exception as exc:
+            logger.warning(
+                "Knowledge embedding generation failed",
+                extra={"exception_class": type(exc).__name__, "knowledge_item_id": str(revision.item_id)},
+            )
+            return None
+        return embeddings[0] if embeddings else None
 
     @staticmethod
     def _member_id(principal: Principal) -> UUID:
