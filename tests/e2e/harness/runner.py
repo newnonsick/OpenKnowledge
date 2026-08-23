@@ -319,7 +319,12 @@ class E2ETestRunner:
         pytest_exit_code = pytest.ExitCode.NO_TESTS_COLLECTED
         if test_paths:
             pytest_args.extend(test_paths)
-            pytest_exit_code = pytest.main(pytest_args, plugins=[collector])
+            saved_pytest_addopts = os.environ.pop("PYTEST_ADDOPTS", None)
+            try:
+                pytest_exit_code = pytest.main(pytest_args, plugins=[collector])
+            finally:
+                if saved_pytest_addopts is not None:
+                    os.environ["PYTEST_ADDOPTS"] = saved_pytest_addopts
 
         if collector.unknown_feature_ids:
             unknown = ", ".join(sorted(collector.unknown_feature_ids))

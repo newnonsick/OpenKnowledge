@@ -7,7 +7,11 @@ from typing import Optional, Sequence
 from uuid import uuid4
 
 from src.gateway.application.security.passwords import PasswordService
-from src.gateway.application.services.bootstrap_service import BootstrapService
+from src.gateway.application.services.bootstrap_service import (
+    BootstrapAlreadyCompleted,
+    BootstrapService,
+    BootstrapValidationError,
+)
 from src.gateway.infrastructure.database import get_migration_session_factory
 from src.gateway.infrastructure.migrations import (
     get_schema_status_async,
@@ -86,6 +90,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.command in {"bootstrap-super-admin", "recover-super-admin"}:
             return asyncio.run(execute_identity(args))
         return asyncio.run(execute(args.command))
+    except (BootstrapAlreadyCompleted, BootstrapValidationError) as exc:
+        print(f"Database command failed: {exc}")
+        return 1
     except Exception as exc:
         print(f"Database command failed ({type(exc).__name__}).")
         return 1

@@ -6,7 +6,11 @@ from sqlalchemy import select
 
 from src.gateway.application.security.passwords import PasswordService
 from src.gateway.application.security.totp import MFASecretService
-from src.gateway.application.services.bootstrap_service import BootstrapAlreadyCompleted, BootstrapService
+from src.gateway.application.services.bootstrap_service import (
+    BootstrapAlreadyCompleted,
+    BootstrapService,
+    BootstrapValidationError,
+)
 from src.gateway.application.services.identity_service import IdentityService
 from src.gateway.application.services.session_service import SessionService
 from src.gateway.domain.identity import MemberStatus, SpaceRole
@@ -22,6 +26,20 @@ async def test_bootstrap_first_login_totp_and_recovery_state_machine() -> None:
     async with isolated_postgres_database() as (_, factory):
         async with factory.begin() as session:
             bootstrap = BootstrapService(session, password_service)
+            with pytest.raises(BootstrapValidationError, match="Username is required"):
+                await bootstrap.create_first_super_admin(
+                    username="   ",
+                    display_name="Invalid",
+                    request_id="invalid-bootstrap",
+                    now=now,
+                )
+            assert (await session.scalars(select(MemberModel))).all() == []
+            with pytest.raises(BootstrapValidationError, match="Username is required"):
+                await bootstrap.recover_super_admin(
+                    username="   ",
+                    request_id="invalid-recovery",
+                    now=now,
+                )
             issued = await bootstrap.create_first_super_admin(
                 username="Älice",
                 display_name="Alice",

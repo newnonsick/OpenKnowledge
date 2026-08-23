@@ -22,6 +22,10 @@ class BootstrapAlreadyCompleted(Exception):
     pass
 
 
+class BootstrapValidationError(ValueError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class BootstrapCredential:
     member_id: UUID
@@ -49,10 +53,13 @@ class BootstrapService:
             await self._session.execute(text("SELECT pg_advisory_xact_lock(7046029254386353131)"))
         if await self._identity.super_admin_count() != 0:
             raise BootstrapAlreadyCompleted("A Super Admin already exists")
-        normalized = normalize_username(username)
+        try:
+            normalized = normalize_username(username)
+        except ValueError as exc:
+            raise BootstrapValidationError(str(exc)) from exc
         clean_display_name = display_name.strip()
         if len(normalized) > 255 or not clean_display_name or len(clean_display_name) > 255:
-            raise ValueError("Invalid member identity")
+            raise BootstrapValidationError("Invalid member identity")
         temporary_password = SecretValue(secrets.token_urlsafe(24))
         member = MemberModel(
             id=uuid4(),
@@ -118,9 +125,12 @@ class BootstrapService:
         current_time = now or datetime.now(timezone.utc)
         if self._session.bind and self._session.bind.dialect.name == "postgresql":
             await self._session.execute(text("SELECT pg_advisory_xact_lock(7046029254386353131)"))
-        member = await self._identity.get_member_by_username(username, for_update=True)
+        try:
+            member = await self._identity.get_member_by_username(username, for_update=True)
+        except ValueError as exc:
+            raise BootstrapValidationError(str(exc)) from exc
         if member is None or member.system_role != SystemRole.SUPER_ADMIN.value:
-            raise ValueError("Eligible Super Admin not found")
+            raise BootstrapValidationError("Eligible Super Admin not found")
         temporary_password = SecretValue(secrets.token_urlsafe(24))
         expires_at = current_time + timedelta(hours=24)
         await self._identity.replace_password(

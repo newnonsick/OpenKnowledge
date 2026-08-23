@@ -80,7 +80,8 @@ def test_collection_error_is_rejected(tmp_path: Path):
         runner.run()
 
 
-def test_dry_run_reports_collected_nodes_without_claiming_execution(capsys):
+def test_dry_run_reports_collected_nodes_without_claiming_execution(monkeypatch, capsys):
+    monkeypatch.setenv("PYTEST_ADDOPTS", '-m "not legacy_contract"')
     runner = E2ETestRunner(
         tiers=["1"],
         custom_paths=["tests/e2e/tier1_features/test_f29_thinking_passthrough.py"],
