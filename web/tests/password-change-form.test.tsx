@@ -21,6 +21,17 @@ describe("PasswordChangeForm", () => {
     expect(submit).toBeDisabled();
   });
 
+  it("blocks passwords that miss a required character class", () => {
+    render(<PasswordChangeForm />);
+
+    fireEvent.change(screen.getByLabelText("New password"), { target: { value: "all lowercase letters!" } });
+    fireEvent.change(screen.getByLabelText("Confirm password"), { target: { value: "all lowercase letters!" } });
+
+    expect(screen.getByText("An uppercase letter")).toHaveAttribute("data-valid", "false");
+    expect(screen.getByText("A number")).toHaveAttribute("data-valid", "false");
+    expect(screen.getByRole("button", { name: "Set new password" })).toBeDisabled();
+  });
+
   it("reveals the first personal API key once before entering the console", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       requires_mfa_enrollment: false,
@@ -34,8 +45,8 @@ describe("PasswordChangeForm", () => {
     }), { status: 200 })));
     render(<PasswordChangeForm />);
 
-    fireEvent.change(screen.getByLabelText("New password"), { target: { value: "a permanent family password" } });
-    fireEvent.change(screen.getByLabelText("Confirm password"), { target: { value: "a permanent family password" } });
+    fireEvent.change(screen.getByLabelText("New password"), { target: { value: "Permanent-Password-934!" } });
+    fireEvent.change(screen.getByLabelText("Confirm password"), { target: { value: "Permanent-Password-934!" } });
     fireEvent.click(screen.getByRole("button", { name: "Set new password" }));
 
     await waitFor(() => expect(screen.getByText("aigw_v1_public-1_secret")).toBeInTheDocument());

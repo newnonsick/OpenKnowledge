@@ -24,7 +24,10 @@ const nextConfig: NextConfig = {
     return [{ source: "/:path*", headers }];
   },
   async rewrites() {
-    return [{ source: "/api/:path*", destination: `${gatewayUrl.origin}/api/:path*` }];
+    return [
+      { source: "/api/:path*", destination: `${gatewayUrl.origin}/api/:path*` },
+      { source: "/healthz/:path*", destination: `${gatewayUrl.origin}/healthz/:path*` },
+    ];
   },
 };
 

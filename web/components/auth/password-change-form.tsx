@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 
 import { ApiError, contractClient, contractData } from "@/lib/api-client";
 import type { components } from "@/lib/generated/openapi";
+import { isPasswordValid, passwordPolicy, passwordRuleStates } from "@/lib/password-policy";
 
 type InitialAPIKey = components["schemas"]["InitialAPIKey"];
 
@@ -18,9 +19,7 @@ export function PasswordChangeForm() {
   const [initialKey, setInitialKey] = useState<InitialAPIKey | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const lengthValid = password.length >= 15 && password.length <= 128;
-  const matchValid = password.length > 0 && password === confirmation;
-  const canSubmit = lengthValid && matchValid && !submitting;
+  const canSubmit = isPasswordValid(password, confirmation) && !submitting;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -78,12 +77,12 @@ export function PasswordChangeForm() {
       </div>
 
       <label className="field-label" htmlFor="confirm-password">Confirm password</label>
-      <input autoComplete="new-password" className="text-field" id="confirm-password" maxLength={128} minLength={15} onChange={(event) => setConfirmation(event.target.value)} required type={visible ? "text" : "password"} value={confirmation} />
+      <input autoComplete="new-password" className="text-field" id="confirm-password" maxLength={passwordPolicy.maxLength} minLength={passwordPolicy.minLength} onChange={(event) => setConfirmation(event.target.value)} required type={visible ? "text" : "password"} value={confirmation} />
 
       <div className="password-rules">
-        <span data-valid={lengthValid}><i><Check aria-hidden="true" size={12} /></i>At least 15 characters</span>
-        <span data-valid={matchValid}><i><Check aria-hidden="true" size={12} /></i>Passwords match</span>
-        <span data-valid="true"><i><Check aria-hidden="true" size={12} /></i>Checked against unsafe choices on save</span>
+        {passwordRuleStates(password, confirmation).map((rule) => (
+          <span data-valid={rule.valid} key={rule.label}><i><Check aria-hidden="true" size={12} /></i>{rule.label}</span>
+        ))}
       </div>
 
       {error ? <div className="auth-error" role="alert">{error}</div> : null}
