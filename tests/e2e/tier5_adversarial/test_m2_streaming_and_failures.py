@@ -545,7 +545,7 @@ async def test_adv_anthropic_streaming_midstream_error_recovery():
 
         events = [b.split("\n")[0][7:].strip() for b in blocks if b.startswith("event: ")]
         assert "error" in events
-        assert "message_stop" in events
+        assert "message_stop" not in events
 
 
 # ==============================================================================

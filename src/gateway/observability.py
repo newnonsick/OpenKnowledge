@@ -125,19 +125,62 @@ class JsonLogFormatter(logging.Formatter):
                 payload[field] = _redact(str(value))
         if record.exc_info:
             payload["exception_class"] = record.exc_info[0].__name__
+            payload["exception"] = _redact(self.formatException(record.exc_info))
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
-def configure_logging(level: str) -> None:
+class ConsoleLogFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        try:
+            from src.gateway.presentation.request_context import request_id_context
+
+            request_id = request_id_context.get()
+        except ImportError:
+            request_id = None
+        timestamp = datetime.fromtimestamp(record.created, timezone.utc).isoformat(timespec="milliseconds")
+        fields = [
+            timestamp,
+            record.levelname,
+            record.name,
+            _redact(record.getMessage()),
+        ]
+        for field in _SAFE_FIELDS:
+            value = getattr(record, field, None)
+            if value is not None:
+                fields.append(f"{field}={_redact(str(value))}")
+        if request_id:
+            fields.append(f"request_id={request_id}")
+        trace_id = trace_id_context.get()
+        if trace_id:
+            fields.append(f"trace_id={trace_id}")
+        rendered = " ".join(fields)
+        if record.exc_info:
+            rendered += "\n" + _redact(self.formatException(record.exc_info))
+        return rendered
+
+
+def configure_logging(
+    level: str,
+    *,
+    log_format: str = "auto",
+    environment: Any | None = None,
+) -> None:
+    environment_name = getattr(environment, "value", environment)
+    selected_format = log_format.lower()
+    if selected_format == "auto":
+        selected_format = "json" if environment_name == "production" else "console"
+    if selected_format not in {"console", "json"}:
+        raise ValueError("LOG_FORMAT must be auto, console, or json")
+
     root = logging.getLogger()
     root.setLevel(level.upper())
     handler = logging.StreamHandler()
-    handler.setFormatter(JsonLogFormatter())
+    handler.setFormatter(ConsoleLogFormatter() if selected_format == "console" else JsonLogFormatter())
     root.handlers.clear()
     root.addHandler(handler)
     for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
         target = logging.getLogger(name)
         target.handlers.clear()
-        target.propagate = True
+        target.propagate = name != "uvicorn.access"
     for name in ("httpcore", "httpx"):
         logging.getLogger(name).setLevel(logging.WARNING)

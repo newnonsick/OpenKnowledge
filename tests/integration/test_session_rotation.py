@@ -223,8 +223,8 @@ async def test_refresh_and_password_change_do_not_deadlock_or_leave_successor_ac
                     MFASecretService.generate(),
                 ).change_password(
                     member_id,
-                    new_password="a replacement password long enough",
-                    confirmation="a replacement password long enough",
+                    new_password="A-Replacement-Password-934!",
+                    confirmation="A-Replacement-Password-934!",
                     request_id="lock-order-password",
                     now=now + timedelta(minutes=1),
                 )

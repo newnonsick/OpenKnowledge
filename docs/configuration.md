@@ -15,9 +15,10 @@ Settings are declared in `src/gateway/config.py`. Nested settings objects (`gate
 | `HOST` | `127.0.0.1` | Bind address. The Docker image and Compose set `0.0.0.0`. |
 | `PORT` | `8000` | HTTP port. |
 | `LOG_LEVEL` | `DEBUG` | `DEBUG`, `INFO`, `WARNING`, or `ERROR`. `DEBUG` is rejected in production. |
+| `LOG_FORMAT` | `auto` | `auto`, `console`, or `json`. Automatic output uses readable console records outside production and JSON records in production. |
 | `STORAGE_DIR` | `./data/storage` | Directory for uploaded document files. Compose mounts a shared volume at `/data/storage`. |
 | `DEFAULT_WORKSPACE_ID` | `global` | Space used when a request does not specify one. Created at startup if missing. |
-| `PUBLIC_BASE_URL` | unset | Public HTTPS origin. Required in production; also used for CSRF origin verification on session refresh. |
+| `PUBLIC_BASE_URL` | unset | Public HTTPS origin. Required in production; the exact origin is allowed for authenticated session mutations. Development falls back to the two local console origins when unset. |
 | `TRUSTED_HOSTS` | `localhost,127.0.0.1,[::1],testserver,test,gateway-test` | HTTP `Host` allowlist. Explicit non-wildcard values are required in production. Comma-separated or a JSON array. |
 | `TRUSTED_PROXY_CIDRS` | unset | Proxy networks trusted for client IP resolution. Comma-separated CIDRs; each value is validated as an IP network. |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Allowed browser origins. Wildcard `*` is rejected in production. Comma-separated or a JSON array. |

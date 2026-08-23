@@ -28,7 +28,7 @@ async def test_pairwise_f07_f26_streaming_pure_text_sse_sequence():
         resp = await gw.client.post(
             "/v1/chat/completions",
             json={
-                "model": "gpt-4o",
+                "model": "default",
                 "messages": [{"role": "user", "content": "Stream me a message"}],
                 "stream": True,
             },
@@ -62,7 +62,7 @@ async def test_pairwise_f25_f26_streaming_external_tool_passthrough():
         resp = await gw.client.post(
             "/v1/chat/completions",
             json={
-                "model": "gpt-4o",
+                "model": "default",
                 "messages": [{"role": "user", "content": "Build project"}],
                 "stream": True,
             },
@@ -124,7 +124,7 @@ async def test_pairwise_f24_f26_streaming_internal_tool_buffer_and_interception(
         resp = await gw.client.post(
             "/v1/chat/completions",
             json={
-                "model": "gpt-4o",
+                "model": "default",
                 "messages": [{"role": "user", "content": "Search the knowledge base"}],
                 "stream": True,
             },

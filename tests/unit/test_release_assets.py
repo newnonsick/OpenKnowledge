@@ -15,10 +15,9 @@ def test_github_actions_are_commit_pinned_and_cover_release_gates() -> None:
     restore = read(".github/workflows/restore-drill.yml")
     production_restore = read(".github/workflows/production-restore-rehearsal.yml")
     live_provider = read(".github/workflows/live-provider-quality.yml")
-    legacy_contracts = read(".github/workflows/legacy-contracts.yml")
     load = read(".github/workflows/load.yml")
     combined = "\n".join(
-        (quality, security, restore, production_restore, live_provider, legacy_contracts, load)
+        (quality, security, restore, production_restore, live_provider, load)
     )
     uses = re.findall(r"uses:\s*([^\s]+)", combined)
     assert uses
@@ -38,15 +37,7 @@ def test_github_actions_are_commit_pinned_and_cover_release_gates() -> None:
     assert "ALTER FUNCTION gateway_run_retention" in read("deploy/grant-runtime.sql")
     assert "RUN_LIVE_PROVIDER_TESTS" in live_provider
     assert "LIVE_PROVIDER_EVIDENCE_FILE" in live_provider
-    assert 'pytest -q -m "not legacy_contract"' in quality
-    assert "pytest tests/e2e -q -m legacy_contract" in legacy_contracts
-    assert 'LEGACY_CONTRACT_ENFORCE_ALLOWLIST: "1"' in quality
-    assert 'LEGACY_CONTRACT_ENFORCE_ALLOWLIST: "1"' in legacy_contracts
-    assert "Owner: platform" in legacy_contracts
-    assert "2026-10-31" in legacy_contracts
-    assert "continue-on-error" not in legacy_contracts
-    assert "timeout-minutes: 30" in legacy_contracts
-    assert "retention-days: 90" in legacy_contracts
+    assert "pytest -q" in quality
     assert "tests/load/k6.js" in load
     assert "actions/upload-artifact" in load
     assert "load-summary.json" in load

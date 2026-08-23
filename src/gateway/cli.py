@@ -6,16 +6,25 @@ import sys
 from typing import Optional, Sequence
 from uuid import uuid4
 
+from sqlalchemy import select
+
+from src.gateway.application.services.embedding_generation_service import (
+    EmbeddingGenerationService,
+)
 from src.gateway.application.security.passwords import PasswordService
 from src.gateway.application.services.bootstrap_service import (
     BootstrapAlreadyCompleted,
     BootstrapService,
     BootstrapValidationError,
 )
+from src.gateway.config import get_settings
 from src.gateway.infrastructure.database import get_migration_session_factory
 from src.gateway.infrastructure.migrations import (
     get_schema_status_async,
     run_migrations_async,
+)
+from src.gateway.infrastructure.persistence.ingestion_models import (
+    EmbeddingGenerationModel,
 )
 
 
@@ -31,13 +40,36 @@ async def execute(command_name: str) -> int:
         print(f"Current database revision: {current}")
         return 0
 
-    if status.compatible:
-        print(f"Database schema is compatible at revision {current}.")
+    if not status.compatible:
+        expected = ", ".join(status.head_revisions)
+        print(f"Database schema is incompatible at revision {current}; expected {expected}.")
+        return 1
+
+    if command_name == "ensure-embedding-generation":
+        settings = get_settings()
+        factory = get_migration_session_factory()
+        async with factory() as session:
+            existing = await session.scalar(
+                select(EmbeddingGenerationModel).where(
+                    EmbeddingGenerationModel.purpose == "retrieval",
+                    EmbeddingGenerationModel.status == "active",
+                    EmbeddingGenerationModel.model_id == settings.embedding.model_id,
+                    EmbeddingGenerationModel.dimensions == settings.embedding.dimension,
+                )
+            )
+        if existing is None:
+            service = EmbeddingGenerationService(factory)
+            generation = await service.ensure_active(
+                model_id=settings.embedding.model_id,
+                dimensions=settings.embedding.dimension,
+            )
+            print(f"Embedding generation ready: {generation.id}")
+        else:
+            print(f"Embedding generation already active: {existing.id}")
         return 0
 
-    expected = ", ".join(status.head_revisions)
-    print(f"Database schema is incompatible at revision {current}; expected {expected}.")
-    return 1
+    print(f"Database schema is compatible at revision {current}.")
+    return 0
 
 
 async def execute_identity(args: argparse.Namespace) -> int:
@@ -73,6 +105,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "migrate",
             "current",
             "check",
+            "ensure-embedding-generation",
             "bootstrap-super-admin",
             "recover-super-admin",
         ),

@@ -132,6 +132,7 @@ cp .env.example .env             # then edit DATABASE_URL and backend URLs
 
 # 3. Database migrations (PostgreSQL with pgvector must be reachable)
 python -m src.gateway.cli migrate
+python -m src.gateway.cli ensure-embedding-generation
 python -m src.gateway.cli check
 
 # 4. First administrator (prints a temporary password)

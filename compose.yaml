@@ -34,7 +34,8 @@ services:
     environment:
       ENVIRONMENT: production
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kinbase}
-    command: ["python", "-c", "import asyncio; from src.gateway.infrastructure.migrations import run_migrations_async; asyncio.run(run_migrations_async())"]
+    env_file: ["${APP_ENV_FILE:-.env.production}"]
+    command: ["sh", "-c", "python -m src.gateway.cli migrate && python -m src.gateway.cli ensure-embedding-generation"]
     depends_on:
       postgres:
         condition: service_healthy

@@ -27,7 +27,7 @@ async def test_f08_anthropic_messages_non_streaming_json():
         resp = await gw.client.post(
             "/v1/messages",
             json={
-                "model": "claude-3-5-sonnet-20241022",
+                "model": "default",
                 "max_tokens": 1024,
                 "messages": [{"role": "user", "content": "Explain architecture design."}],
             },
@@ -59,7 +59,7 @@ async def test_f08_anthropic_messages_tool_use_content_block():
         resp = await gw.client.post(
             "/v1/messages",
             json={
-                "model": "claude-3-5-sonnet-20241022",
+                "model": "default",
                 "messages": [{"role": "user", "content": "Search for migration guide"}],
                 "tools": [
                     {
@@ -94,7 +94,7 @@ async def test_f08_anthropic_system_prompt_handling():
         resp = await gw.client.post(
             "/v1/messages",
             json={
-                "model": "claude-3-5-sonnet-20241022",
+                "model": "default",
                 "system": "You are a concise engineering assistant. Always respond in bullet points.",
                 "messages": [{"role": "user", "content": "List 3 advantages of microservices."}],
             },
@@ -108,8 +108,8 @@ async def test_f08_anthropic_system_prompt_handling():
         assert upstream_system.startswith(
             "You are a concise engineering assistant. Always respond in bullet points."
         )
-        assert upstream_system.count("# Long-Term Knowledge and Memory") == 1
-        assert "Only save or update knowledge when the user explicitly asks you to do so." in upstream_system
+        assert upstream_system.count("# Shared Knowledge Retrieval") == 1
+        assert "Do not search mechanically when current context is sufficient." in upstream_system
 
 
 @pytest.mark.tier1
@@ -130,7 +130,7 @@ async def test_f08_anthropic_token_usage_accounting():
         resp = await gw.client.post(
             "/v1/messages",
             json={
-                "model": "claude-3-5-sonnet-20241022",
+                "model": "default",
                 "messages": [{"role": "user", "content": "Check token usage."}],
             },
         )
@@ -157,7 +157,7 @@ async def test_f08_anthropic_error_envelope_format():
 
         resp = await gw.client.post(
             "/v1/messages",
-            json={"model": "claude-3-5-sonnet", "messages": [{"role": "user", "content": "Hi"}]},
+            json={"model": "default", "messages": [{"role": "user", "content": "Hi"}]},
         )
         assert resp.status_code == 502
         data = resp.json()

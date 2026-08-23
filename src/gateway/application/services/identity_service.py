@@ -11,7 +11,7 @@ from src.gateway.application.security.passwords import PasswordService, normaliz
 from src.gateway.application.security.tokens import SecretValue
 from src.gateway.application.security.totp import MFASecretService
 from src.gateway.application.services.audit_service import AuditService
-from src.gateway.domain.exceptions import AuthenticationException
+from src.gateway.domain.exceptions import AuthenticationException, ValidationException
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SystemRole
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
 from src.gateway.infrastructure.persistence.identity_models import MFAFactorModel, MFARecoveryCodeModel, MemberModel, PasswordCredentialModel, SessionFamilyModel
@@ -104,15 +104,19 @@ class IdentityService:
         now: datetime | None = None,
     ) -> None:
         if normalize_password(new_password) != normalize_password(confirmation):
-            raise ValueError("Password confirmation does not match")
+            raise ValidationException("Password confirmation does not match")
         current_time = now or datetime.now(timezone.utc)
         member = await self._identity.get_member(member_id, for_update=True)
         if member is None or member.status == MemberStatus.DISABLED.value:
             raise AuthenticationException("Authentication required.")
+        try:
+            password_hash = self._passwords.hash(new_password, username=member.username)
+        except ValueError as exc:
+            raise ValidationException(str(exc)) from exc
         credential = PasswordCredentialModel(
             id=uuid4(),
             member_id=member.id,
-            password_hash=self._passwords.hash(new_password, username=member.username),
+            password_hash=password_hash,
             temporary=False,
             expires_at=None,
         )

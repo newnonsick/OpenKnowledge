@@ -74,6 +74,7 @@ Apply migrations and verify the schema:
 
 ```bash
 python -m src.gateway.cli migrate
+python -m src.gateway.cli ensure-embedding-generation
 python -m src.gateway.cli check
 ```
 

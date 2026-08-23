@@ -1,6 +1,7 @@
 \set ON_ERROR_STOP on
 GRANT CONNECT ON DATABASE :DBNAME TO gateway_runtime, gateway_worker;
 GRANT USAGE ON SCHEMA public TO gateway_runtime, gateway_worker;
+GRANT SELECT ON alembic_version TO gateway_worker;
 GRANT SELECT ON alembic_version, api_key_scopes, audit_events, compatibility_principals, document_chunks, document_files, document_revision_chunks, document_revisions, documents, embedding_generations, idempotency_records, ingestion_jobs, knowledge_items, knowledge_revisions, login_throttle_buckets, members, mfa_factors, mfa_recovery_codes, password_credentials, pending_ai_actions, personal_api_keys, provenance_links, retrieval_units, runtime_setting_revisions, session_credentials, session_families, space_memberships, workspaces TO gateway_runtime;
 GRANT INSERT ON api_key_scopes, audit_events, document_chunks, document_files, document_revisions, documents, idempotency_records, ingestion_jobs, job_outbox, knowledge_items, knowledge_revisions, login_throttle_buckets, members, mfa_factors, mfa_recovery_codes, password_credentials, pending_ai_actions, personal_api_keys, provenance_links, retrieval_units, runtime_setting_revisions, session_credentials, session_families, space_memberships, workspaces TO gateway_runtime;
 GRANT UPDATE ON document_chunks, document_files, idempotency_records, knowledge_items, login_throttle_buckets, members, mfa_factors, mfa_recovery_codes, password_credentials, personal_api_keys, session_credentials, session_families TO gateway_runtime;

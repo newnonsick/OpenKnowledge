@@ -84,7 +84,7 @@ async def test_f08_boundary_anthropic_missing_messages_or_empty_list():
         resp = await client.post(
             "/v1/messages",
             json={
-                "model": "claude-3-5-sonnet-20241022",
+                "model": "default",
                 "max_tokens": 1024,
                 "messages": [],
             },
@@ -113,7 +113,7 @@ async def test_f08_boundary_anthropic_tool_use_content_blocks():
         resp = await gw.client.post(
             "/v1/messages",
             json={
-                "model": "claude-3-5-sonnet-20241022",
+                "model": "default",
                 "max_tokens": 1024,
                 "messages": [{"role": "user", "content": "Find info"}],
                 "tools": [
@@ -160,13 +160,13 @@ async def test_f08_boundary_anthropic_error_forwarding():
     Anthropic 502 error envelope without upstream detail."""
     from tests.e2e.harness.test_env import GatewayMockUpstream
 
-    async with GatewayMockUpstream() as gw:
+    async with GatewayMockUpstream(env_overrides={"LLM_RETRY_ATTEMPTS": "1"}) as gw:
         gw.llm.queue_error(status_code=502, message="Anthropic backend upstream timeout")
 
         resp = await gw.client.post(
             "/v1/messages",
             json={
-                "model": "claude-3-5-sonnet-20241022",
+                "model": "default",
                 "max_tokens": 1024,
                 "messages": [{"role": "user", "content": "Hello"}],
             },

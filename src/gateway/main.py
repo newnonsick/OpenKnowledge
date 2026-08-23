@@ -120,7 +120,11 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
     current_settings = app_settings or get_settings()
     current_settings.validate_runtime_safety()
     if current_settings.gateway.environment is not RuntimeEnvironment.TEST:
-        configure_logging(current_settings.gateway.log_level)
+        configure_logging(
+            current_settings.gateway.log_level,
+            log_format=current_settings.gateway.log_format,
+            environment=current_settings.gateway.environment,
+        )
 
     app = FastAPI(
         title="Local AI Gateway with Internal Shared Knowledge",

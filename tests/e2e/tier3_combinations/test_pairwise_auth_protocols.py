@@ -29,7 +29,7 @@ async def test_pairwise_f07_f10_auth_openai_bearer_token_json_and_stream():
         resp_json = await gw.client.post(
             "/v1/chat/completions",
             json={
-                "model": "gpt-4o",
+                "model": "default",
                 "messages": [{"role": "user", "content": "Hello OpenAI"}],
                 "stream": False,
             },
@@ -44,7 +44,7 @@ async def test_pairwise_f07_f10_auth_openai_bearer_token_json_and_stream():
         resp_stream = await gw.client.post(
             "/v1/chat/completions",
             json={
-                "model": "gpt-4o",
+                "model": "default",
                 "messages": [{"role": "user", "content": "Stream test"}],
                 "stream": True,
             },
@@ -71,7 +71,7 @@ async def test_pairwise_f08_f10_auth_anthropic_x_api_key_json_and_stream():
             "/v1/messages",
             headers={"anthropic-version": "2023-06-01"},
             json={
-                "model": "claude-3-5-sonnet-20241022",
+                "model": "default",
                 "max_tokens": 1024,
                 "messages": [{"role": "user", "content": "Hello Claude"}],
             },
@@ -116,7 +116,7 @@ async def test_pairwise_f10_f07_auth_rejects_invalid_key():
             "/v1/chat/completions",
             headers={"Authorization": "Bearer sk-wrong-key"},
             json={
-                "model": "gpt-4o",
+                "model": "default",
                 "messages": [{"role": "user", "content": "Hello"}],
             },
         )
@@ -136,7 +136,7 @@ async def test_pairwise_f10_f07_f08_auth_dual_header_acceptance():
             "/v1/chat/completions",
             headers={"x-api-key": "sk-test-user-1"},
             json={
-                "model": "gpt-4o",
+                "model": "default",
                 "messages": [{"role": "user", "content": "Dual auth test"}],
             },
         )

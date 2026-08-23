@@ -152,6 +152,7 @@ async def test_f13_occ_database_transactional_version_check():
                 rev1 = DBKnowledgeRevision(
                     id=uuid4(),
                     item_id=item_id,
+                    space_id=ws_id,
                     version=1,
                     content="v1 initial body",
                     content_hash=KnowledgeRevision.compute_hash("v1 initial body"),
@@ -172,6 +173,7 @@ async def test_f13_occ_database_transactional_version_check():
                 rev2 = DBKnowledgeRevision(
                     id=uuid4(),
                     item_id=item_id,
+                    space_id=ws_id,
                     version=2,
                     content="v2 updated body with OCC check",
                     content_hash=KnowledgeRevision.compute_hash("v2 updated body with OCC check"),

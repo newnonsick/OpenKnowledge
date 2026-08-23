@@ -29,6 +29,9 @@ async def test_worker_role_is_privileged_only_for_fenced_background_work() -> No
                 text(f'GRANT USAGE ON SCHEMA public TO "{worker_role}"')
             )
             await connection.execute(
+                text(f'GRANT SELECT ON alembic_version TO "{worker_role}"')
+            )
+            await connection.execute(
                 text(
                     "GRANT EXECUTE ON FUNCTION gateway_run_retention(timestamptz, timestamptz, timestamptz, integer) "
                     f'TO "{worker_role}"'
@@ -96,6 +99,12 @@ async def test_worker_role_is_privileged_only_for_fenced_background_work() -> No
                     text(
                         "SELECT has_table_privilege(current_user, "
                         "'public.document_revisions', 'DELETE')"
+                    )
+                )
+                assert await connection.scalar(
+                    text(
+                        "SELECT has_table_privilege(current_user, "
+                        "'public.alembic_version', 'SELECT')"
                     )
                 )
                 assert await connection.scalar(

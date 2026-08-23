@@ -217,7 +217,7 @@ async def test_personal_key_and_website_cookie_bind_database_principal() -> None
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(
                 transport=transport,
-                base_url="https://gateway.test",
+                base_url="http://localhost:3000",
             ) as client:
                 api_response = await client.get(
                     "/principal",
@@ -244,7 +244,7 @@ async def test_personal_key_and_website_cookie_bind_database_principal() -> None
                         "__Host-aigw-access": website_session.access_token.reveal()
                     },
                     headers={
-                        "Origin": "https://gateway.test",
+                        "Origin": "http://localhost:3000",
                         "X-CSRF-Token": website_session.csrf_token.reveal(),
                     },
                     json={},

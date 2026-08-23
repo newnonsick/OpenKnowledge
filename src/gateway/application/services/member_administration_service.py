@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-import secrets
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, update
@@ -72,7 +71,9 @@ class MemberAdministrationService:
             )
         ):
             raise ResourceConflictException("Username is already in use.")
-        temporary_password = SecretValue(secrets.token_urlsafe(24))
+        temporary_password = SecretValue(
+            self._passwords.generate_temporary_password(username=clean_username)
+        )
         password_hash = self._passwords.hash(
             temporary_password.reveal(),
             username=clean_username,
@@ -240,7 +241,9 @@ class MemberAdministrationService:
         )
         if current_credential is not None:
             current_credential.retired_at = current_time
-        temporary_password = SecretValue(secrets.token_urlsafe(24))
+        temporary_password = SecretValue(
+            self._passwords.generate_temporary_password(username=member.username)
+        )
         expires_at = current_time + timedelta(hours=24)
         self._session.add(
             PasswordCredentialModel(

@@ -116,6 +116,7 @@ async def test_f03_database_table_creation_and_insertion():
                 rev = KnowledgeRevision(
                     id=uuid4(),
                     item_id=item_id,
+                    space_id=ws_id,
                     version=1,
                     content_hash="abc123sha256hash",
                     content="SQLAlchemy 2.0 Async ORM provides clean persistence.",

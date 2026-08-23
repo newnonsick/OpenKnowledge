@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from importlib.resources import files
+import secrets
+import string
 import unicodedata
 
 from argon2 import PasswordHasher
@@ -16,6 +18,9 @@ def _default_common_passwords() -> frozenset[str]:
 
 def normalize_password(password: str) -> str:
     return unicodedata.normalize("NFC", password)
+
+
+_SYMBOLS = frozenset(string.punctuation)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +44,14 @@ class PasswordPolicy:
                 raise ValueError("Password must not contain the username")
         if "ai knowledge gateway" in folded or "knowledgegateway" in folded:
             raise ValueError("Password must not contain the product name")
+        if not any(character.islower() for character in normalized):
+            raise ValueError("Password must include a lowercase letter")
+        if not any(character.isupper() for character in normalized):
+            raise ValueError("Password must include an uppercase letter")
+        if not any(character.isdigit() for character in normalized):
+            raise ValueError("Password must include a number")
+        if not any(character in _SYMBOLS for character in normalized):
+            raise ValueError("Password must include a special character")
 
 
 class PasswordService:
@@ -64,6 +77,28 @@ class PasswordService:
         normalized = normalize_password(password)
         self._policy.validate(normalized, username=username)
         return self._hasher.hash(normalized)
+
+    def generate_temporary_password(self, *, username: str | None = None) -> str:
+        lower = string.ascii_lowercase
+        upper = string.ascii_uppercase
+        digits = string.digits
+        symbols = "".join(sorted(_SYMBOLS))
+        rng = secrets.SystemRandom()
+        while True:
+            characters = [
+                rng.choice(lower),
+                rng.choice(upper),
+                rng.choice(digits),
+                rng.choice(symbols),
+                *(rng.choice(lower + upper + digits + symbols) for _ in range(28)),
+            ]
+            rng.shuffle(characters)
+            candidate = "".join(characters)
+            try:
+                self._policy.validate(candidate, username=username)
+            except ValueError:
+                continue
+            return candidate
 
     def verify(self, encoded: str, password: str) -> bool:
         try:

@@ -59,7 +59,7 @@ def test_f15_knowledge_search_schema_parameters():
     assert "workspace_id" in props
     assert "limit" in props
     assert props["limit"]["type"] == "integer"
-    assert props["limit"]["default"] == 5
+    assert "default" not in props["limit"]
     assert "tags" in props
     assert props["tags"]["type"] == "array"
 

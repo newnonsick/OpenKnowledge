@@ -622,7 +622,7 @@ class TestSQLiteTypeCompilationAdversarial:
     @pytest.mark.asyncio
     async def test_test_environment_lifecycle_with_sqlite(self):
         """Verify TestEnvironment boots cleanly on SQLite, creates schema, and seeds default workspace."""
-        async with TestEnvironment() as env:
+        async with TestEnvironment(db_url="sqlite+aiosqlite:///:memory:") as env:
             assert env.engine is not None
             assert env.session_factory is not None
             assert env.is_postgres is False

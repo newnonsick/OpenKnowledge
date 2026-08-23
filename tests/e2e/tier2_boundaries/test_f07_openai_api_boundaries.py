@@ -74,13 +74,13 @@ async def test_f07_boundary_malformed_json_body_rejected():
 async def test_f07_boundary_upstream_error_propagation():
     """Test boundary: upstream LLM errors (e.g. 503) surface as the gateway's
     structured 502 llm_provider_error envelope without upstream detail."""
-    async with GatewayMockUpstream() as gw:
+    async with GatewayMockUpstream(env_overrides={"LLM_RETRY_ATTEMPTS": "1"}) as gw:
         gw.llm.queue_error(status_code=503, message="Upstream LLM engine overloaded")
 
         resp = await gw.client.post(
             "/v1/chat/completions",
             json={
-                "model": "test-model",
+                "model": "default",
                 "messages": [{"role": "user", "content": "Hello"}],
             },
         )
@@ -103,7 +103,7 @@ async def test_f07_boundary_sse_streaming_empty_and_rapid_chunks():
         resp = await gw.client.post(
             "/v1/chat/completions",
             json={
-                "model": "test-model",
+                "model": "default",
                 "messages": [{"role": "user", "content": "Stream test"}],
                 "stream": True,
             },

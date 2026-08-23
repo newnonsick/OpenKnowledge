@@ -138,7 +138,12 @@ async def _main() -> None:
 
 
 def main() -> None:
-    configure_logging(get_settings().gateway.log_level)
+    settings = get_settings()
+    configure_logging(
+        settings.gateway.log_level,
+        log_format=settings.gateway.log_format,
+        environment=settings.gateway.environment,
+    )
     asyncio.run(_main())
 
 

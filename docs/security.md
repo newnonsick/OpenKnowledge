@@ -23,6 +23,7 @@ Comparisons of presented and stored key material use constant-time functions.
 ## Password and MFA
 
 - Passwords are hashed with Argon2 (`argon2-cffi`) through `PasswordService`.
+- New passwords require lowercase, uppercase, numeric, and ASCII punctuation characters in addition to length and common-choice checks. System-generated temporary passwords satisfy the same policy.
 - Members with the `super_admin` system role must complete TOTP enrollment before their session becomes unrestricted, and every login requires a TOTP code or a single-use recovery code.
 - TOTP secrets are encrypted at rest with versioned Fernet keys (`MFA_ENCRYPTION_KEYS`); recovery codes are issued once at enrollment confirmation.
 - Members created by a super admin and recovered super admins receive temporary passwords that force a password change on first use.
@@ -43,7 +44,7 @@ Mechanics:
 
 - Login sets three cookies: `__Host-aigw-access` (HttpOnly, Secure, SameSite=Strict), `__Secure-aigw-refresh` (HttpOnly, Secure, SameSite=Strict, path-scoped to `/api/v1/auth/refresh`), and `aigw-csrf` (readable by the console, mirrored in the `X-CSRF-Token` header).
 - Refresh rotation is one-time use with reuse detection. Presenting an already-rotated token fails the session; a short grace window tolerates racing tabs.
-- The refresh endpoint verifies the `Origin` header against `PUBLIC_BASE_URL` and requires the CSRF header.
+- Authenticated session mutations verify the `Origin` header and CSRF header. Production uses the exact origin configured by `PUBLIC_BASE_URL`; non-production accepts only the two local console origins when no public URL is configured.
 - Session families group related access and refresh credentials, support revocation of a whole family (sign out a device), and are listed and revocable through the management API.
 - Sensitive operations require recent step-up: the caller must have re-authenticated with `POST /api/v1/auth/step-up` within the validity window.
 

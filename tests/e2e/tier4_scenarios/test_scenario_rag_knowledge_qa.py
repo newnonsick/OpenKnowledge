@@ -6,10 +6,74 @@ indexing -> knowledge_search interception (hybrid FTS + vector + RRF) -> LLM
 synthesis with citations.
 """
 
+from uuid import UUID, uuid4
+
+from sqlalchemy import select
+
 import httpx
 import pytest
 
+from src.gateway.application.services.bounded_document_parser import BoundedDocumentParser
+from src.gateway.application.services.document_ingestion_worker import DocumentIngestionWorker
+from src.gateway.config import get_settings
+from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
+from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGenerationModel, IngestionJobModel
+from src.gateway.infrastructure.persistence.models import EMBED_DIM
+from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
 from tests.e2e.harness.test_env import GatewayMockUpstream
+
+
+async def _upload_and_ingest(gw, filename: str, content: str) -> dict:
+    upload_resp = await gw.client.post(
+        "/api/v1/sources/upload",
+        files={"file": (filename, content.encode("utf-8"), "text/markdown")},
+        data={"space_id": "global"},
+        headers={"Idempotency-Key": f"rag-{filename}-{uuid4()}"},
+    )
+    assert upload_resp.status_code == 202, upload_resp.text
+    receipt = upload_resp.json()
+    assert receipt["job_state"] == "queued"
+
+    async with gw.env.session_factory.begin() as session:
+        generation = await session.scalar(
+            select(EmbeddingGenerationModel).where(EmbeddingGenerationModel.purpose == "retrieval")
+        )
+        if generation is None:
+            session.add(
+                EmbeddingGenerationModel(
+                    purpose="retrieval",
+                    model_id=get_settings().embedding.model_id,
+                    dimensions=gw.embedding.dimension,
+                    status="active",
+                )
+            )
+
+    settings = get_settings()
+    worker = DocumentIngestionWorker(
+        gw.env.session_factory,
+        LocalVersionedObjectStorage(settings.gateway.storage_dir),
+        BoundedDocumentParser(
+            timeout_seconds=settings.gateway.parser_timeout_seconds,
+            memory_limit_bytes=settings.gateway.parser_memory_limit_bytes,
+            cpu_seconds=settings.gateway.parser_cpu_seconds,
+            max_pages=settings.gateway.parser_max_pages,
+            max_output_characters=settings.gateway.parser_max_output_characters,
+        ),
+        HTTPEmbeddingClient(),
+        worker_id=f"e2e-{filename}",
+        lease_seconds=30,
+        heartbeat_interval_seconds=1,
+        chunk_size=300,
+        chunk_overlap=30,
+        max_chunks=20,
+    )
+    assert await worker.run_once() == UUID(receipt["job_id"])
+
+    async with gw.env.session_factory() as session:
+        job = await session.get(IngestionJobModel, UUID(receipt["job_id"]))
+        assert job is not None
+        assert job.state == "succeeded", job.last_error_code
+    return receipt
 
 
 @pytest.mark.tier4
@@ -19,7 +83,7 @@ async def test_scenario_f16_f20_f21_f22_f23_rag_knowledge_qa_complete_lifecycle(
     knowledge_search, retrieves the ingested chunks, and synthesizes an answer."""
     from tests.e2e.harness.mock_server import MockLLMResponse
 
-    async with GatewayMockUpstream(embedding_dimension=384) as gw:
+    async with GatewayMockUpstream(embedding_dimension=EMBED_DIM) as gw:
         doc_text = (
             "# Gateway Authentication Architecture\n\n"
             "## Token Validation Flow\n"
@@ -30,22 +94,18 @@ async def test_scenario_f16_f20_f21_f22_f23_rag_knowledge_qa_complete_lifecycle(
             "against the latest persisted revision version in the database."
         )
 
-        # 1. Upload the document through the real /v1/files/upload pipeline
-        upload_resp = await gw.client.post(
-            "/v1/files/upload",
-            files={"file": ("auth_architecture.md", doc_text.encode("utf-8"), "text/markdown")},
-            data={"workspace_id": "global"},
-        )
-        assert upload_resp.status_code == 201, upload_resp.text
-        upload_data = upload_resp.json()
-        assert upload_data["filename"] == "auth_architecture.md"
-        assert upload_data["total_chunks"] >= 1
+        await _upload_and_ingest(gw, "auth_architecture.md", doc_text)
 
         # 2. Ask a question; the model responds with an internal knowledge_search call
         gw.llm.queue_response(
             MockLLMResponse.tool_call(
                 name="knowledge_search",
-                arguments={"query": "How does the gateway validate API keys and tokens?"},
+                arguments={
+                    "query": (
+                        "The gateway verifies Bearer tokens and x-api-key headers "
+                        "using constant-time comparison."
+                    )
+                },
                 call_id="call_rag_search_1",
             )
         )
@@ -59,7 +119,14 @@ async def test_scenario_f16_f20_f21_f22_f23_rag_knowledge_qa_complete_lifecycle(
             "/v1/chat/completions",
             json={
                 "model": "default",
-                "messages": [{"role": "user", "content": "How does the gateway validate API keys and tokens?"}],
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": (
+                            "How are Bearer tokens and x-api-key headers compared?"
+                        ),
+                    }
+                ],
             },
         )
         assert resp.status_code == 200
@@ -86,33 +153,28 @@ async def test_scenario_f23_rag_knowledge_qa_multi_document_blended_context():
     the synthesized answer cites both sources."""
     from tests.e2e.harness.mock_server import MockLLMResponse
 
-    async with GatewayMockUpstream(embedding_dimension=384) as gw:
+    async with GatewayMockUpstream(embedding_dimension=EMBED_DIM) as gw:
         doc1 = (
+            "Gateway Feature Policy: streaming support and key logging rules. "
             "API Specification: POST /v1/chat/completions supports streaming SSE "
             "responses for real-time token delivery."
         )
         doc2 = (
+            "Gateway Feature Policy: streaming support and key logging rules. "
             "Security Policy: Passwords and API keys must never be logged in plain text. "
             "Rotate gateway keys every 90 days."
         )
 
-        up1 = await gw.client.post(
-            "/v1/files/upload",
-            files={"file": ("spec.md", doc1.encode("utf-8"), "text/markdown")},
-            data={"workspace_id": "global"},
-        )
-        assert up1.status_code == 201
-        up2 = await gw.client.post(
-            "/v1/files/upload",
-            files={"file": ("security.md", doc2.encode("utf-8"), "text/markdown")},
-            data={"workspace_id": "global"},
-        )
-        assert up2.status_code == 201
+        await _upload_and_ingest(gw, "spec.md", doc1)
+        await _upload_and_ingest(gw, "security.md", doc2)
 
         gw.llm.queue_response(
             MockLLMResponse.tool_call(
                 name="knowledge_search",
-                arguments={"query": "streaming support and key logging rules", "limit": 10},
+                arguments={
+                    "query": "Gateway Feature Policy streaming support key logging rules",
+                    "limit": 10,
+                },
                 call_id="call_rag_search_2",
             )
         )

@@ -11,7 +11,6 @@ Markers declared in `pyproject.toml`:
 | `unit` | Unit tests, no services required |
 | `integration` | PostgreSQL integration tests |
 | `live_provider` | Tests that call configured live model providers |
-| `legacy_contract` | Quarantined pre-v1 contracts owned by the platform team, expires 2026-10-31 |
 | `tier1` to `tier5` | End-to-end tier classification |
 | `feature(id)` | Feature identifier covered by a test, for example `F7` |
 
@@ -19,7 +18,6 @@ Markers declared in `pyproject.toml`:
 pytest                                # everything
 pytest tests/unit -m unit             # unit tests only
 pytest tests/integration              # PostgreSQL integration suite
-pytest -m "not legacy_contract"       # what CI runs for the release gate
 ```
 
 Environment:
@@ -114,8 +112,8 @@ The gate requires management p95 below 500 ms and retrieval p95 below one second
 
 The `Quality` workflow runs on every push and pull request:
 
-- Python job on Ubuntu with a pgvector PostgreSQL 17 service: hash-pinned install, `pip check`, `compileall`, and `pytest -q -m "not legacy_contract"`.
+- Python job on Ubuntu with a pgvector PostgreSQL 17 service: hash-pinned install, `pip check`, `compileall`, and `pytest`.
 - Web job on Node 24: `npm ci`, generated client drift check, vitest, typecheck, production build.
 - Browser job on Windows: Playwright chromium suite after the web job passes.
 
-Scheduled and environment-gated suites (security scanning, restore drills, live provider quality, legacy contract evidence) are described in [deployment.md](deployment.md).
+Scheduled and environment-gated suites (security scanning, restore drills, and live provider quality) are described in [deployment.md](deployment.md).

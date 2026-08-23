@@ -21,6 +21,31 @@ def test_password_policy_rejects_short_and_common_passwords() -> None:
         policy.validate("Correct Horse Battery Staple")
 
 
+@pytest.mark.parametrize(
+    "password",
+    [
+        "all lowercase letters!",
+        "ALL UPPERCASE LETTERS!",
+        "123456789012345!",
+        "No Digits In This One!",
+        "no-symbol-password-934",
+    ],
+)
+def test_password_policy_requires_all_character_classes(password: str) -> None:
+    policy = PasswordPolicy(common_passwords=set())
+
+    with pytest.raises(ValueError, match="Password must include"):
+        policy.validate(password)
+
+
+def test_generated_temporary_passwords_satisfy_policy() -> None:
+    service = PasswordService(memory_cost=8192, time_cost=2, parallelism=1)
+    generated = service.generate_temporary_password(username="administrator")
+
+    assert 15 <= len(generated) <= 128
+    service._policy.validate(generated, username="administrator")
+
+
 def test_password_policy_enforces_spec_maximum_and_identity_terms() -> None:
     policy = PasswordPolicy(common_passwords=set())
     with pytest.raises(ValueError, match="at most 128"):
@@ -32,8 +57,8 @@ def test_password_policy_enforces_spec_maximum_and_identity_terms() -> None:
 
 
 def test_passwords_are_normalized_with_nfc_before_hash_and_verify() -> None:
-    composed = "pässword with enough length"
-    decomposed = "pa\u0308ssword with enough length"
+    composed = "Pässword-934-Enough!"
+    decomposed = "Pa\u0308ssword-934-Enough!"
     assert normalize_password(decomposed) == composed
     service = PasswordService(memory_cost=8192, time_cost=2, parallelism=1)
     encoded = service.hash(decomposed)
@@ -42,9 +67,9 @@ def test_passwords_are_normalized_with_nfc_before_hash_and_verify() -> None:
 
 def test_argon2id_hashes_verify_and_detect_rehash() -> None:
     service = PasswordService(memory_cost=8192, time_cost=2, parallelism=1)
-    encoded = service.hash("a sufficiently long password")
+    encoded = service.hash("A-Sufficiently-Long-Password-934!")
     assert encoded.startswith("$argon2id$")
-    assert service.verify(encoded, "a sufficiently long password") is True
+    assert service.verify(encoded, "A-Sufficiently-Long-Password-934!") is True
     assert service.verify(encoded, "not the password") is False
     stronger = PasswordService(memory_cost=16384, time_cost=2, parallelism=1)
     assert stronger.needs_rehash(encoded) is True

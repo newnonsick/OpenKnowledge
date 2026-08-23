@@ -228,6 +228,12 @@ class GatewaySettings(BaseSettings):
         validation_alias=AliasChoices("LOG_LEVEL", "log_level"),
         description="Logging level (DEBUG, INFO, WARNING, ERROR)",
     )
+    log_format: str = Field(
+        default="auto",
+        pattern="^(auto|console|json)$",
+        validation_alias=AliasChoices("LOG_FORMAT", "log_format"),
+        description="Log output format (auto, console, or JSON)",
+    )
     storage_dir: str = Field(
         default="./data/storage",
         validation_alias=AliasChoices("STORAGE_DIR", "storage_dir"),
@@ -303,6 +309,15 @@ class GatewaySettings(BaseSettings):
             "active_mfa_encryption_key_version",
         ),
     )
+
+    @property
+    def csrf_allowed_origins(self) -> set[str]:
+        if self.public_base_url:
+            parsed = urlparse(self.public_base_url)
+            return {f"{parsed.scheme}://{parsed.netloc}"}
+        if self.environment is RuntimeEnvironment.PRODUCTION:
+            return set()
+        return {"http://localhost:3000", "http://127.0.0.1:3000"}
     max_request_body_bytes: int = Field(
         default=16 * 1024 * 1024,
         gt=0,
@@ -657,22 +672,22 @@ class AppSettings(BaseSettings):
         super().__init__(**values)
 
         if isinstance(llm_val, dict):
-            object.__setattr__(self, "llm", LLMSettings(**llm_val))
+            object.__setattr__(self, "llm", LLMSettings(_env_file=None, **llm_val))
         elif isinstance(llm_val, LLMSettings):
             object.__setattr__(self, "llm", llm_val)
 
         if isinstance(emb_val, dict):
-            object.__setattr__(self, "embedding", EmbeddingSettings(**emb_val))
+            object.__setattr__(self, "embedding", EmbeddingSettings(_env_file=None, **emb_val))
         elif isinstance(emb_val, EmbeddingSettings):
             object.__setattr__(self, "embedding", emb_val)
 
         if isinstance(db_val, dict):
-            object.__setattr__(self, "database", DatabaseSettings(**db_val))
+            object.__setattr__(self, "database", DatabaseSettings(_env_file=None, **db_val))
         elif isinstance(db_val, DatabaseSettings):
             object.__setattr__(self, "database", db_val)
 
         if isinstance(gw_val, dict):
-            object.__setattr__(self, "gateway", GatewaySettings(**gw_val))
+            object.__setattr__(self, "gateway", GatewaySettings(_env_file=None, **gw_val))
         elif isinstance(gw_val, GatewaySettings):
             object.__setattr__(self, "gateway", gw_val)
 

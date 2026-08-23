@@ -29,7 +29,6 @@ jobs:
       MIGRATION_DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/gateway_test
       WORKER_DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/gateway_test
       EMBEDDING_DIMENSION: "1024"
-      LEGACY_CONTRACT_ENFORCE_ALLOWLIST: "1"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
@@ -39,7 +38,7 @@ jobs:
       - run: python -m pip install --disable-pip-version-check --require-hashes -r requirements/dev.lock
       - run: python -m pip check
       - run: python -m compileall -q src/gateway
-      - run: pytest -q -m "not legacy_contract"
+      - run: pytest -q
 
   web:
     runs-on: ubuntu-24.04

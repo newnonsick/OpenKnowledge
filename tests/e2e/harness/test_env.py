@@ -211,7 +211,11 @@ class TestEnvironment:
         self._orig_environ: Dict[str, str] = {}
 
     async def __aenter__(self) -> TestEnvironment:
-        await self.start()
+        try:
+            await self.start()
+        except BaseException:
+            await self.stop()
+            raise
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:

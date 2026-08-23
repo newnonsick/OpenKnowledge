@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from src.gateway.domain.exceptions import EmbeddingException
+from src.gateway.infrastructure.adapters.upstream_resilience import ResiliencePolicy
 from tests.e2e.harness.mock_server import DeterministicEmbeddingEngine, MockServerManager
 
 
@@ -49,6 +50,7 @@ async def test_f19_boundary_embedding_client_upstream_error():
             base_url=mock_mgr.embedding_url,
             model_id="bge-large",
             dimension=1024,
+            resilience_policy=ResiliencePolicy(max_attempts=1),
         )
         with pytest.raises(EmbeddingException) as exc_info:
             await client.embed_texts(["sample text"])

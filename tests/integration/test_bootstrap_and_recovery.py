@@ -13,6 +13,7 @@ from src.gateway.application.services.bootstrap_service import (
 )
 from src.gateway.application.services.identity_service import IdentityService
 from src.gateway.application.services.session_service import SessionService
+from src.gateway.domain.exceptions import ValidationException
 from src.gateway.domain.identity import MemberStatus, SpaceRole
 from src.gateway.infrastructure.persistence.identity_models import AuditEventModel, MemberModel, PasswordCredentialModel, SessionFamilyModel, SpaceMembershipModel
 from tests.integration.postgres_test_database import isolated_postgres_database
@@ -77,7 +78,7 @@ async def test_bootstrap_first_login_totp_and_recovery_state_machine() -> None:
             identity = IdentityService(session, password_service, mfa_service)
             authenticated = await identity.authenticate_password("äLICE", temporary_password, now=now)
             assert authenticated.principal.restricted is True
-            with pytest.raises(ValueError, match="confirmation"):
+            with pytest.raises(ValidationException, match="confirmation"):
                 await identity.change_password(
                     issued.member_id,
                     new_password="a new permanent password",
@@ -87,14 +88,14 @@ async def test_bootstrap_first_login_totp_and_recovery_state_machine() -> None:
                 )
             await identity.change_password(
                 issued.member_id,
-                new_password="a new pässword permanent enough",
-                confirmation="a new pa\u0308ssword permanent enough",
+                new_password="A-New-Pässword-934-Enough!",
+                confirmation="A-New-Pa\u0308ssword-934-Enough!",
                 now=now,
                 request_id="password-change",
             )
             password_authentication = await identity.authenticate_password(
                 "älice",
-                "a new pässword permanent enough",
+                "A-New-Pässword-934-Enough!",
                 now=now,
             )
             restricted_session = await SessionService(session).issue(
@@ -119,7 +120,7 @@ async def test_bootstrap_first_login_totp_and_recovery_state_machine() -> None:
 
         async with factory.begin() as session:
             identity = IdentityService(session, password_service, mfa_service)
-            authenticated = await identity.authenticate_password("Älice", "a new pässword permanent enough", now=now)
+            authenticated = await identity.authenticate_password("Älice", "A-New-Pässword-934-Enough!", now=now)
             assert authenticated.principal.restricted is False
             family = await session.get(SessionFamilyModel, restricted_session.family_id)
             assert family is not None and family.revoke_reason == "mfa_enrolled"
@@ -161,7 +162,7 @@ async def test_bootstrap_first_login_totp_and_recovery_state_machine() -> None:
         async with factory.begin() as session:
             identity = IdentityService(session, password_service, mfa_service)
             with pytest.raises(Exception, match="Invalid username or password"):
-                await identity.authenticate_password("älice", "a new pässword permanent enough", now=now)
+                await identity.authenticate_password("älice", "A-New-Pässword-934-Enough!", now=now)
             recovered_login = await identity.authenticate_password(
                 "älice",
                 recovered.temporary_password.reveal(),

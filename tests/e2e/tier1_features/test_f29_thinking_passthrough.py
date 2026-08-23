@@ -52,7 +52,7 @@ async def test_f29_openai_nonstream_reasoning_content(reasoning_env):
         resp = await client.post(
             "/v1/chat/completions",
             json={
-                "model": "qwen3-test",
+                "model": "default",
                 "messages": [{"role": "user", "content": "What is my name?"}],
                 "stream": False,
             },
@@ -80,7 +80,7 @@ async def test_f29_openai_stream_reasoning_deltas(reasoning_env):
         resp = await client.post(
             "/v1/chat/completions",
             json={
-                "model": "qwen3-test",
+                "model": "default",
                 "messages": [{"role": "user", "content": "Stream with thoughts"}],
                 "stream": True,
             },
@@ -119,7 +119,7 @@ async def test_f29_anthropic_nonstream_thinking_block(reasoning_env):
         resp = await client.post(
             "/v1/messages",
             json={
-                "model": "qwen3-test",
+                "model": "default",
                 "max_tokens": 512,
                 "messages": [{"role": "user", "content": "Think and answer"}],
             },
@@ -130,7 +130,7 @@ async def test_f29_anthropic_nonstream_thinking_block(reasoning_env):
     assert "thinking" in block_types
     thinking_block = next(b for b in data["content"] if b.get("type") == "thinking")
     assert thinking_block["thinking"] == "Hidden reasoning trace."
-    assert thinking_block.get("signature")
+    assert thinking_block.get("signature") is None
     # thinking must precede the text block
     assert block_types.index("thinking") < block_types.index("text")
 
@@ -152,7 +152,7 @@ async def test_f29_anthropic_stream_thinking_delta_events(reasoning_env):
         resp = await client.post(
             "/v1/messages",
             json={
-                "model": "qwen3-test",
+                "model": "default",
                 "max_tokens": 512,
                 "messages": [{"role": "user", "content": "Stream with thoughts"}],
                 "stream": True,

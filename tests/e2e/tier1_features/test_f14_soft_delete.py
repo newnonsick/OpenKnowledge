@@ -206,6 +206,7 @@ async def test_f14_soft_delete_retains_revision_history():
                 rev1 = DBKnowledgeRevision(
                     id=uuid4(),
                     item_id=item_id,
+                    space_id=ws_id,
                     version=1,
                     content="Version 1 body",
                     content_hash=DomainKnowledgeRevision.compute_hash("Version 1 body"),
@@ -214,6 +215,7 @@ async def test_f14_soft_delete_retains_revision_history():
                 rev2 = DBKnowledgeRevision(
                     id=uuid4(),
                     item_id=item_id,
+                    space_id=ws_id,
                     version=2,
                     content="Version 2 body",
                     content_hash=DomainKnowledgeRevision.compute_hash("Version 2 body"),

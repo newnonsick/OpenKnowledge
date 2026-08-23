@@ -17,6 +17,7 @@ from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGen
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
 from src.gateway.presentation.errors import register_exception_handlers
 from src.gateway.presentation.routers.management import router
+from src.gateway.presentation.routers import management as management_module
 from src.gateway.presentation.settings_context import SettingsContextMiddleware
 from tests.integration.postgres_test_database import isolated_postgres_database
 
@@ -30,7 +31,7 @@ def principal(member_id, system_role=SystemRole.MEMBER):
     )
 
 
-async def test_management_resources_enforce_membership_and_one_time_secret_boundaries(tmp_path) -> None:
+async def test_management_resources_enforce_membership_and_one_time_secret_boundaries(tmp_path, monkeypatch) -> None:
     now = datetime.now(timezone.utc)
     admin_id = uuid4()
     member_id = uuid4()
@@ -142,6 +143,15 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
         app.include_router(router)
         set_session_factory(factory)
         try:
+            class StubEmbeddingClient:
+                async def embed_query(self, query):
+                    return [0.1] * 1024
+
+            monkeypatch.setattr(
+                management_module,
+                "HTTPEmbeddingClient",
+                lambda: StubEmbeddingClient(),
+            )
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(
                 transport=transport,
@@ -235,7 +245,7 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 )
                 assert search.status_code == 200
                 assert search.json()["hits"][0]["canonical_id"] == knowledge_id
-                assert search.json()["health"]["semantic_status"] == "degraded"
+                assert search.json()["health"]["semantic_status"] == "active"
 
                 updated_knowledge = await member_client.put(
                     f"/api/v1/knowledge/{knowledge_id}",

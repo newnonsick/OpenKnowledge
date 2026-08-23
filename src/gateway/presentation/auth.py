@@ -8,7 +8,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence, Set
 from uuid import UUID
-from urllib.parse import urlparse
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
@@ -299,11 +298,8 @@ class APIKeyAuthMiddleware:
         ):
             raise CSRFException()
         origin = request.headers.get("Origin")
-        public_base_url = get_settings().gateway.public_base_url
-        expected_url = public_base_url or str(request.base_url)
-        parsed = urlparse(expected_url)
-        expected_origin = f"{parsed.scheme}://{parsed.netloc}"
-        if origin != expected_origin:
+        allowed_origins = get_settings().gateway.csrf_allowed_origins
+        if origin not in allowed_origins:
             raise CSRFException()
         content_type = request.headers.get("Content-Type", "")
         content_length = request.headers.get("Content-Length")

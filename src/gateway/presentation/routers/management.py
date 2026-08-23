@@ -78,6 +78,14 @@ from src.gateway.presentation.schemas.management_responses import (
 from src.gateway.observability import increment_metric, set_metric_gauge
 
 
+def _retrieval_service() -> AuthorizedRetrievalService:
+    return AuthorizedRetrievalService(
+        PostgresRetrievalUnitRepository(get_session_factory()),
+        HTTPEmbeddingClient(),
+        runtime_settings_provider=load_active_retrieval_settings,
+    )
+
+
 router = APIRouter(prefix="/api/v1", tags=["Management"], responses=MANAGEMENT_ERROR_RESPONSES)
 KnowledgeTag = Annotated[str, Field(min_length=1, max_length=80)]
 
@@ -511,11 +519,7 @@ async def _upload_chunks(file: UploadFile):
 
 
 async def _ai_retrieval_result(principal: Principal, arguments: AIKnowledgeSearchArguments) -> dict:
-    result = await AuthorizedRetrievalService(
-        PostgresRetrievalUnitRepository(get_session_factory()),
-        None,
-        runtime_settings_provider=load_active_retrieval_settings,
-    ).search(
+    result = await _retrieval_service().search(
         principal,
         arguments.query,
         requested_space_ids=set(arguments.space_ids) if arguments.space_ids is not None else None,
@@ -1512,11 +1516,7 @@ async def search_retrieval(
     payload: RetrievalSearchRequest,
     principal: Principal = Depends(require_scope("knowledge:read")),
 ) -> dict:
-    result = await AuthorizedRetrievalService(
-        PostgresRetrievalUnitRepository(get_session_factory()),
-        None,
-        runtime_settings_provider=load_active_retrieval_settings,
-    ).search(
+    result = await _retrieval_service().search(
         principal,
         payload.query,
         requested_space_ids=set(payload.space_ids) if payload.space_ids is not None else None,

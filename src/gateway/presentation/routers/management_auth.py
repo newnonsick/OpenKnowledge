@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from uuid import UUID
-from urllib.parse import urlparse
-
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -187,10 +185,7 @@ async def _verify_current_credentials(
 
 
 def _verify_origin(request: Request) -> None:
-    configured = get_settings().gateway.public_base_url or str(request.base_url)
-    parsed = urlparse(configured)
-    expected = f"{parsed.scheme}://{parsed.netloc}"
-    if request.headers.get("Origin") != expected:
+    if request.headers.get("Origin") not in get_settings().gateway.csrf_allowed_origins:
         raise CSRFException()
 
 

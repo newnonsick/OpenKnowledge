@@ -144,6 +144,7 @@ async def test_f03_boundary_knowledge_revision_unique_version_constraint():
             rev1 = KnowledgeRevision(
                 id=uuid.uuid4(),
                 item_id=item_id,
+                space_id="global",
                 version=1,
                 content="Rev 1",
                 content_hash="hash1",
@@ -155,6 +156,7 @@ async def test_f03_boundary_knowledge_revision_unique_version_constraint():
             rev1_duplicate = KnowledgeRevision(
                 id=uuid.uuid4(),
                 item_id=item_id,
+                space_id="global",
                 version=1,
                 content="Rev 1 Duplicate",
                 content_hash="hash2",

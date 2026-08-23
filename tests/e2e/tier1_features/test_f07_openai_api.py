@@ -27,7 +27,7 @@ async def test_f07_openai_chat_completions_non_streaming_json():
         resp = await gw.client.post(
             "/v1/chat/completions",
             json={
-                "model": "meta-llama/Llama-3.1-8B-Instruct",
+                "model": "default",
                 "messages": [{"role": "user", "content": "What is Clean Architecture?"}],
                 "stream": False,
             },
@@ -49,7 +49,7 @@ async def test_f07_openai_chat_completions_non_streaming_json():
 @pytest.mark.asyncio
 async def test_f07_openai_chat_completions_streaming_sse():
     """Verify Server-Sent Events (SSE) streaming chat completion chunks and termination."""
-    async with GatewayMockUpstream() as gw:
+    async with GatewayMockUpstream(env_overrides={"LLM_RETRY_ATTEMPTS": "1"}) as gw:
         gw.llm.queue_stream_response(
             chunks=["First chunk, ", "second chunk, ", "final chunk."],
             finish_reason="stop",
@@ -58,7 +58,7 @@ async def test_f07_openai_chat_completions_streaming_sse():
         resp = await gw.client.post(
             "/v1/chat/completions",
             json={
-                "model": "meta-llama/Llama-3.1-8B-Instruct",
+                "model": "default",
                 "messages": [{"role": "user", "content": "Stream response"}],
                 "stream": True,
             },
@@ -94,7 +94,7 @@ async def test_f07_openai_temperature_and_max_tokens():
         resp = await gw.client.post(
             "/v1/chat/completions",
             json={
-                "model": "gpt-4-custom",
+                "model": "default",
                 "messages": [{"role": "user", "content": "Test params"}],
                 "temperature": 0.2,
                 "max_tokens": 100,
@@ -139,7 +139,7 @@ async def test_f07_openai_error_response_structure():
 
     Upstream failures surface as a safe 502 llm_provider_error envelope.
     """
-    async with GatewayMockUpstream() as gw:
+    async with GatewayMockUpstream(env_overrides={"LLM_RETRY_ATTEMPTS": "1"}) as gw:
         gw.llm.queue_error(status_code=429, message="Rate limit exceeded. Please back off.")
 
         resp = await gw.client.post(

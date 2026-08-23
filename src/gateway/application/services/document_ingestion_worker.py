@@ -233,6 +233,7 @@ class DocumentIngestionWorker:
                 _IngestionFailure("activation_conflict", False),
             )
         except Exception as exc:
+            logger.exception("Ingestion job failed", extra={"job_id": claim.job_id})
             return await self._record_failure(
                 claim,
                 _IngestionFailure(f"internal_{type(exc).__name__.lower()}", True),

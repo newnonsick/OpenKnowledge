@@ -31,7 +31,7 @@ async def test_scenario_streaming_sse_ui_token_reassembly():
         resp = await gw.client.post(
             "/v1/chat/completions",
             json={
-                "model": "gpt-4o",
+                "model": "default",
                 "messages": [{"role": "user", "content": "Explain Clean Architecture domain rules"}],
                 "stream": True,
             },
@@ -69,7 +69,7 @@ async def test_scenario_streaming_sse_tool_call_delta_reassembly():
         resp = await gw.client.post(
             "/v1/chat/completions",
             json={
-                "model": "gpt-4o",
+                "model": "default",
                 "messages": [{"role": "user", "content": "Show git diff against main"}],
                 "stream": True,
             },

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-import secrets
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, text, update
@@ -60,7 +59,9 @@ class BootstrapService:
         clean_display_name = display_name.strip()
         if len(normalized) > 255 or not clean_display_name or len(clean_display_name) > 255:
             raise BootstrapValidationError("Invalid member identity")
-        temporary_password = SecretValue(secrets.token_urlsafe(24))
+        temporary_password = SecretValue(
+            self._passwords.generate_temporary_password(username=normalized)
+        )
         member = MemberModel(
             id=uuid4(),
             username=username.strip(),
@@ -131,7 +132,9 @@ class BootstrapService:
             raise BootstrapValidationError(str(exc)) from exc
         if member is None or member.system_role != SystemRole.SUPER_ADMIN.value:
             raise BootstrapValidationError("Eligible Super Admin not found")
-        temporary_password = SecretValue(secrets.token_urlsafe(24))
+        temporary_password = SecretValue(
+            self._passwords.generate_temporary_password(username=member.username)
+        )
         expires_at = current_time + timedelta(hours=24)
         await self._identity.replace_password(
             PasswordCredentialModel(

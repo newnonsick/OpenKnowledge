@@ -51,7 +51,7 @@ async def test_scenario_anthropic_external_tool_passthrough_loop():
             "/v1/messages",
             headers=headers,
             json={
-                "model": "claude-3-5-sonnet-20241022",
+                "model": "default",
                 "max_tokens": 1024,
                 "messages": messages,
                 "tools": tools,
@@ -86,7 +86,7 @@ async def test_scenario_anthropic_external_tool_passthrough_loop():
             "/v1/messages",
             headers=headers,
             json={
-                "model": "claude-3-5-sonnet-20241022",
+                "model": "default",
                 "max_tokens": 1024,
                 "messages": messages,
                 "tools": tools,
@@ -125,7 +125,7 @@ async def test_scenario_anthropic_multi_tool_call_in_single_turn():
         resp = await gw.client.post(
             "/v1/messages",
             json={
-                "model": "claude-3-5-sonnet-20241022",
+                "model": "default",
                 "max_tokens": 1024,
                 "messages": [{"role": "user", "content": "Check main.py and config.py"}],
             },

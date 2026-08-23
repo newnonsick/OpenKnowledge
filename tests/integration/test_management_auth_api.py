@@ -63,6 +63,60 @@ async def test_login_throttling_is_enforced_in_postgresql() -> None:
             set_session_factory(None)
 
 
+async def test_first_login_change_password_accepts_local_console_origin_behind_proxy() -> None:
+    mfa_key = Fernet.generate_key().decode("ascii")
+    settings = Settings(
+        gateway={
+            "environment": "development",
+            "api_key_peppers": {1: "test-api-key-pepper-with-adequate-length"},
+            "active_api_key_pepper_version": 1,
+            "mfa_encryption_keys": {1: mfa_key},
+            "active_mfa_encryption_key_version": 1,
+        }
+    )
+    password_service = PasswordService(memory_cost=8192, time_cost=2, parallelism=1)
+
+    async with isolated_postgres_database() as (_, factory):
+        async with factory.begin() as session:
+            bootstrap = await BootstrapService(session, password_service).create_first_super_admin(
+                username="admin",
+                display_name="Admin",
+                request_id="proxied-bootstrap",
+            )
+
+        app = FastAPI()
+        app.state.settings = settings
+        register_exception_handlers(app)
+        app.add_middleware(APIKeyAuthMiddleware, allowed_keys=[], session_factory=factory)
+        app.add_middleware(SettingsContextMiddleware)
+        app.include_router(router)
+        set_session_factory(factory)
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="https://gateway-test") as client:
+                login = await client.post(
+                    "/api/v1/auth/login",
+                    headers={"Origin": "http://localhost:3000"},
+                    json={"username": "admin", "password": bootstrap.temporary_password.reveal()},
+                )
+                assert login.status_code == 200
+
+                changed = await client.post(
+                    "/api/v1/auth/password",
+                    headers={
+                        "Origin": "http://localhost:3000",
+                        "X-CSRF-Token": client.cookies.get("aigw-csrf"),
+                    },
+                    json={
+                        "password": "Permanent-Password-934!",
+                        "confirmation": "Permanent-Password-934!",
+                    },
+                )
+                assert changed.status_code == 200
+        finally:
+            set_session_factory(None)
+
+
 async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
     now = datetime.now(timezone.utc)
     mfa_key = Fernet.generate_key().decode("ascii")
@@ -124,12 +178,23 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                 csrf = client.cookies.get("aigw-csrf")
                 assert csrf
 
+                weak_password_change = await client.post(
+                    "/api/v1/auth/password",
+                    headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
+                    json={
+                        "password": "all lowercase letters!",
+                        "confirmation": "all lowercase letters!",
+                    },
+                )
+                assert weak_password_change.status_code == 422
+                assert weak_password_change.json()["error"]["code"] == "invalid_payload"
+
                 password_change = await client.post(
                     "/api/v1/auth/password",
                     headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
                     json={
-                        "password": "a permanent password long enough",
-                        "confirmation": "a permanent password long enough",
+                        "password": "Permanent-Password-934!",
+                        "confirmation": "Permanent-Password-934!",
                     },
                 )
                 assert password_change.status_code == 200
@@ -180,7 +245,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                     "/api/v1/auth/login",
                     json={
                         "username": "admin",
-                        "password": "a permanent password long enough",
+                        "password": "Permanent-Password-934!",
                     },
                 )
                 assert missing_totp.status_code == 401
@@ -189,7 +254,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                     "/api/v1/auth/login",
                     json={
                         "username": "admin",
-                        "password": "a permanent password long enough",
+                        "password": "Permanent-Password-934!",
                         "totp_code": pyotp.TOTP(secret).now(),
                     },
                 )
@@ -236,7 +301,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                     "/api/v1/auth/step-up",
                     headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
                     json={
-                        "password": "a permanent password long enough",
+                        "password": "Permanent-Password-934!",
                         "totp_code": pyotp.TOTP(secret).now(),
                     },
                 )
@@ -252,7 +317,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                     "/api/v1/auth/login",
                     json={
                         "username": "admin",
-                        "password": "a permanent password long enough",
+                        "password": "Permanent-Password-934!",
                         "recovery_code": recovery_codes[0],
                     },
                 )
@@ -267,7 +332,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                     "/api/v1/auth/login",
                     json={
                         "username": "admin",
-                        "password": "a permanent password long enough",
+                        "password": "Permanent-Password-934!",
                         "recovery_code": recovery_codes[0],
                     },
                 )
@@ -300,7 +365,7 @@ async def test_member_receives_exactly_one_personal_api_key_after_first_password
     )
     password_service = PasswordService(memory_cost=8192, time_cost=2, parallelism=1)
     member_id = uuid4()
-    temporary_password = "one-time-family-secret"
+    temporary_password = "One-Time-Family-Secret-934!"
 
     async with isolated_postgres_database() as (_, factory):
         async with factory.begin() as session:
@@ -345,8 +410,8 @@ async def test_member_receives_exactly_one_personal_api_key_after_first_password
                     "/api/v1/auth/password",
                     headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
                     json={
-                        "password": "a permanent family password",
-                        "confirmation": "a permanent family password",
+                        "password": "Permanent-Family-Password-934!",
+                        "confirmation": "Permanent-Family-Password-934!",
                     },
                 )
                 assert changed.status_code == 200
@@ -358,8 +423,8 @@ async def test_member_receives_exactly_one_personal_api_key_after_first_password
                     "/api/v1/auth/password",
                     headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
                     json={
-                        "password": "a second permanent family secret",
-                        "confirmation": "a second permanent family secret",
+                        "password": "Second-Permanent-Secret-934!",
+                        "confirmation": "Second-Permanent-Secret-934!",
                     },
                 )
                 assert changed_again.status_code == 401
@@ -368,9 +433,9 @@ async def test_member_receives_exactly_one_personal_api_key_after_first_password
                     "/api/v1/auth/password",
                     headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
                     json={
-                        "current_password": "a permanent family password",
-                        "password": "a second permanent family secret",
-                        "confirmation": "a second permanent family secret",
+                        "current_password": "Permanent-Family-Password-934!",
+                        "password": "Second-Permanent-Secret-934!",
+                        "confirmation": "Second-Permanent-Secret-934!",
                     },
                 )
                 assert changed_again.status_code == 200
