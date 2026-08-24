@@ -115,6 +115,7 @@ class KnowledgeItem(Base):
             use_alter=True,
         ),
         Index("ix_knowledge_items_workspace_deleted", "workspace_id", "is_deleted"),
+        Index("ix_knowledge_items_space_active_page", "workspace_id", "is_deleted", "id"),
         Index("ix_knowledge_items_global_deleted", "is_global", "is_deleted"),
     )
 

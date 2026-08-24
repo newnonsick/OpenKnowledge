@@ -91,6 +91,7 @@ class SessionFamilyModel(Base):
     __table_args__ = (
         CheckConstraint("idle_expires_at <= absolute_expires_at", name="ck_session_families_expiry_order"),
         CheckConstraint("csrf_token_digest IS NOT NULL OR revoked_at IS NOT NULL", name="ck_session_families_csrf_or_revoked"),
+        Index("ix_session_families_member_page", "member_id", "created_at", "id"),
     )
 
 
@@ -128,6 +129,7 @@ class PersonalAPIKeyModel(Base):
     __table_args__ = (
         CheckConstraint("status IN ('active','revoked','expired')", name="ck_personal_api_keys_status"),
         CheckConstraint("pepper_version > 0", name="ck_personal_api_keys_pepper_version"),
+        Index("ix_personal_api_keys_member_status_page", "member_id", "status", "created_at", "id"),
     )
 
 
@@ -170,6 +172,7 @@ class AuditEventModel(Base):
 
     __table_args__ = (
         Index("ix_audit_events_actor_time", "actor_member_id", "occurred_at"),
+        Index("ix_audit_events_page", "occurred_at", "id"),
         CheckConstraint("outcome IN ('success','denied','failed')", name="ck_audit_events_outcome"),
     )
 
@@ -216,6 +219,7 @@ class PendingAIActionModel(Base):
         CheckConstraint("length(command_hash) = 64", name="ck_pending_ai_actions_command_hash"),
         CheckConstraint("state IN ('pending','executed','expired','cancelled')", name="ck_pending_ai_actions_state"),
         Index("ix_pending_ai_actions_actor_state_expiry", "actor_member_id", "state", "expires_at"),
+        Index("ix_pending_ai_actions_actor_pending_page", "actor_member_id", "state", "created_at", "id"),
     )
 
 

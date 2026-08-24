@@ -413,6 +413,11 @@ def _position_cursor_encode(created_at: datetime, identifier: UUID) -> str:
     return _cursor_encode(f"{created_at.isoformat()}|{identifier}")
 
 
+def _contains_pattern(value: str) -> str:
+    escaped = value.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def _position_cursor_decode(value: str | None) -> tuple[datetime, UUID] | None:
     decoded = _cursor_decode(value)
     if decoded is None:
@@ -982,6 +987,7 @@ async def me(
 async def list_spaces(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
+    q: str | None = Query(default=None, min_length=1, max_length=255),
     principal: Principal = Depends(require_scope("spaces:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
@@ -999,6 +1005,9 @@ async def list_spaces(
     )
     if after is not None:
         query = query.where(Workspace.id > after)
+    if q is not None and q.strip():
+        pattern = _contains_pattern(q)
+        query = query.where(or_(Workspace.id.ilike(pattern, escape="\\"), Workspace.name.ilike(pattern, escape="\\")))
     rows = (await session.execute(query)).all()
     page = rows[:limit]
     return {
@@ -1021,6 +1030,7 @@ async def list_spaces(
 async def list_admin_spaces(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
+    q: str | None = Query(default=None, min_length=1, max_length=255),
     principal: Principal = Depends(require_scope("members:admin")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
@@ -1043,6 +1053,16 @@ async def list_admin_spaces(
     )
     if after is not None:
         query = query.where(Workspace.id > after)
+    if q is not None and q.strip():
+        pattern = _contains_pattern(q)
+        query = query.where(
+            or_(
+                Workspace.id.ilike(pattern, escape="\\"),
+                Workspace.name.ilike(pattern, escape="\\"),
+                MemberModel.username.ilike(pattern, escape="\\"),
+                MemberModel.display_name.ilike(pattern, escape="\\"),
+            )
+        )
     rows = list((await session.execute(query)).all())
     page = rows[:limit]
     return {
@@ -1172,6 +1192,7 @@ async def list_space_member_candidates(
     space_id: str,
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
+    q: str | None = Query(default=None, min_length=1, max_length=255),
     principal: Principal = Depends(require_scope("spaces:members")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
@@ -1198,6 +1219,15 @@ async def list_space_member_candidates(
     )
     if after is not None:
         query = query.where(MemberModel.username_normalized > after)
+    if q is not None and q.strip():
+        pattern = _contains_pattern(q)
+        query = query.where(
+            or_(
+                MemberModel.username.ilike(pattern, escape="\\"),
+                MemberModel.username_normalized.ilike(pattern, escape="\\"),
+                MemberModel.display_name.ilike(pattern, escape="\\"),
+            )
+        )
     rows = list(await session.scalars(query))
     page = rows[:limit]
     return {
@@ -1396,6 +1426,8 @@ async def list_knowledge(
     space_id: str | None = Query(default=None, max_length=64),
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
+    q: str | None = Query(default=None, min_length=1, max_length=500),
+    tag: str | None = Query(default=None, min_length=1, max_length=80),
     principal: Principal = Depends(require_scope("knowledge:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
@@ -1424,6 +1456,18 @@ async def list_knowledge(
             query = query.where(KnowledgeItemModel.id > UUID(after))
         except ValueError as exc:
             raise ValidationException("Invalid pagination cursor.") from exc
+    if q is not None and q.strip():
+        pattern = _contains_pattern(q)
+        query = query.where(
+            or_(
+                KnowledgeItemModel.title.ilike(pattern, escape="\\"),
+                KnowledgeItemModel.content.ilike(pattern, escape="\\"),
+                KnowledgeRevisionModel.title.ilike(pattern, escape="\\"),
+                KnowledgeRevisionModel.content.ilike(pattern, escape="\\"),
+            )
+        )
+    if tag is not None and tag.strip():
+        query = query.where(KnowledgeItemModel.tags.contains([tag.strip()]))
     rows = (await session.execute(query)).all()
     page = rows[:limit]
     return {
@@ -1638,6 +1682,11 @@ async def list_sources(
     space_id: str | None = Query(default=None, max_length=64),
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
+    q: str | None = Query(default=None, min_length=1, max_length=500),
+    status_filter: Literal["pending", "processing", "ready", "active", "failed", "quarantined", "cancelled"] | None = Query(
+        default=None,
+        alias="status",
+    ),
     principal: Principal = Depends(require_scope("knowledge:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
@@ -1653,6 +1702,7 @@ async def list_sources(
             return {"items": [], "next_cursor": None}
     query = (
         select(DocumentModel)
+        .outerjoin(DocumentRevisionModel, DocumentRevisionModel.id == DocumentModel.current_revision_id)
         .where(
             DocumentModel.archived_at.is_(None),
             DocumentModel.space_id.in_(scoped_spaces),
@@ -1668,6 +1718,16 @@ async def list_sources(
                 and_(DocumentModel.created_at == created_at, DocumentModel.id < identifier),
             )
         )
+    if q is not None and q.strip():
+        pattern = _contains_pattern(q)
+        query = query.where(
+            or_(
+                DocumentModel.display_name.ilike(pattern, escape="\\"),
+                DocumentRevisionModel.original_filename.ilike(pattern, escape="\\"),
+            )
+        )
+    if status_filter is not None:
+        query = query.where(DocumentRevisionModel.status == status_filter)
     rows = list(await session.scalars(query))
     documents = rows[:limit]
     document_ids = [document.id for document in documents]
@@ -1765,6 +1825,7 @@ async def list_ingestion_jobs(
     space_id: str | None = Query(default=None, max_length=64),
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
+    state: Literal["preparing", "queued", "running", "retry_wait", "succeeded", "failed", "cancelled"] | None = Query(default=None),
     principal: Principal = Depends(require_scope("knowledge:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
@@ -1792,6 +1853,8 @@ async def list_ingestion_jobs(
                 and_(IngestionJobModel.created_at == created_at, IngestionJobModel.id < identifier),
             )
         )
+    if state is not None:
+        query = query.where(IngestionJobModel.state == state)
     rows = list(await session.scalars(query))
     jobs = rows[:limit]
     return {
@@ -1891,6 +1954,8 @@ async def retry_ingestion_job(
 async def list_api_keys(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
+    q: str | None = Query(default=None, min_length=1, max_length=255),
+    status_filter: Literal["active", "revoked", "expired"] | None = Query(default=None, alias="status"),
     principal: Principal = Depends(require_scope("api_keys:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
@@ -1910,6 +1975,16 @@ async def list_api_keys(
                 and_(PersonalAPIKeyModel.created_at == created_at, PersonalAPIKeyModel.id < identifier),
             )
         )
+    if q is not None and q.strip():
+        pattern = _contains_pattern(q)
+        query = query.where(
+            or_(
+                PersonalAPIKeyModel.name.ilike(pattern, escape="\\"),
+                PersonalAPIKeyModel.public_id.ilike(pattern, escape="\\"),
+            )
+        )
+    if status_filter is not None:
+        query = query.where(PersonalAPIKeyModel.status == status_filter)
     rows = list(
         await session.scalars(
             query
@@ -2027,6 +2102,9 @@ async def revoke_api_key(
 async def list_members(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
+    q: str | None = Query(default=None, min_length=1, max_length=255),
+    status_filter: Literal["pending", "active", "disabled"] | None = Query(default=None, alias="status"),
+    system_role: Literal["super_admin", "member"] | None = Query(default=None),
     principal: Principal = Depends(require_scope("members:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
@@ -2036,6 +2114,19 @@ async def list_members(
     query = select(MemberModel).order_by(MemberModel.username_normalized).limit(limit + 1)
     if after is not None:
         query = query.where(MemberModel.username_normalized > after)
+    if q is not None and q.strip():
+        pattern = _contains_pattern(q)
+        query = query.where(
+            or_(
+                MemberModel.username.ilike(pattern, escape="\\"),
+                MemberModel.username_normalized.ilike(pattern, escape="\\"),
+                MemberModel.display_name.ilike(pattern, escape="\\"),
+            )
+        )
+    if status_filter is not None:
+        query = query.where(MemberModel.status == status_filter)
+    if system_role is not None:
+        query = query.where(MemberModel.system_role == system_role)
     rows = list(await session.scalars(query))
     page = rows[:limit]
     return {
@@ -2189,10 +2280,12 @@ async def reset_member_password(
 async def list_sessions(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
+    status_filter: Literal["active", "expired", "revoked"] | None = Query(default=None, alias="status"),
     principal: Principal = Depends(require_scope("sessions:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     current_family = await _family_id(session, principal)
+    current_time = datetime.now(timezone.utc)
     position = _position_cursor_decode(cursor)
     query = (
         select(SessionFamilyModel)
@@ -2208,13 +2301,28 @@ async def list_sessions(
                 and_(SessionFamilyModel.created_at == created_at, SessionFamilyModel.id < identifier),
             )
         )
+    if status_filter == "active":
+        query = query.where(
+            SessionFamilyModel.revoked_at.is_(None),
+            SessionFamilyModel.idle_expires_at > current_time,
+            SessionFamilyModel.absolute_expires_at > current_time,
+        )
+    elif status_filter == "revoked":
+        query = query.where(SessionFamilyModel.revoked_at.is_not(None))
+    elif status_filter == "expired":
+        query = query.where(
+            SessionFamilyModel.revoked_at.is_(None),
+            or_(
+                SessionFamilyModel.idle_expires_at <= current_time,
+                SessionFamilyModel.absolute_expires_at <= current_time,
+            ),
+        )
     all_rows = list(
         await session.scalars(
             query
         )
     )
     rows = all_rows[:limit]
-    current_time = datetime.now(timezone.utc)
     return {
         "items": [
             {
@@ -2273,6 +2381,10 @@ async def revoke_session(
 async def list_audit_events(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
+    q: str | None = Query(default=None, min_length=1, max_length=255),
+    action_filter: str | None = Query(default=None, min_length=1, max_length=128, alias="action"),
+    outcome: Literal["success", "denied", "failed"] | None = Query(default=None),
+    resource_type: str | None = Query(default=None, min_length=1, max_length=64),
     principal: Principal = Depends(require_scope("members:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
@@ -2288,6 +2400,22 @@ async def list_audit_events(
                 and_(AuditEventModel.occurred_at == occurred_at, AuditEventModel.id < identifier),
             )
         )
+    if q is not None and q.strip():
+        pattern = _contains_pattern(q)
+        query = query.where(
+            or_(
+                AuditEventModel.action.ilike(pattern, escape="\\"),
+                AuditEventModel.resource_type.ilike(pattern, escape="\\"),
+                AuditEventModel.resource_id.ilike(pattern, escape="\\"),
+                AuditEventModel.request_id.ilike(pattern, escape="\\"),
+            )
+        )
+    if action_filter is not None:
+        query = query.where(AuditEventModel.action == action_filter)
+    if outcome is not None:
+        query = query.where(AuditEventModel.outcome == outcome)
+    if resource_type is not None:
+        query = query.where(AuditEventModel.resource_type == resource_type)
     all_rows = list(
         await session.scalars(
             query
@@ -2325,12 +2453,14 @@ async def active_runtime_settings(
 async def runtime_settings_history(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None),
+    state: Literal["active", "superseded"] | None = Query(default=None),
     principal: Principal = Depends(require_scope("settings:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     history = await RuntimeSettingsService(session).history(
         limit=limit + 1,
         before_revision=_revision_cursor_decode(cursor),
+        state=state,
     )
     page = history[:limit]
     return {

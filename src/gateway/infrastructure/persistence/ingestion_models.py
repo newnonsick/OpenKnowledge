@@ -35,6 +35,7 @@ class DocumentModel(Base):
             use_alter=True,
         ),
         Index("ix_documents_space_archived", "space_id", "archived_at"),
+        Index("ix_documents_space_active_page", "space_id", "archived_at", "created_at", "id"),
     )
 
 
@@ -300,6 +301,7 @@ class IngestionJobModel(Base):
         UniqueConstraint("initiated_by_member_id", "idempotency_key", name="uq_ingestion_jobs_actor_idempotency"),
         Index("ix_ingestion_jobs_claimable", "state", "next_attempt_at", "created_at"),
         Index("ix_ingestion_jobs_space_created", "space_id", "created_at"),
+        Index("ix_ingestion_jobs_space_state_page", "space_id", "state", "created_at", "id"),
     )
 
 

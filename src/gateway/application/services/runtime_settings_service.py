@@ -135,6 +135,7 @@ class RuntimeSettingsService:
         *,
         limit: int = 50,
         before_revision: int | None = None,
+        state: str | None = None,
     ) -> list[RuntimeSettingsRevision]:
         if limit < 1 or limit > 101:
             raise ValueError("Runtime settings history limit must be between 1 and 101")
@@ -146,6 +147,8 @@ class RuntimeSettingsService:
         )
         if before_revision is not None:
             query = query.where(RuntimeSettingRevisionModel.revision < before_revision)
+        if state is not None:
+            query = query.where(RuntimeSettingRevisionModel.state == state)
         models = list(
             await self._session.scalars(
                 query
