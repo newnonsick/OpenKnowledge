@@ -1431,7 +1431,7 @@ async def list_knowledge(
     principal: Principal = Depends(require_scope("knowledge:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    after = _cursor_decode(cursor)
+    position = _position_cursor_decode(cursor)
     effective_space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal))
     if space_id is not None:
         if space_id not in effective_space_ids:
@@ -1448,14 +1448,17 @@ async def list_knowledge(
             KnowledgeItemModel.is_deleted.is_(False),
             KnowledgeItemModel.workspace_id.in_(scoped_spaces),
         )
-        .order_by(KnowledgeItemModel.id)
+        .order_by(KnowledgeItemModel.updated_at.desc(), KnowledgeItemModel.id.desc())
         .limit(limit + 1)
     )
-    if after is not None:
-        try:
-            query = query.where(KnowledgeItemModel.id > UUID(after))
-        except ValueError as exc:
-            raise ValidationException("Invalid pagination cursor.") from exc
+    if position is not None:
+        updated_at, identifier = position
+        query = query.where(
+            or_(
+                KnowledgeItemModel.updated_at < updated_at,
+                and_(KnowledgeItemModel.updated_at == updated_at, KnowledgeItemModel.id < identifier),
+            )
+        )
     if q is not None and q.strip():
         pattern = _contains_pattern(q)
         query = query.where(
@@ -1472,7 +1475,7 @@ async def list_knowledge(
     page = rows[:limit]
     return {
         "items": [_orm_knowledge_payload(item, revision, include_content=False) for item, revision in page],
-        "next_cursor": _cursor_encode(str(page[-1][0].id)) if len(rows) > limit else None,
+        "next_cursor": _position_cursor_encode(page[-1][0].updated_at, page[-1][0].id) if len(rows) > limit else None,
     }
 
 

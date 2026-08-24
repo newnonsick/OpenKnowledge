@@ -504,6 +504,9 @@ button { color: inherit; }
 .ownership-recovery-form input, .ownership-recovery-form select, .ownership-recovery-form textarea { width: 100%; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 9px; outline: 0; background: #fff; color: var(--ink); font: inherit; font-size: 9px; }
 .ownership-recovery-form input, .ownership-recovery-form select { height: 42px; }
 .ownership-recovery-form textarea { min-height: 72px; padding-block: 10px; resize: vertical; }
+.ownership-search-form { display: grid; gap: 7px; }
+.ownership-search-form > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.ownership-search-form .secondary-button { min-height: 42px; padding-inline: 13px; }
 .ownership-boundary { display: flex; align-items: flex-start; gap: 7px; margin: 3px 0; padding: 10px; border-radius: 10px; background: #f1efff; color: #585078; font-size: 8px; line-height: 1.5; }
 .ownership-boundary svg { flex: 0 0 auto; color: #6c5ce7; }
 .member-security-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 14px; }

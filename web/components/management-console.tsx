@@ -924,6 +924,8 @@ export function PeopleConsole() {
   const [resetPassword, setResetPassword] = useState<ResetMemberPassword | null>(null);
   const [recoverySpaceSearch, setRecoverySpaceSearch] = useState("");
   const [recoveryOwnerSearch, setRecoveryOwnerSearch] = useState("");
+  const [appliedRecoverySpaceSearch, setAppliedRecoverySpaceSearch] = useState("");
+  const [appliedRecoveryOwnerSearch, setAppliedRecoveryOwnerSearch] = useState("");
   const [ownershipRecoveryOpen, setOwnershipRecoveryOpen] = useState(false);
   const [recoverySpaceId, setRecoverySpaceId] = useState("");
   const [recoveryTargetId, setRecoveryTargetId] = useState("");
@@ -940,14 +942,14 @@ export function PeopleConsole() {
   const memberPages = useCursorPagination<MemberSummary>({ keyOf: (person) => person.id, loadPage: loadMemberPage, queryKey: JSON.stringify([isAdmin, appliedMemberSearch, memberStatus, memberRole]) });
   const members = memberPages.items;
   const loadAdminSpacePage = useCallback((cursor: string | null, signal: AbortSignal) => isAdmin && ownershipRecoveryOpen
-    ? contractData(contractClient.GET("/api/v1/admin/spaces", { params: { query: { limit: 25, ...(cursor ? { cursor } : {}), ...(recoverySpaceSearch ? { q: recoverySpaceSearch } : {}) } }, signal }))
-    : Promise.resolve({ items: [], next_cursor: null }), [isAdmin, ownershipRecoveryOpen, recoverySpaceSearch]);
-  const adminSpacePages = useCursorPagination<AdminSpace>({ keyOf: (space) => space.id, loadPage: loadAdminSpacePage, queryKey: JSON.stringify([isAdmin, ownershipRecoveryOpen, recoverySpaceSearch]) });
+    ? contractData(contractClient.GET("/api/v1/admin/spaces", { params: { query: { limit: 25, ...(cursor ? { cursor } : {}), ...(appliedRecoverySpaceSearch ? { q: appliedRecoverySpaceSearch } : {}) } }, signal }))
+    : Promise.resolve({ items: [], next_cursor: null }), [appliedRecoverySpaceSearch, isAdmin, ownershipRecoveryOpen]);
+  const adminSpacePages = useCursorPagination<AdminSpace>({ keyOf: (space) => space.id, loadPage: loadAdminSpacePage, queryKey: JSON.stringify([isAdmin, ownershipRecoveryOpen, appliedRecoverySpaceSearch]) });
   const adminSpaces = adminSpacePages.items;
   const loadRecoveryOwnerPage = useCallback((cursor: string | null, signal: AbortSignal) => isAdmin && ownershipRecoveryOpen
-    ? contractData(contractClient.GET("/api/v1/members", { params: { query: { limit: 25, status: "active", ...(cursor ? { cursor } : {}), ...(recoveryOwnerSearch ? { q: recoveryOwnerSearch } : {}) } }, signal }))
-    : Promise.resolve({ items: [], next_cursor: null }), [isAdmin, ownershipRecoveryOpen, recoveryOwnerSearch]);
-  const recoveryOwnerPages = useCursorPagination<MemberSummary>({ keyOf: (person) => person.id, loadPage: loadRecoveryOwnerPage, queryKey: JSON.stringify([isAdmin, ownershipRecoveryOpen, recoveryOwnerSearch]) });
+    ? contractData(contractClient.GET("/api/v1/members", { params: { query: { limit: 25, status: "active", ...(cursor ? { cursor } : {}), ...(appliedRecoveryOwnerSearch ? { q: appliedRecoveryOwnerSearch } : {}) } }, signal }))
+    : Promise.resolve({ items: [], next_cursor: null }), [appliedRecoveryOwnerSearch, isAdmin, ownershipRecoveryOpen]);
+  const recoveryOwnerPages = useCursorPagination<MemberSummary>({ keyOf: (person) => person.id, loadPage: loadRecoveryOwnerPage, queryKey: JSON.stringify([isAdmin, ownershipRecoveryOpen, appliedRecoveryOwnerSearch]) });
   const recoveryOwners = recoveryOwnerPages.items;
 
   useEffect(() => {
@@ -1180,15 +1182,19 @@ export function PeopleConsole() {
                 <div className="ownership-recovery-form">
                   <p>Use only when an owner cannot recover their account. Space names and ownership metadata are visible here; content remains inaccessible.</p>
                   {adminSpacePages.initialLoading || recoveryOwnerPages.initialLoading ? <ListSkeleton rows={3} /> : null}
-                  <label htmlFor="recovery-space-search">Find space</label>
-                  <input id="recovery-space-search" onChange={(event) => setRecoverySpaceSearch(event.target.value.trim())} placeholder="Search space or owner" type="search" value={recoverySpaceSearch} />
+                  <form className="ownership-search-form" onSubmit={(event) => { event.preventDefault(); setAppliedRecoverySpaceSearch(recoverySpaceSearch.trim()); }} role="search">
+                    <label htmlFor="recovery-space-search">Find space</label>
+                    <div><input id="recovery-space-search" onChange={(event) => setRecoverySpaceSearch(event.target.value)} placeholder="Search space or owner" type="search" value={recoverySpaceSearch} /><button aria-label="Apply space search" className="secondary-button" type="submit"><Search size={14} /> Apply</button></div>
+                  </form>
                   <label htmlFor="recovery-space">Recovery space</label>
                   <select id="recovery-space" onChange={(event) => selectRecoverySpace(event.target.value)} value={recoverySpaceId}>
                     {adminSpaces.map((space) => <option key={space.id} value={space.id}>{space.name} · {space.owner_display_name}</option>)}
                   </select>
                   {adminSpacePages.hasMore ? <button className="secondary-button" disabled={adminSpacePages.loadingMore} onClick={() => void adminSpacePages.loadMore()} type="button">Load more spaces</button> : null}
-                  <label htmlFor="recovery-owner-search">Find new owner</label>
-                  <input id="recovery-owner-search" onChange={(event) => setRecoveryOwnerSearch(event.target.value.trim())} placeholder="Search active members" type="search" value={recoveryOwnerSearch} />
+                  <form className="ownership-search-form" onSubmit={(event) => { event.preventDefault(); setAppliedRecoveryOwnerSearch(recoveryOwnerSearch.trim()); }} role="search">
+                    <label htmlFor="recovery-owner-search">Find new owner</label>
+                    <div><input id="recovery-owner-search" onChange={(event) => setRecoveryOwnerSearch(event.target.value)} placeholder="Search active members" type="search" value={recoveryOwnerSearch} /><button aria-label="Apply owner search" className="secondary-button" type="submit"><Search size={14} /> Apply</button></div>
+                  </form>
                   <label htmlFor="recovery-owner">New owner</label>
                   <select id="recovery-owner" onChange={(event) => { setRecoveryTargetId(event.target.value); setReviewOwnershipRecovery(false); setOwnershipRecovered(false); }} value={recoveryTargetId}>
                     {recoveryOwners.filter((candidate) => candidate.id !== adminSpaces.find((space) => space.id === recoverySpaceId)?.owner_member_id).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name} (@{candidate.username})</option>)}

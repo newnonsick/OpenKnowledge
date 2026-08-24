@@ -205,6 +205,40 @@ test("preserves approved light and dark-ready dashboard visuals", async ({ page 
   });
 });
 
+test("uploads a real multipart source through the production interface", async ({ page }) => {
+  await mockGateway(page, "super_admin");
+  let uploadedBody = "";
+  let uploadedContentType = "";
+  await page.route("**/api/v1/sources/upload", async (route) => {
+    uploadedBody = (await route.request().postDataBuffer())?.toString("utf8") || "";
+    uploadedContentType = route.request().headers()["content-type"] || "";
+    await route.fulfill(json({
+      document_id: "source-browser-upload",
+      duplicate_candidate_revision_id: null,
+      job_id: "job-browser-upload",
+      job_state: "queued",
+      revision_id: "revision-browser-upload",
+    }, 202));
+  });
+  await page.goto("/sources");
+  await page.getByLabel("Display name").fill("Browser upload");
+  await page.locator("#source-file").setInputFiles({
+    buffer: Buffer.from("Browser multipart upload content."),
+    mimeType: "text/plain",
+    name: "browser-upload.txt",
+  });
+  await page.getByRole("button", { name: "Queue source" }).click();
+
+  await expect(page.getByText("Queued for durable ingestion")).toBeVisible();
+  expect(uploadedContentType).toContain("multipart/form-data; boundary=");
+  expect(uploadedBody).toContain('name="space_id"');
+  expect(uploadedBody).toContain("global");
+  expect(uploadedBody).toContain('name="display_name"');
+  expect(uploadedBody).toContain("Browser upload");
+  expect(uploadedBody).toContain('filename="browser-upload.txt"');
+  expect(uploadedBody).toContain("Browser multipart upload content.");
+});
+
 const responsiveRoutes = ["/", "/spaces", "/explore", "/knowledge", "/sources", "/ingestion", "/people", "/settings", "/activity", "/ai-actions"];
 const responsiveViewports = [
   { height: 720, width: 320 },

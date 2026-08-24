@@ -560,6 +560,37 @@ describe("management console", () => {
     expect(screen.getByText(/does not grant the super admin access/i)).toBeInTheDocument();
   });
 
+  it("applies ownership recovery searches explicitly instead of requesting on every keystroke", async () => {
+    currentMember.system_role = "super_admin";
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path === "/api/v1/spaces?limit=100") {
+        return { items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }], next_cursor: null } as never;
+      }
+      if (path.startsWith("/api/v1/members")) {
+        return { items: [{ id: "member-1", username: "owner", display_name: "Owner", status: "active", system_role: "member", requires_password_change: false }], next_cursor: null } as never;
+      }
+      if (path.startsWith("/api/v1/admin/spaces")) {
+        return { items: [{ id: "private", name: "Private records", revision: 4, owner_member_id: "member-1", owner_username: "owner", owner_display_name: "Owner", created_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<PeopleConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open ownership recovery" }));
+    await screen.findByRole("option", { name: "Private records · Owner" });
+    vi.mocked(apiRequest).mockClear();
+
+    fireEvent.change(screen.getByLabelText("Find space"), { target: { value: "private" } });
+    fireEvent.change(screen.getByLabelText("Find new owner"), { target: { value: "nana" } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(apiRequest).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply space search" }));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/admin/spaces?limit=25&q=private", {}));
+    fireEvent.click(screen.getByRole("button", { name: "Apply owner search" }));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/members?limit=25&q=nana&status=active", {}));
+  });
+
   it("creates an individually scoped API key and reveals the secret once", async () => {
     let created = false;
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {

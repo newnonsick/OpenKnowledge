@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 from cryptography.fernet import Fernet
@@ -119,18 +119,22 @@ async def pagination_client(tmp_path):
             session.add_all(
                 [
                     KnowledgeItem(
-                        id=uuid4(),
+                        id=UUID(int=1),
                         workspace_id="private",
                         title="Quarterly Finance Plan",
                         content="Revenue targets and budget allocation",
                         tags=["finance", "planning"],
+                        created_at=now - timedelta(days=2),
+                        updated_at=now - timedelta(days=2),
                     ),
                     KnowledgeItem(
-                        id=uuid4(),
+                        id=UUID(int=2),
                         workspace_id="private",
                         title="Engineering Runbook",
                         content="Service recovery procedures",
                         tags=["engineering"],
+                        created_at=now - timedelta(days=1),
+                        updated_at=now - timedelta(days=1),
                     ),
                     DocumentModel(
                         id=handbook_id,
@@ -348,6 +352,10 @@ async def pagination_client(tmp_path):
                 transport=transport,
                 base_url="https://gateway.test",
                 cookies={"__Host-aigw-access": issued.access_token.reveal()},
+                headers={
+                    "Origin": "https://gateway.test",
+                    "X-CSRF-Token": issued.csrf_token.reveal(),
+                },
             ) as client:
                 yield client
         finally:
@@ -432,6 +440,33 @@ async def test_knowledge_sources_and_jobs_support_server_side_filters(tmp_path) 
         assert [item["title"] for item in knowledge.json()["items"]] == ["Quarterly Finance Plan"]
         assert [item["display_name"] for item in sources.json()["items"]] == ["Employee Handbook"]
         assert [item["state"] for item in jobs.json()["items"]] == ["failed"]
+
+
+async def test_knowledge_pages_show_recent_changes_first_with_stable_cursors(tmp_path) -> None:
+    async with pagination_client(tmp_path) as client:
+        created = await client.post(
+            "/api/v1/knowledge",
+            headers={"Idempotency-Key": "create-recent-knowledge"},
+            json={
+                "space_id": "private",
+                "title": "Most recent family note",
+                "content": "This item should be visible immediately after creation.",
+                "tags": ["recent"],
+            },
+        )
+
+        assert created.status_code == 201
+        first = await client.get("/api/v1/knowledge", params={"limit": 1})
+        assert first.status_code == 200
+        assert [item["id"] for item in first.json()["items"]] == [created.json()["id"]]
+        assert first.json()["next_cursor"]
+
+        second = await client.get(
+            "/api/v1/knowledge",
+            params={"limit": 1, "cursor": first.json()["next_cursor"]},
+        )
+        assert second.status_code == 200
+        assert second.json()["items"][0]["id"] != created.json()["id"]
 
 
 async def test_security_audit_and_settings_lists_support_server_side_filters(tmp_path) -> None:
