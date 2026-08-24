@@ -129,8 +129,8 @@ export function ConsoleShell({ actions, children, description, eyebrow, member, 
             <span className="profile-avatar">{initials || "M"}</span>
             <span><strong>{member.displayName}</strong><small>{member.role}</small></span>
           </div>
-          <Link className="account-link" href="/settings"><KeyRound aria-hidden="true" size={15} /> API keys</Link>
-          <button aria-label="Sign out" className="account-link" disabled={signingOut} onClick={signOut} type="button"><LogOut aria-hidden="true" size={15} /> {signingOut ? "Signing out…" : "Sign out"}</button>
+          <Link className="account-link" href="/settings"><KeyRound aria-hidden="true" size={15} /><span>API keys</span></Link>
+          <button aria-label="Sign out" className="account-link" disabled={signingOut} onClick={signOut} type="button"><LogOut aria-hidden="true" size={15} /><span>{signingOut ? "Signing out…" : "Sign out"}</span></button>
         </div>
       </aside>
 

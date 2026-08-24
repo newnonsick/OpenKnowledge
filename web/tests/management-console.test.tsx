@@ -114,13 +114,13 @@ describe("management console", () => {
     let added = false;
     let removed = false;
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
-      if (path === "/api/v1/spaces?limit=100") {
+      if (path === "/api/v1/spaces?limit=25") {
         return { items: [{ id: "travel", name: "Travel plans", role: "owner", revision: 1 }], next_cursor: null } as never;
       }
-      if (path === "/api/v1/spaces/travel/member-candidates") {
+      if (path === "/api/v1/spaces/travel/member-candidates?limit=25") {
         return { items: added ? [] : [{ member_id: "member-2", username: "nana", display_name: "Nana" }], next_cursor: null } as never;
       }
-      if (path === "/api/v1/spaces/travel/members") {
+      if (path === "/api/v1/spaces/travel/members?limit=25") {
         return {
           items: [
             { member_id: "member-1", username: "mai", display_name: "Mai", status: "active", role: "owner" },
@@ -145,6 +145,7 @@ describe("management console", () => {
     expect(await screen.findByRole("option", { name: "Nana (@nana)" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add member" }));
 
+    await waitFor(() => expect(vi.mocked(apiRequest).mock.calls.filter(([path]) => path === "/api/v1/spaces/travel/members?limit=25")).toHaveLength(2));
     expect(await screen.findByText("@nana")).toBeInTheDocument();
     expect(apiRequest).toHaveBeenCalledWith("/api/v1/spaces/travel/members/member-2", {
       body: { role: "reader" },
@@ -164,13 +165,13 @@ describe("management console", () => {
 
   it("uses the step-up ownership command instead of an ordinary role change", async () => {
     vi.mocked(apiRequest).mockImplementation(async (path) => {
-      if (path === "/api/v1/spaces?limit=100") {
+      if (path === "/api/v1/spaces?limit=25") {
         return { items: [{ id: "travel", name: "Travel plans", role: "owner", revision: 2 }], next_cursor: null } as never;
       }
-      if (path === "/api/v1/spaces/travel/member-candidates") {
+      if (path === "/api/v1/spaces/travel/member-candidates?limit=25") {
         return { items: [], next_cursor: null } as never;
       }
-      if (path === "/api/v1/spaces/travel/members") {
+      if (path === "/api/v1/spaces/travel/members?limit=25") {
         return { items: [
           { member_id: "member-1", username: "mai", display_name: "Mai", status: "active", role: "owner" },
           { member_id: "member-2", username: "nana", display_name: "Nana", status: "active", role: "editor" },
@@ -197,13 +198,13 @@ describe("management console", () => {
   it("archives an owned space only after showing its impact", async () => {
     let archived = false;
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
-      if (path === "/api/v1/spaces?limit=100") {
+      if (path === "/api/v1/spaces?limit=25") {
         return { items: archived ? [] : [{ id: "travel", name: "Travel plans", role: "owner", revision: 1 }], next_cursor: null } as never;
       }
-      if (path === "/api/v1/spaces/travel/members") {
+      if (path === "/api/v1/spaces/travel/members?limit=25") {
         return { items: [{ member_id: "member-1", username: "mai", display_name: "Mai", status: "active", role: "owner" }], next_cursor: null } as never;
       }
-      if (path === "/api/v1/spaces/travel/member-candidates") {
+      if (path === "/api/v1/spaces/travel/member-candidates?limit=25") {
         return { items: [], next_cursor: null } as never;
       }
       if (path === "/api/v1/spaces/travel" && options?.method === "DELETE") {
@@ -259,6 +260,46 @@ describe("management console", () => {
     expect(await screen.findByText("Water valve")).toBeInTheDocument();
   });
 
+  it("paginates and filters knowledge on the server without hiding loaded rows", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path === "/api/v1/spaces?limit=100") {
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
+      }
+      if (path === "/api/v1/knowledge?limit=25") {
+        return {
+          items: [{ id: "note-1", space_id: "global", title: "First note", tags: [], version: 1, updated_at: "2026-08-20T12:00:00Z" }],
+          next_cursor: "knowledge-cursor",
+        } as never;
+      }
+      if (path === "/api/v1/knowledge?limit=25&cursor=knowledge-cursor") {
+        return {
+          items: [{ id: "note-2", space_id: "global", title: "Second note", tags: [], version: 1, updated_at: "2026-08-20T11:00:00Z" }],
+          next_cursor: null,
+        } as never;
+      }
+      if (path === "/api/v1/knowledge?limit=25&q=budget&tag=finance") {
+        return {
+          items: [{ id: "note-3", space_id: "global", title: "Budget plan", tags: ["finance"], version: 1, updated_at: "2026-08-20T10:00:00Z" }],
+          next_cursor: null,
+        } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<KnowledgeConsole />);
+
+    expect(await screen.findByText("First note")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Load more knowledge" }));
+    expect(screen.getByText("First note")).toBeInTheDocument();
+    expect(await screen.findByText("Second note")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Search knowledge list"), { target: { value: "budget" } });
+    fireEvent.change(screen.getByLabelText("Filter by tag"), { target: { value: "finance" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply knowledge filters" }));
+
+    expect(await screen.findByText("Budget plan")).toBeInTheDocument();
+    expect(screen.queryByText("First note")).not.toBeInTheDocument();
+  });
+
   it("edits and archives knowledge with optimistic concurrency and confirmation", async () => {
     let version = 1;
     let archived = false;
@@ -266,7 +307,7 @@ describe("management console", () => {
       if (path.startsWith("/api/v1/spaces")) {
         return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
       }
-      if (path === "/api/v1/knowledge?limit=100") {
+      if (path === "/api/v1/knowledge?limit=25") {
         return { items: archived ? [] : [{ id: "note-1", space_id: "global", title: "Water valve", tags: ["home"], version, updated_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
       }
       if (path === "/api/v1/knowledge/note-1" && !options?.method) {
@@ -332,6 +373,10 @@ describe("management console", () => {
 
     expect(await screen.findByText("Turn the water valve clockwise.")).toBeInTheDocument();
     expect(screen.getByText("Semantic layer unavailable · lexical results remain active")).toBeInTheDocument();
+    expect(apiRequest).toHaveBeenCalledWith("/api/v1/retrieval/search", {
+      body: { limit: 20, query: "water", semantic_policy: "prefer" },
+      method: "POST",
+    });
   });
 
   it("uploads a source into the durable ingestion queue", async () => {
@@ -370,7 +415,7 @@ describe("management console", () => {
       if (path.startsWith("/api/v1/spaces")) {
         return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
       }
-      if (path === "/api/v1/sources?limit=100") {
+      if (path === "/api/v1/sources?limit=25") {
         return { items: archived ? [] : [{ id: "source-1", space_id: "global", display_name: "Procedures", status: "active", original_filename: "procedures.txt", size_bytes: 32, revision: 3, updated_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
       }
       if (path === "/api/v1/sources/source-1?expected_revision=3" && options?.method === "DELETE") {
@@ -395,10 +440,10 @@ describe("management console", () => {
       if (path.startsWith("/api/v1/spaces")) {
         return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
       }
-      if (path === "/api/v1/sources?limit=100") {
+      if (path === "/api/v1/sources?limit=25") {
         return { items: [{ id: "source-2", space_id: "global", display_name: "Second", status: "active", original_filename: "second.txt", size_bytes: 12, revision: 1, updated_at: "2026-08-20T12:00:00Z" }], next_cursor: "source-cursor" } as never;
       }
-      if (path === "/api/v1/sources?limit=100&cursor=source-cursor") {
+      if (path === "/api/v1/sources?limit=25&cursor=source-cursor") {
         return { items: [{ id: "source-1", space_id: "global", display_name: "First", status: "active", original_filename: "first.txt", size_bytes: 10, revision: 1, updated_at: "2026-08-20T11:00:00Z" }], next_cursor: null } as never;
       }
       throw new Error(`Unexpected path ${path}`);
@@ -447,7 +492,7 @@ describe("management console", () => {
       if (path.startsWith("/api/v1/spaces")) {
         return { items: [{ id: "global", name: "Family Shared", role: "owner", revision: 1 }], next_cursor: null } as never;
       }
-      if (path === "/api/v1/members?limit=100") {
+      if (path === "/api/v1/members?limit=25") {
         return { items: [{ id: "member-1", username: "nana", display_name: "Nana", status: disabled ? "disabled" : "active", system_role: "member", requires_password_change: false }], next_cursor: null } as never;
       }
       if (path === "/api/v1/members/member-1/password-reset" && options?.method === "POST") {
@@ -484,13 +529,13 @@ describe("management console", () => {
       if (path === "/api/v1/spaces?limit=100") {
         return { items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }], next_cursor: null } as never;
       }
-      if (path === "/api/v1/members?limit=100") {
+      if (path === "/api/v1/members?limit=25" || path === "/api/v1/members?limit=25&status=active") {
         return { items: [
           { id: "member-1", username: "old-owner", display_name: "Old Owner", status: "active", system_role: "member", requires_password_change: false },
           { id: "member-2", username: "new-owner", display_name: "New Owner", status: "active", system_role: "member", requires_password_change: false },
         ], next_cursor: null } as never;
       }
-      if (path === "/api/v1/admin/spaces?limit=100") {
+      if (path === "/api/v1/admin/spaces?limit=25") {
         return { items: [{ id: "private", name: "Private records", revision: 4, owner_member_id: "member-1", owner_username: "old-owner", owner_display_name: "Old Owner", created_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
       }
       if (path === "/api/v1/admin/spaces/private/ownership" && options?.method === "PUT") {
@@ -559,14 +604,14 @@ describe("management console", () => {
       if (path.startsWith("/api/v1/spaces")) {
         return { items: [], next_cursor: null } as never;
       }
-      if (path === "/api/v1/api-keys" && !options?.method) {
+      if (path === "/api/v1/api-keys?limit=25" && !options?.method) {
         return { items: keyRevoked ? [] : [{ id: "key-1", public_id: "pk_live_1", name: "Laptop", status: "active", scopes: ["knowledge:read"], created_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
       }
       if (path === "/api/v1/api-keys/key-1" && options?.method === "DELETE") {
         keyRevoked = true;
         return undefined as never;
       }
-      if (path === "/api/v1/sessions" && !options?.method) {
+      if (path === "/api/v1/sessions?limit=25" && !options?.method) {
         return { items: [
           { id: "session-current", current: true, status: "active", created_at: "2026-08-20T12:00:00Z", last_activity_at: "2026-08-20T12:00:00Z" },
           ...(!sessionRevoked ? [{ id: "session-other", current: false, status: "active", created_at: "2026-08-19T12:00:00Z", last_activity_at: "2026-08-19T13:00:00Z" }] : []),
@@ -601,10 +646,10 @@ describe("management console", () => {
       if (path.startsWith("/api/v1/spaces")) {
         return { items: [], next_cursor: null } as never;
       }
-      if (path === "/api/v1/api-keys") {
+      if (path === "/api/v1/api-keys?limit=25") {
         return { items: [], next_cursor: null } as never;
       }
-      if (path === "/api/v1/sessions") {
+      if (path === "/api/v1/sessions?limit=25") {
         return { items: [], next_cursor: null } as never;
       }
       if (path === "/api/v1/settings" && !options?.method) {
@@ -655,10 +700,10 @@ describe("management console", () => {
       if (path.startsWith("/api/v1/spaces")) {
         return { items: [], next_cursor: null } as never;
       }
-      if (path === "/api/v1/api-keys") {
+      if (path === "/api/v1/api-keys?limit=25") {
         return { items: [], next_cursor: null } as never;
       }
-      if (path === "/api/v1/sessions") {
+      if (path === "/api/v1/sessions?limit=25") {
         return { items: [], next_cursor: null } as never;
       }
       if (path === "/api/v1/settings" && !options?.method) {
@@ -710,7 +755,7 @@ describe("management console", () => {
       if (path.startsWith("/api/v1/spaces")) {
         return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
       }
-      if (path === "/api/v1/ingestion-jobs?limit=100") {
+      if (path === "/api/v1/ingestion-jobs?limit=25") {
         return { items: [{ id: "job-1", space_id: "global", document_id: "doc-1", state, progress: 0, attempt_count: 1, max_attempts: 5, created_at: "2026-08-20T12:00:00Z", updated_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
       }
       if (path === "/api/v1/ingestion-jobs/job-1/cancel" && options?.method === "POST") {
@@ -762,7 +807,7 @@ describe("management console", () => {
       if (path === "/api/v1/ai-tools") {
         return { items: [{ name: "spaces.archive.v1", description: "Archive an owned space.", confirmation: "required", parameters: {} }] } as never;
       }
-      if (path === "/api/v1/ai-actions") {
+      if (path === "/api/v1/ai-actions?limit=25") {
         return { items: confirmed ? [] : [{ id: "action-1", tool_name: "spaces.archive.v1", target_ids: ["private"], expected_revision: 1, status: "pending", created_at: "2026-08-20T12:00:00Z", expires_at: "2026-08-20T12:10:00Z" }], next_cursor: null } as never;
       }
       if (path === "/api/v1/ai-actions/action-1/confirm" && options?.method === "POST") {
@@ -790,7 +835,7 @@ describe("management console", () => {
       if (path === "/api/v1/ai-tools") {
         return { items: [] } as never;
       }
-      if (path === "/api/v1/ai-actions") {
+      if (path === "/api/v1/ai-actions?limit=25") {
         return { items: [{ id: "action-2", tool_name: "spaces.members.set.v1", target_ids: ["private", "member-2"], expected_revision: 1, status: "pending", created_at: "2026-08-20T12:00:00Z", expires_at: "2026-08-20T12:10:00Z" }], next_cursor: null } as never;
       }
       throw new Error(`Unexpected path ${path}`);

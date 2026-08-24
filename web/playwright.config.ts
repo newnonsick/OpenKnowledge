@@ -21,7 +21,7 @@ export default defineConfig({
   ],
   webServer: {
     command: "npm run build && npm run start:standalone",
-    reuseExistingServer: false,
+    reuseExistingServer: !process.env.CI,
     timeout: 120000,
     url: "http://127.0.0.1:3000/login",
   },

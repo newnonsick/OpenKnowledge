@@ -8,6 +8,7 @@ import { useCurrentMember } from "@/components/auth/session-gate";
 import { ConsoleShell } from "@/components/console-shell";
 import { ApiError, apiMultipart, contractClient, contractData, idempotencyKey } from "@/lib/api-client";
 import type { components } from "@/lib/generated/openapi";
+import { useCursorPagination } from "@/lib/use-cursor-pagination";
 
 type Space = components["schemas"]["SpaceSummary"];
 type SpaceListResponse = components["schemas"]["Page_SpaceSummary_"];
@@ -80,15 +81,16 @@ export function ListSkeleton({ compact = false, rows = 5 }: { compact?: boolean;
 
 export function SpacesConsole() {
   const member = useCurrentMember();
-  const [spaces, setSpaces] = useState<Space[]>([]);
-  const [spaceCursor, setSpaceCursor] = useState<string | null>(null);
+  const [spaceSearch, setSpaceSearch] = useState("");
+  const [appliedSpaceSearch, setAppliedSpaceSearch] = useState("");
   const [name, setName] = useState("");
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [accessLoading, setAccessLoading] = useState(false);
   const [selectedSpace, setSelectedSpace] = useState<Space | null>(null);
-  const [spaceMembers, setSpaceMembers] = useState<SpaceMember[]>([]);
-  const [memberCandidates, setMemberCandidates] = useState<SpaceMemberCandidate[]>([]);
+  const [memberSearch, setMemberSearch] = useState("");
+  const [appliedMemberSearch, setAppliedMemberSearch] = useState("");
+  const [memberRoleFilter, setMemberRoleFilter] = useState<"" | "owner" | "editor" | "reader">("");
+  const [candidateSearch, setCandidateSearch] = useState("");
+  const [appliedCandidateSearch, setAppliedCandidateSearch] = useState("");
   const [candidateId, setCandidateId] = useState("");
   const [candidateRole, setCandidateRole] = useState<"editor" | "reader">("reader");
   const [pendingRemoval, setPendingRemoval] = useState<SpaceMember | null>(null);
@@ -96,58 +98,35 @@ export function SpacesConsole() {
   const [confirmSpaceArchive, setConfirmSpaceArchive] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const response = await contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } }));
-      setSpaces(response.items);
-      setSpaceCursor(response.next_cursor);
-      setError(null);
-    } catch (loadError) {
-      setError(message(loadError));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const loadMoreSpaces = async () => {
-    if (!spaceCursor || loading) {
-      return;
-    }
-    setLoading(true);
-    try {
-      const response = await contractData(contractClient.GET("/api/v1/spaces", { params: { query: { cursor: spaceCursor, limit: 100 } } }));
-      setSpaces((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
-      setSpaceCursor(response.next_cursor);
-      setError(null);
-    } catch (loadError) {
-      setError(message(loadError));
-    } finally {
-      setLoading(false);
-    }
-  };
+  const loadSpacePage = useCallback((cursor: string | null, signal: AbortSignal) => contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 25, ...(cursor ? { cursor } : {}), ...(appliedSpaceSearch ? { q: appliedSpaceSearch } : {}) } }, signal })), [appliedSpaceSearch]);
+  const spacePages = useCursorPagination<Space>({ keyOf: (space) => space.id, loadPage: loadSpacePage, queryKey: appliedSpaceSearch });
+  const spaces = spacePages.items;
+  const loadMemberPage = useCallback((cursor: string | null, signal: AbortSignal) => selectedSpace
+    ? contractData(contractClient.GET("/api/v1/spaces/{space_id}/members", { params: { path: { space_id: selectedSpace.id }, query: { limit: 25, ...(cursor ? { cursor } : {}), ...(appliedMemberSearch ? { q: appliedMemberSearch } : {}), ...(memberRoleFilter ? { role: memberRoleFilter } : {}) } }, signal }))
+    : Promise.resolve({ items: [], next_cursor: null }), [appliedMemberSearch, memberRoleFilter, selectedSpace]);
+  const memberPages = useCursorPagination<SpaceMember>({ keyOf: (spaceMember) => spaceMember.member_id, loadPage: loadMemberPage, queryKey: JSON.stringify([selectedSpace?.id, appliedMemberSearch, memberRoleFilter]) });
+  const spaceMembers = memberPages.items;
+  const loadCandidatePage = useCallback((cursor: string | null, signal: AbortSignal) => selectedSpace
+    ? contractData(contractClient.GET("/api/v1/spaces/{space_id}/member-candidates", { params: { path: { space_id: selectedSpace.id }, query: { limit: 25, ...(cursor ? { cursor } : {}), ...(appliedCandidateSearch ? { q: appliedCandidateSearch } : {}) } }, signal }))
+    : Promise.resolve({ items: [], next_cursor: null }), [appliedCandidateSearch, selectedSpace]);
+  const candidatePages = useCursorPagination<SpaceMemberCandidate>({ keyOf: (candidate) => candidate.member_id, loadPage: loadCandidatePage, queryKey: JSON.stringify([selectedSpace?.id, appliedCandidateSearch]) });
+  const memberCandidates = candidatePages.items;
+  const selectedCandidateId = memberCandidates.some((candidate) => candidate.member_id === candidateId) ? candidateId : memberCandidates[0]?.member_id || "";
+  const accessLoading = selectedSpace !== null && (memberPages.initialLoading || candidatePages.initialLoading);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    setCandidateId((current) => memberCandidates.some((candidate) => candidate.member_id === current) ? current : memberCandidates[0]?.member_id || "");
+  }, [memberCandidates]);
 
-  const loadAccess = useCallback(async (space: Space) => {
-    setAccessLoading(true);
+  const loadAccess = useCallback((space: Space) => {
+    setSelectedSpace(space);
+    setMemberSearch("");
+    setAppliedMemberSearch("");
+    setMemberRoleFilter("");
+    setCandidateSearch("");
+    setAppliedCandidateSearch("");
+    setConfirmSpaceArchive(false);
     setError(null);
-    try {
-      const [membersResponse, candidatesResponse] = await Promise.all([
-        contractData(contractClient.GET("/api/v1/spaces/{space_id}/members", { params: { path: { space_id: space.id } } })),
-        contractData(contractClient.GET("/api/v1/spaces/{space_id}/member-candidates", { params: { path: { space_id: space.id } } })),
-      ]);
-      setSelectedSpace(space);
-      setSpaceMembers(membersResponse.items);
-      setMemberCandidates(candidatesResponse.items);
-      setCandidateId(candidatesResponse.items[0]?.member_id || "");
-      setConfirmSpaceArchive(false);
-    } catch (loadError) {
-      setError(message(loadError));
-    } finally {
-      setAccessLoading(false);
-    }
   }, []);
 
   const create = async (event: FormEvent<HTMLFormElement>) => {
@@ -161,7 +140,7 @@ export function SpacesConsole() {
     try {
       await contractData(contractClient.POST("/api/v1/spaces", { body: { name: value }, params: { header: { "Idempotency-Key": idempotencyKey() } } }));
       setName("");
-      await load();
+      spacePages.reload();
     } catch (createError) {
       setError(message(createError));
     } finally {
@@ -171,7 +150,7 @@ export function SpacesConsole() {
 
   const addMember = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!selectedSpace || !candidateId || saving) {
+    if (!selectedSpace || !selectedCandidateId || saving) {
       return;
     }
     setSaving(true);
@@ -179,9 +158,10 @@ export function SpacesConsole() {
     try {
       await contractData(contractClient.PUT("/api/v1/spaces/{space_id}/members/{member_id}", {
         body: { role: candidateRole },
-        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { member_id: candidateId, space_id: selectedSpace.id } },
+        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { member_id: selectedCandidateId, space_id: selectedSpace.id } },
       }));
-      await loadAccess(selectedSpace);
+      memberPages.reload();
+      candidatePages.reload();
     } catch (updateError) {
       setError(message(updateError));
     } finally {
@@ -200,7 +180,7 @@ export function SpacesConsole() {
         body: { role },
         params: { header: { "Idempotency-Key": idempotencyKey() }, path: { member_id: spaceMember.member_id, space_id: selectedSpace.id } },
       }));
-      await loadAccess(selectedSpace);
+      memberPages.reload();
     } catch (updateError) {
       setError(message(updateError));
     } finally {
@@ -221,7 +201,7 @@ export function SpacesConsole() {
       }));
       setPendingOwnership(null);
       setSelectedSpace(null);
-      await load();
+      spacePages.reload();
     } catch (transferError) {
       setError(message(transferError));
     } finally {
@@ -240,7 +220,8 @@ export function SpacesConsole() {
         params: { header: { "Idempotency-Key": idempotencyKey() }, path: { member_id: pendingRemoval.member_id, space_id: selectedSpace.id } },
       }));
       setPendingRemoval(null);
-      await loadAccess(selectedSpace);
+      memberPages.reload();
+      candidatePages.reload();
     } catch (removeError) {
       setError(message(removeError));
     } finally {
@@ -260,7 +241,7 @@ export function SpacesConsole() {
       }));
       setSelectedSpace(null);
       setConfirmSpaceArchive(false);
-      await load();
+      spacePages.reload();
     } catch (archiveError) {
       setError(message(archiveError));
     } finally {
@@ -280,10 +261,11 @@ export function SpacesConsole() {
         <section className="console-panel">
           <div className="panel-heading">
             <div><span>Accessible now</span><h2>Your spaces</h2></div>
-            <span className="count-pill">{spaces.length}</span>
+            <span className="count-pill">{spaces.length}{spacePages.hasMore ? "+" : ""}</span>
           </div>
-          {loading ? <ListSkeleton /> : null}
-          {!loading && spaces.length === 0 ? <div className="console-empty"><FolderKanban size={23} /><strong>No spaces yet</strong><span>Create one for a project or keep using shared knowledge.</span></div> : null}
+          <form className="list-filter-bar space-filter-bar" onSubmit={(event) => { event.preventDefault(); setAppliedSpaceSearch(spaceSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={15} /><input aria-label="Search spaces" onChange={(event) => setSpaceSearch(event.target.value)} placeholder="Search name or ID" type="search" value={spaceSearch} /></label><button className="secondary-button" type="submit">Apply</button>{appliedSpaceSearch ? <button className="filter-clear-button" onClick={() => { setSpaceSearch(""); setAppliedSpaceSearch(""); }} type="button">Clear</button> : null}</form>
+          {spacePages.initialLoading ? <ListSkeleton /> : null}
+          {!spacePages.initialLoading && spaces.length === 0 ? <div className="console-empty"><FolderKanban size={23} /><strong>{appliedSpaceSearch ? "No matching spaces" : "No spaces yet"}</strong><span>{appliedSpaceSearch ? "Try a broader name or clear the search." : "Create one for a project or keep using shared knowledge."}</span></div> : null}
           <div className="space-card-grid">
             {spaces.map((space, index) => (
               <article className="space-card" key={space.id}>
@@ -297,7 +279,7 @@ export function SpacesConsole() {
               </article>
             ))}
           </div>
-          {!loading && spaceCursor && spaces.length > 0 ? <button className="secondary-button pagination-button" disabled={loading} onClick={() => void loadMoreSpaces()} type="button">Load more spaces</button> : null}
+          {spacePages.hasMore && spaces.length > 0 ? <button className="secondary-button pagination-button" disabled={spacePages.loadingMore} onClick={() => void spacePages.loadMore()} type="button">{spacePages.loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more spaces</button> : null}
           {accessLoading ? <div className="console-loading access-loading"><LoaderCircle className="spin" size={18} /> Loading space access…</div> : null}
           {selectedSpace && !accessLoading ? (
             <section className="space-access-panel" aria-label={`${selectedSpace.name} access`}>
@@ -308,10 +290,11 @@ export function SpacesConsole() {
                   <button aria-label="Close access manager" className="icon-button" onClick={() => setSelectedSpace(null)} type="button"><X size={16} /></button>
                 </div>
               </div>
+              <form className="list-filter-bar access-filter-bar" onSubmit={(event) => { event.preventDefault(); setAppliedCandidateSearch(candidateSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={14} /><input aria-label="Find member to add" onChange={(event) => setCandidateSearch(event.target.value)} placeholder="Find a member to add" type="search" value={candidateSearch} /></label><button className="secondary-button" type="submit">Find member</button></form>
               <form className="membership-add-form" onSubmit={addMember}>
                 <div>
                   <label htmlFor="space-member-candidate">Family member</label>
-                  <select disabled={memberCandidates.length === 0} id="space-member-candidate" onChange={(event) => setCandidateId(event.target.value)} value={candidateId}>
+                  <select disabled={memberCandidates.length === 0} id="space-member-candidate" onChange={(event) => setCandidateId(event.target.value)} value={selectedCandidateId}>
                     {memberCandidates.length === 0 ? <option value="">Everyone already has access</option> : null}
                     {memberCandidates.map((candidate) => <option key={candidate.member_id} value={candidate.member_id}>{candidate.display_name} (@{candidate.username})</option>)}
                   </select>
@@ -323,8 +306,9 @@ export function SpacesConsole() {
                     <option value="editor">Editor</option>
                   </select>
                 </div>
-                <button className="primary-button" disabled={!candidateId || saving} type="submit"><UserPlus size={15} /> Add member</button>
+                <button className="primary-button" disabled={!selectedCandidateId || saving} type="submit"><UserPlus size={15} /> Add member</button>
               </form>
+              <form className="list-filter-bar access-member-filter" onSubmit={(event) => { event.preventDefault(); setAppliedMemberSearch(memberSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={14} /><input aria-label="Search space members" onChange={(event) => setMemberSearch(event.target.value)} placeholder="Search current members" type="search" value={memberSearch} /></label><label><select aria-label="Filter space member role" onChange={(event) => setMemberRoleFilter(event.target.value as typeof memberRoleFilter)} value={memberRoleFilter}><option value="">All roles</option><option value="owner">Owner</option><option value="editor">Editor</option><option value="reader">Reader</option></select></label><button className="secondary-button" type="submit">Apply</button></form>
               <div className="membership-list">
                 {spaceMembers.map((spaceMember) => (
                   <article className="membership-row" key={spaceMember.member_id}>
@@ -335,6 +319,8 @@ export function SpacesConsole() {
                   </article>
                 ))}
               </div>
+              {memberPages.hasMore ? <button className="secondary-button pagination-button" disabled={memberPages.loadingMore} onClick={() => void memberPages.loadMore()} type="button">Load more members</button> : null}
+              {candidatePages.hasMore ? <button className="secondary-button pagination-button" disabled={candidatePages.loadingMore} onClick={() => void candidatePages.loadMore()} type="button">Load more member choices</button> : null}
               {pendingRemoval ? (
                 <div className="confirmation-strip" role="alertdialog" aria-label={`Remove ${pendingRemoval.display_name} from ${selectedSpace.name}`}>
                   <div><strong>Remove {pendingRemoval.display_name}?</strong><span>They will immediately lose access to this space and its search results.</span></div>
@@ -357,7 +343,7 @@ export function SpacesConsole() {
             <input id="space-name" maxLength={120} onChange={(event) => setName(event.target.value)} placeholder="e.g. Japan trip" required value={name} />
             <button className="primary-button" disabled={saving} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} Create space</button>
           </form>
-          {error ? <p className="inline-error" role="alert">{error}</p> : null}
+          {error || spacePages.error || memberPages.error || candidatePages.error ? <p className="inline-error" role="alert">{error || message(spacePages.error || memberPages.error || candidatePages.error)}</p> : null}
         </aside>
       </div>
     </ConsoleShell>
@@ -366,15 +352,19 @@ export function SpacesConsole() {
 
 export function KnowledgeConsole() {
   const member = useCurrentMember();
+  const searchParams = useSearchParams();
   const [spaces, setSpaces] = useState<Space[]>([]);
-  const [items, setItems] = useState<KnowledgeSummary[]>([]);
-  const [itemCursor, setItemCursor] = useState<string | null>(null);
-  const [spaceFilter, setSpaceFilter] = useState<string | null>(null);
+  const spaceFilter = searchParams.get("space");
   const [spaceId, setSpaceId] = useState("");
+  const [searchText, setSearchText] = useState("");
+  const [tagText, setTagText] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
+  const [appliedTag, setAppliedTag] = useState("");
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [tags, setTags] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [spacesLoading, setSpacesLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<KnowledgeDetail | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -383,32 +373,42 @@ export function KnowledgeConsole() {
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadItems = useCallback(async (cursor?: string | null) => {
-    const response = await contractData(contractClient.GET("/api/v1/knowledge", { params: { query: { limit: 100, ...(cursor ? { cursor } : {}) } } }));
-    if (cursor) {
-      setItems((currentList) => [...currentList, ...response.items.filter((item) => !currentList.some((existing) => existing.id === item.id))]);
-    } else {
-      setItems(response.items);
-    }
-    setItemCursor(response.next_cursor);
-  }, []);
+  const loadKnowledgePage = useCallback((cursor: string | null, signal: AbortSignal) => contractData(
+    contractClient.GET("/api/v1/knowledge", {
+      params: {
+        query: {
+          limit: 25,
+          ...(cursor ? { cursor } : {}),
+          ...(spaceFilter ? { space_id: spaceFilter } : {}),
+          ...(appliedSearch ? { q: appliedSearch } : {}),
+          ...(appliedTag ? { tag: appliedTag } : {}),
+        },
+      },
+      signal,
+    }),
+  ), [appliedSearch, appliedTag, spaceFilter]);
+  const {
+    error: paginationError,
+    hasMore,
+    initialLoading,
+    items,
+    loadingMore,
+    loadMore,
+    reload: reloadItems,
+  } = useCursorPagination<KnowledgeSummary>({
+    keyOf: (item) => item.id,
+    loadPage: loadKnowledgePage,
+    queryKey: JSON.stringify([spaceFilter, appliedSearch, appliedTag]),
+  });
 
   useEffect(() => {
     let active = true;
-    const searchParams = new URLSearchParams(window.location.search);
-    const requestedSpace = searchParams.get("space");
-    setSpaceFilter(requestedSpace);
-    Promise.all([
-      contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })),
-      contractData(contractClient.GET("/api/v1/knowledge", { params: { query: { limit: 100, ...(requestedSpace ? { space_id: requestedSpace } : {}) } } })),
-    ]).then(([spaceResponse, knowledgeResponse]) => {
+    contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })).then((spaceResponse) => {
       if (!active) {
         return;
       }
       setSpaces(spaceResponse.items);
       setSpaceId((current) => current || spaceResponse.items[0]?.id || "");
-      setItems(knowledgeResponse.items);
-      setItemCursor(knowledgeResponse.next_cursor);
       setError(null);
     }).catch((loadError) => {
       if (active) {
@@ -416,7 +416,7 @@ export function KnowledgeConsole() {
       }
     }).finally(() => {
       if (active) {
-        setLoading(false);
+        setSpacesLoading(false);
       }
     });
     return () => {
@@ -444,7 +444,7 @@ export function KnowledgeConsole() {
       setTitle("");
       setContent("");
       setTags("");
-      await loadItems();
+      reloadItems();
     } catch (createError) {
       setError(message(createError));
     } finally {
@@ -453,7 +453,7 @@ export function KnowledgeConsole() {
   };
 
   const openEditor = async (item: KnowledgeSummary) => {
-    setLoading(true);
+    setDetailLoading(true);
     setError(null);
     try {
       const detail = await contractData(contractClient.GET("/api/v1/knowledge/{item_id}", { params: { path: { item_id: item.id } } }));
@@ -465,7 +465,7 @@ export function KnowledgeConsole() {
     } catch (loadError) {
       setError(message(loadError));
     } finally {
-      setLoading(false);
+      setDetailLoading(false);
     }
   };
 
@@ -491,7 +491,7 @@ export function KnowledgeConsole() {
       setEditTitle(updated.title);
       setEditContent(updated.content);
       setEditTags(updated.tags.join(", "));
-      await loadItems();
+      reloadItems();
     } catch (updateError) {
       setError(message(updateError));
     } finally {
@@ -515,7 +515,7 @@ export function KnowledgeConsole() {
       }));
       setEditing(null);
       setConfirmArchive(false);
-      await loadItems();
+      reloadItems();
     } catch (archiveError) {
       setError(message(archiveError));
     } finally {
@@ -535,11 +535,34 @@ export function KnowledgeConsole() {
         <section className="console-panel">
           <div className="panel-heading">
             <div><span>Living library</span><h2>{spaceFilter ? "Filtered knowledge" : "Knowledge items"}</h2></div>
-            <span className="count-pill">{items.length}</span>
+            <span className="count-pill" aria-label={`${items.length} knowledge items loaded`}>{items.length}{hasMore ? "+" : ""}</span>
           </div>
           {spaceFilter ? <div className="filter-strip"><Search size={13} /> Showing one space only<button onClick={() => { window.location.replace("/knowledge"); }} type="button">Show all spaces</button></div> : null}
-          {loading ? <ListSkeleton /> : null}
-          {!loading && items.length === 0 ? <div className="console-empty"><BookOpen size={23} /><strong>Nothing captured yet</strong><span>Add the first durable answer, procedure, or family detail.</span></div> : null}
+          <form className="list-filter-bar" onSubmit={(event) => {
+            event.preventDefault();
+            setAppliedSearch(searchText.trim());
+            setAppliedTag(tagText.trim());
+          }} role="search">
+            <label>
+              <span className="visually-hidden">Search knowledge list</span>
+              <Search aria-hidden="true" size={15} />
+              <input aria-label="Search knowledge list" onChange={(event) => setSearchText(event.target.value)} placeholder="Search title or content" type="search" value={searchText} />
+            </label>
+            <label>
+              <span className="visually-hidden">Filter by tag</span>
+              <Tag aria-hidden="true" size={14} />
+              <input aria-label="Filter by tag" onChange={(event) => setTagText(event.target.value)} placeholder="Tag" value={tagText} />
+            </label>
+            <button aria-label="Apply knowledge filters" className="secondary-button" type="submit">Apply</button>
+            {appliedSearch || appliedTag ? <button className="filter-clear-button" onClick={() => {
+              setSearchText("");
+              setTagText("");
+              setAppliedSearch("");
+              setAppliedTag("");
+            }} type="button">Clear</button> : null}
+          </form>
+          {initialLoading ? <ListSkeleton /> : null}
+          {!initialLoading && items.length === 0 ? <div className="console-empty"><BookOpen size={23} /><strong>{appliedSearch || appliedTag ? "No matching knowledge" : "Nothing captured yet"}</strong><span>{appliedSearch || appliedTag ? "Try a broader phrase or clear one of the filters." : "Add the first durable answer, procedure, or family detail."}</span></div> : null}
           <div className="data-list">
             {items.map((item) => (
               <article className="data-row knowledge-row" key={item.id}>
@@ -550,7 +573,8 @@ export function KnowledgeConsole() {
               </article>
             ))}
           </div>
-          {!loading && itemCursor && items.length > 0 ? <button className="secondary-button pagination-button" disabled={loading} onClick={() => void loadItems(itemCursor)} type="button">Load more knowledge</button> : null}
+          {hasMore && items.length > 0 ? <button className="secondary-button pagination-button" disabled={loadingMore} onClick={() => void loadMore()} type="button">{loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more knowledge</button> : null}
+          {detailLoading ? <div className="console-loading access-loading"><LoaderCircle className="spin" size={18} /> Loading knowledge detail…</div> : null}
           {editing ? (
             <section className="knowledge-editor" aria-label={`Edit ${editing.title}`}>
               <div className="space-access-heading">
@@ -596,9 +620,9 @@ export function KnowledgeConsole() {
             <textarea id="knowledge-content" maxLength={1000000} onChange={(event) => setContent(event.target.value)} required rows={7} value={content} />
             <label htmlFor="knowledge-tags">Tags</label>
             <input id="knowledge-tags" onChange={(event) => setTags(event.target.value)} placeholder="home, safety" value={tags} />
-            <button className="primary-button" disabled={saving || spaces.length === 0} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} Capture knowledge</button>
+            <button className="primary-button" disabled={saving || spacesLoading || spaces.length === 0} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} Capture knowledge</button>
           </form>
-          {error ? <p className="inline-error" role="alert">{error}</p> : null}
+          {error || paginationError ? <p className="inline-error" role="alert">{error || message(paginationError)}</p> : null}
         </aside>
       </div>
     </ConsoleShell>
@@ -651,7 +675,6 @@ export function ExploreConsole() {
           limit: 20,
           query: query.trim(),
           semantic_policy: "prefer",
-          space_ids: spaces.map((space) => space.id),
         },
       }));
       setResult(response);
@@ -674,11 +697,11 @@ export function ExploreConsole() {
       title="Explore"
     >
       <section className="explore-hero console-panel">
-        <div className="search-scope"><ShieldCheck size={15} /> {loading ? "Resolving access…" : `${spaces.length} spaces in scope`}</div>
+        <div className="search-scope"><ShieldCheck size={15} /> All accessible spaces are in scope</div>
         <form className="console-search" onSubmit={search} role="search">
           <Search aria-hidden="true" size={21} />
           <input aria-label="Search query" autoFocus onChange={(event) => setQuery(event.target.value)} placeholder="Ask for a detail, process, place, or decision…" type="search" value={query} />
-          <button aria-label="Search knowledge" disabled={searching || loading} type="submit">{searching ? <LoaderCircle className="spin" size={17} /> : <ArrowUpRight size={17} />}</button>
+          <button aria-label="Search knowledge" disabled={searching} type="submit">{searching ? <LoaderCircle className="spin" size={17} /> : <ArrowUpRight size={17} />}</button>
         </form>
         <p>Kinbase fans the query out only to authorized spaces, merges the candidates, and returns a single ranked result set.</p>
       </section>
@@ -719,59 +742,58 @@ export function ExploreConsole() {
 export function SourcesConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
-  const [sources, setSources] = useState<SourceSummary[]>([]);
-  const [sourceCursor, setSourceCursor] = useState<string | null>(null);
+  const [searchText, setSearchText] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"" | "pending" | "processing" | "ready" | "active" | "failed" | "quarantined" | "cancelled">("");
   const [spaceId, setSpaceId] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [spacesLoading, setSpacesLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [queued, setQueued] = useState(false);
   const [pendingArchive, setPendingArchive] = useState<SourceSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const loadSources = useCallback(async () => {
-    const response = await contractData(contractClient.GET("/api/v1/sources", { params: { query: { limit: 100 } } }));
-    setSources(response.items);
-    setSourceCursor(response.next_cursor);
-  }, []);
-
-  const loadMoreSources = async () => {
-    if (!sourceCursor || loading) {
-      return;
-    }
-    setLoading(true);
-    try {
-      const response = await contractData(contractClient.GET("/api/v1/sources", { params: { query: { cursor: sourceCursor, limit: 100 } } }));
-      setSources((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
-      setSourceCursor(response.next_cursor);
-    } catch (loadError) {
-      setError(message(loadError));
-    } finally {
-      setLoading(false);
-    }
-  };
+  const loadSourcePage = useCallback((cursor: string | null, signal: AbortSignal) => contractData(
+    contractClient.GET("/api/v1/sources", {
+      params: { query: {
+        limit: 25,
+        ...(cursor ? { cursor } : {}),
+        ...(appliedSearch ? { q: appliedSearch } : {}),
+        ...(statusFilter ? { status: statusFilter } : {}),
+      } },
+      signal,
+    }),
+  ), [appliedSearch, statusFilter]);
+  const {
+    error: paginationError,
+    hasMore,
+    initialLoading,
+    items: sources,
+    loadingMore,
+    loadMore,
+    reload: reloadSources,
+  } = useCursorPagination<SourceSummary>({
+    keyOf: (source) => source.id,
+    loadPage: loadSourcePage,
+    queryKey: JSON.stringify([appliedSearch, statusFilter]),
+  });
 
   useEffect(() => {
     let active = true;
-    Promise.all([
-      contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })),
-      contractData(contractClient.GET("/api/v1/sources", { params: { query: { limit: 100 } } })),
-    ]).then(([spaceResponse, sourceResponse]) => {
+    contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })).then((spaceResponse) => {
       if (!active) {
         return;
       }
       setSpaces(spaceResponse.items);
       setSpaceId(spaceResponse.items[0]?.id || "");
-      setSources(sourceResponse.items);
-      setSourceCursor(sourceResponse.next_cursor);
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
       }
     }).finally(() => {
       if (active) {
-        setLoading(false);
+        setSpacesLoading(false);
       }
     });
     return () => {
@@ -796,7 +818,7 @@ export function SourcesConsole() {
       setQueued(true);
       setDisplayName("");
       setFile(null);
-      await loadSources();
+      reloadSources();
     } catch (uploadError) {
       setError(message(uploadError));
     } finally {
@@ -819,7 +841,7 @@ export function SourcesConsole() {
         },
       }));
       setPendingArchive(null);
-      await loadSources();
+      reloadSources();
     } catch (archiveError) {
       setError(message(archiveError));
     } finally {
@@ -839,10 +861,19 @@ export function SourcesConsole() {
         <section className="console-panel">
           <div className="panel-heading">
             <div><span>Original material</span><h2>Source files</h2></div>
-            <span className="count-pill">{sources.length}</span>
+            <span className="count-pill">{sources.length}{hasMore ? "+" : ""}</span>
           </div>
-          {loading ? <ListSkeleton /> : null}
-          {!loading && sources.length === 0 ? <div className="console-empty"><FileText size={23} /><strong>No source files</strong><span>Upload a document without changing its meaning or filtering its contents.</span></div> : null}
+          <form className="list-filter-bar source-filter-bar" onSubmit={(event) => {
+            event.preventDefault();
+            setAppliedSearch(searchText.trim());
+          }} role="search">
+            <label><Search aria-hidden="true" size={15} /><input aria-label="Search source files" onChange={(event) => setSearchText(event.target.value)} placeholder="Search name or filename" type="search" value={searchText} /></label>
+            <label><span className="visually-hidden">Filter source status</span><select aria-label="Filter source status" onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)} value={statusFilter}><option value="">All statuses</option><option value="pending">Pending</option><option value="processing">Processing</option><option value="ready">Ready</option><option value="active">Active</option><option value="failed">Failed</option><option value="quarantined">Quarantined</option><option value="cancelled">Cancelled</option></select></label>
+            <button className="secondary-button" type="submit">Apply</button>
+            {appliedSearch || statusFilter ? <button className="filter-clear-button" onClick={() => { setSearchText(""); setAppliedSearch(""); setStatusFilter(""); }} type="button">Clear</button> : null}
+          </form>
+          {initialLoading ? <ListSkeleton /> : null}
+          {!initialLoading && sources.length === 0 ? <div className="console-empty"><FileText size={23} /><strong>{appliedSearch || statusFilter ? "No matching source files" : "No source files"}</strong><span>{appliedSearch || statusFilter ? "Try a broader search or clear the status filter." : "Upload a document without changing its meaning or filtering its contents."}</span></div> : null}
           <div className="data-list">
             {sources.map((source) => (
               <article className="data-row source-row" key={source.id}>
@@ -853,7 +884,7 @@ export function SourcesConsole() {
               </article>
             ))}
           </div>
-          {sourceCursor ? <button className="secondary-button pagination-button" disabled={loading} onClick={() => void loadMoreSources()} type="button">{loading ? <LoaderCircle className="spin" size={15} /> : null} Load more sources</button> : null}
+          {hasMore ? <button className="secondary-button pagination-button" disabled={loadingMore} onClick={() => void loadMore()} type="button">{loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more sources</button> : null}
           {pendingArchive ? <div aria-label={`Archive ${pendingArchive.display_name}`} className="confirmation-strip" role="alertdialog"><div><strong>Archive {pendingArchive.display_name}?</strong><span>The source leaves unified search immediately while its original bytes, revisions, and audit history remain preserved.</span></div><button className="secondary-button" onClick={() => setPendingArchive(null)} type="button">Keep source</button><button className="danger-button" disabled={saving} onClick={() => void archiveSource()} type="button">Confirm archive source</button></div> : null}
         </section>
         <aside className="console-panel action-panel upload-panel">
@@ -868,10 +899,10 @@ export function SourcesConsole() {
             <input id="source-name" maxLength={500} onChange={(event) => setDisplayName(event.target.value)} placeholder="Defaults to filename" value={displayName} />
             <label className="file-drop" htmlFor="source-file"><FileUp size={20} /><strong>{file ? file.name : "Choose a source file"}</strong><span>{file ? `${Math.max(1, Math.round(file.size / 1024))} KB` : "The configured server upload limit applies"}</span></label>
             <input aria-label="Source file" className="visually-hidden" id="source-file" onChange={(event) => setFile(event.target.files?.[0] || null)} required type="file" />
-            <button className="primary-button" disabled={saving || !file || spaces.length === 0} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <FileUp size={16} />} Queue source</button>
+            <button className="primary-button" disabled={saving || spacesLoading || !file || spaces.length === 0} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <FileUp size={16} />} Queue source</button>
           </form>
           {queued ? <p className="inline-success"><ShieldCheck size={14} /> Queued for durable ingestion</p> : null}
-          {error ? <p className="inline-error" role="alert">{error}</p> : null}
+          {error || paginationError ? <p className="inline-error" role="alert">{error || message(paginationError)}</p> : null}
         </aside>
       </div>
     </ConsoleShell>
@@ -881,56 +912,71 @@ export function SourcesConsole() {
 export function PeopleConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
-  const [members, setMembers] = useState<MemberSummary[]>([]);
-  const [memberCursor, setMemberCursor] = useState<string | null>(null);
+  const [memberSearch, setMemberSearch] = useState("");
+  const [appliedMemberSearch, setAppliedMemberSearch] = useState("");
+  const [memberStatus, setMemberStatus] = useState<"" | "pending" | "active" | "disabled">("");
+  const [memberRole, setMemberRole] = useState<"" | "super_admin" | "member">("");
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [created, setCreated] = useState<CreatedMember | null>(null);
   const [selectedMember, setSelectedMember] = useState<MemberSummary | null>(null);
   const [pendingMemberAction, setPendingMemberAction] = useState<"disable" | "enable" | "reset" | null>(null);
   const [resetPassword, setResetPassword] = useState<ResetMemberPassword | null>(null);
-  const [adminSpaces, setAdminSpaces] = useState<AdminSpace[]>([]);
+  const [recoverySpaceSearch, setRecoverySpaceSearch] = useState("");
+  const [recoveryOwnerSearch, setRecoveryOwnerSearch] = useState("");
   const [ownershipRecoveryOpen, setOwnershipRecoveryOpen] = useState(false);
   const [recoverySpaceId, setRecoverySpaceId] = useState("");
   const [recoveryTargetId, setRecoveryTargetId] = useState("");
   const [recoveryReason, setRecoveryReason] = useState("");
   const [reviewOwnershipRecovery, setReviewOwnershipRecovery] = useState(false);
   const [ownershipRecovered, setOwnershipRecovered] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isAdmin = member.system_role === "super_admin";
 
-  const loadMembers = useCallback(async (cursor?: string | null) => {
-    const response = await contractData(contractClient.GET("/api/v1/members", { params: { query: { limit: 100, ...(cursor ? { cursor } : {}) } } }));
-    if (cursor) {
-      setMembers((currentList) => [...currentList, ...response.items.filter((item) => !currentList.some((existing) => existing.id === item.id))]);
-    } else {
-      setMembers(response.items);
+  const loadMemberPage = useCallback((cursor: string | null, signal: AbortSignal) => isAdmin
+    ? contractData(contractClient.GET("/api/v1/members", { params: { query: { limit: 25, ...(cursor ? { cursor } : {}), ...(appliedMemberSearch ? { q: appliedMemberSearch } : {}), ...(memberStatus ? { status: memberStatus } : {}), ...(memberRole ? { system_role: memberRole } : {}) } }, signal }))
+    : Promise.resolve({ items: [], next_cursor: null }), [appliedMemberSearch, isAdmin, memberRole, memberStatus]);
+  const memberPages = useCursorPagination<MemberSummary>({ keyOf: (person) => person.id, loadPage: loadMemberPage, queryKey: JSON.stringify([isAdmin, appliedMemberSearch, memberStatus, memberRole]) });
+  const members = memberPages.items;
+  const loadAdminSpacePage = useCallback((cursor: string | null, signal: AbortSignal) => isAdmin && ownershipRecoveryOpen
+    ? contractData(contractClient.GET("/api/v1/admin/spaces", { params: { query: { limit: 25, ...(cursor ? { cursor } : {}), ...(recoverySpaceSearch ? { q: recoverySpaceSearch } : {}) } }, signal }))
+    : Promise.resolve({ items: [], next_cursor: null }), [isAdmin, ownershipRecoveryOpen, recoverySpaceSearch]);
+  const adminSpacePages = useCursorPagination<AdminSpace>({ keyOf: (space) => space.id, loadPage: loadAdminSpacePage, queryKey: JSON.stringify([isAdmin, ownershipRecoveryOpen, recoverySpaceSearch]) });
+  const adminSpaces = adminSpacePages.items;
+  const loadRecoveryOwnerPage = useCallback((cursor: string | null, signal: AbortSignal) => isAdmin && ownershipRecoveryOpen
+    ? contractData(contractClient.GET("/api/v1/members", { params: { query: { limit: 25, status: "active", ...(cursor ? { cursor } : {}), ...(recoveryOwnerSearch ? { q: recoveryOwnerSearch } : {}) } }, signal }))
+    : Promise.resolve({ items: [], next_cursor: null }), [isAdmin, ownershipRecoveryOpen, recoveryOwnerSearch]);
+  const recoveryOwnerPages = useCursorPagination<MemberSummary>({ keyOf: (person) => person.id, loadPage: loadRecoveryOwnerPage, queryKey: JSON.stringify([isAdmin, ownershipRecoveryOpen, recoveryOwnerSearch]) });
+  const recoveryOwners = recoveryOwnerPages.items;
+
+  useEffect(() => {
+    if (!ownershipRecoveryOpen) {
+      return;
     }
-    setMemberCursor(response.next_cursor);
-  }, []);
+    setRecoverySpaceId((current) => adminSpaces.some((space) => space.id === current) ? current : adminSpaces[0]?.id || "");
+  }, [adminSpaces, ownershipRecoveryOpen]);
+
+  useEffect(() => {
+    if (!ownershipRecoveryOpen) {
+      return;
+    }
+    const ownerId = adminSpaces.find((space) => space.id === recoverySpaceId)?.owner_member_id;
+    setRecoveryTargetId((current) => recoveryOwners.some((person) => person.id === current && person.id !== ownerId)
+      ? current
+      : recoveryOwners.find((person) => person.id !== ownerId)?.id || "");
+  }, [adminSpaces, ownershipRecoveryOpen, recoveryOwners, recoverySpaceId]);
 
   useEffect(() => {
     let active = true;
-    const requests: [Promise<SpaceListResponse>, Promise<MemberListResponse | null>] = [
-      contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })),
-      isAdmin ? contractData(contractClient.GET("/api/v1/members", { params: { query: { limit: 100 } } })) : Promise.resolve(null),
-    ];
-    Promise.all(requests).then(([spaceResponse, memberResponse]) => {
+    contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })).then((spaceResponse) => {
       if (!active) {
         return;
       }
       setSpaces(spaceResponse.items);
-      setMembers(memberResponse?.items || []);
-      setMemberCursor(memberResponse?.next_cursor || null);
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
-      }
-    }).finally(() => {
-      if (active) {
-        setLoading(false);
       }
     });
     return () => {
@@ -954,7 +1000,7 @@ export function PeopleConsole() {
       setCreated(response);
       setUsername("");
       setDisplayName("");
-      await loadMembers();
+      memberPages.reload();
     } catch (createError) {
       setError(message(createError));
     } finally {
@@ -979,7 +1025,7 @@ export function PeopleConsole() {
       }));
       setSelectedMember(response);
       setPendingMemberAction(null);
-      await loadMembers();
+      memberPages.reload();
     } catch (updateError) {
       setError(message(updateError));
     } finally {
@@ -1000,7 +1046,7 @@ export function PeopleConsole() {
       setResetPassword(response);
       setPendingMemberAction(null);
       setSelectedMember({ ...selectedMember, requires_password_change: true });
-      await loadMembers();
+      memberPages.reload();
     } catch (resetError) {
       setError(message(resetError));
     } finally {
@@ -1008,35 +1054,26 @@ export function PeopleConsole() {
     }
   };
 
-  const openOwnershipRecovery = async () => {
-    setSaving(true);
+  const openOwnershipRecovery = () => {
     setError(null);
     setOwnershipRecovered(false);
-    try {
-      const response = await contractData(contractClient.GET("/api/v1/admin/spaces", { params: { query: { limit: 100 } } }));
-      setAdminSpaces(response.items);
-      setRecoverySpaceId(response.items[0]?.id || "");
-      const firstOwner = response.items[0]?.owner_member_id;
-      setRecoveryTargetId(members.find((candidate) => candidate.status === "active" && candidate.id !== firstOwner)?.id || "");
-      setOwnershipRecoveryOpen(true);
-    } catch (loadError) {
-      setError(message(loadError));
-    } finally {
-      setSaving(false);
-    }
+    setRecoverySpaceId(adminSpaces[0]?.id || "");
+    const firstOwner = adminSpaces[0]?.owner_member_id;
+    setRecoveryTargetId(recoveryOwners.find((candidate) => candidate.id !== firstOwner)?.id || "");
+    setOwnershipRecoveryOpen(true);
   };
 
   const selectRecoverySpace = (spaceId: string) => {
     setRecoverySpaceId(spaceId);
     const ownerId = adminSpaces.find((space) => space.id === spaceId)?.owner_member_id;
-    setRecoveryTargetId(members.find((candidate) => candidate.status === "active" && candidate.id !== ownerId)?.id || "");
+    setRecoveryTargetId(recoveryOwners.find((candidate) => candidate.id !== ownerId)?.id || "");
     setReviewOwnershipRecovery(false);
     setOwnershipRecovered(false);
   };
 
   const transferEmergencyOwnership = async () => {
     const selected = adminSpaces.find((space) => space.id === recoverySpaceId);
-    const target = members.find((candidate) => candidate.id === recoveryTargetId);
+    const target = recoveryOwners.find((candidate) => candidate.id === recoveryTargetId);
     if (!selected || !target || recoveryReason.trim().length < 5 || saving) {
       return;
     }
@@ -1051,13 +1088,7 @@ export function PeopleConsole() {
         },
         params: { header: { "Idempotency-Key": idempotencyKey() }, path: { space_id: selected.id } },
       }));
-      setAdminSpaces((current) => current.map((space) => space.id === selected.id ? {
-        ...space,
-        owner_display_name: target.display_name,
-        owner_member_id: target.id,
-        owner_username: target.username,
-        revision: space.revision + 1,
-      } : space));
+      adminSpacePages.reload();
       setReviewOwnershipRecovery(false);
       setRecoveryReason("");
       setOwnershipRecovered(true);
@@ -1081,8 +1112,9 @@ export function PeopleConsole() {
       ) : (
         <div className="console-grid console-grid-people">
           <section className="console-panel">
-            <div className="panel-heading"><div><span>Family directory</span><h2>Members</h2></div><span className="count-pill">{members.length}</span></div>
-            {loading ? <ListSkeleton rows={6} /> : null}
+            <div className="panel-heading"><div><span>Family directory</span><h2>Members</h2></div><span className="count-pill">{members.length}{memberPages.hasMore ? "+" : ""}</span></div>
+            <form className="list-filter-bar member-filter-bar" onSubmit={(event) => { event.preventDefault(); setAppliedMemberSearch(memberSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={14} /><input aria-label="Search members" onChange={(event) => setMemberSearch(event.target.value)} placeholder="Name or username" type="search" value={memberSearch} /></label><label><select aria-label="Filter member status" onChange={(event) => setMemberStatus(event.target.value as typeof memberStatus)} value={memberStatus}><option value="">All statuses</option><option value="pending">Pending</option><option value="active">Active</option><option value="disabled">Disabled</option></select></label><label><select aria-label="Filter system role" onChange={(event) => setMemberRole(event.target.value as typeof memberRole)} value={memberRole}><option value="">All roles</option><option value="super_admin">Super admin</option><option value="member">Member</option></select></label><button className="secondary-button" type="submit">Apply</button></form>
+            {memberPages.initialLoading ? <ListSkeleton rows={6} /> : null}
             <div className="data-list">
               {members.map((person) => (
                 <article className="data-row member-row" key={person.id}>
@@ -1093,7 +1125,7 @@ export function PeopleConsole() {
                 </article>
               ))}
             </div>
-            {!loading && isAdmin && memberCursor && members.length > 0 ? <button className="secondary-button pagination-button" disabled={loading} onClick={() => void loadMembers(memberCursor)} type="button">Load more members</button> : null}
+            {memberPages.hasMore && members.length > 0 ? <button className="secondary-button pagination-button" disabled={memberPages.loadingMore} onClick={() => void memberPages.loadMore()} type="button">{memberPages.loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more members</button> : null}
             {selectedMember ? (
               <section aria-label={`Manage ${selectedMember.display_name}`} className="member-admin-panel">
                 <div className="space-access-heading"><div><span>Account controls</span><h2>{selectedMember.display_name}</h2></div><button aria-label="Close member manager" className="icon-button" onClick={() => setSelectedMember(null)} type="button"><X size={16} /></button></div>
@@ -1142,19 +1174,26 @@ export function PeopleConsole() {
             <div className="ownership-recovery">
               <div className="ownership-recovery-heading">
                 <div><span>Account recovery</span><strong>Emergency ownership</strong></div>
-                {!ownershipRecoveryOpen ? <button className="secondary-button" disabled={saving} onClick={() => void openOwnershipRecovery()} type="button"><KeyRound size={14} /> Open ownership recovery</button> : <button aria-label="Close ownership recovery" className="icon-button" onClick={() => { setOwnershipRecoveryOpen(false); setReviewOwnershipRecovery(false); }} type="button"><X size={15} /></button>}
+                {!ownershipRecoveryOpen ? <button className="secondary-button" disabled={saving} onClick={openOwnershipRecovery} type="button"><KeyRound size={14} /> Open ownership recovery</button> : <button aria-label="Close ownership recovery" className="icon-button" onClick={() => { setOwnershipRecoveryOpen(false); setReviewOwnershipRecovery(false); }} type="button"><X size={15} /></button>}
               </div>
               {ownershipRecoveryOpen ? (
                 <div className="ownership-recovery-form">
                   <p>Use only when an owner cannot recover their account. Space names and ownership metadata are visible here; content remains inaccessible.</p>
+                  {adminSpacePages.initialLoading || recoveryOwnerPages.initialLoading ? <ListSkeleton rows={3} /> : null}
+                  <label htmlFor="recovery-space-search">Find space</label>
+                  <input id="recovery-space-search" onChange={(event) => setRecoverySpaceSearch(event.target.value.trim())} placeholder="Search space or owner" type="search" value={recoverySpaceSearch} />
                   <label htmlFor="recovery-space">Recovery space</label>
                   <select id="recovery-space" onChange={(event) => selectRecoverySpace(event.target.value)} value={recoverySpaceId}>
                     {adminSpaces.map((space) => <option key={space.id} value={space.id}>{space.name} · {space.owner_display_name}</option>)}
                   </select>
+                  {adminSpacePages.hasMore ? <button className="secondary-button" disabled={adminSpacePages.loadingMore} onClick={() => void adminSpacePages.loadMore()} type="button">Load more spaces</button> : null}
+                  <label htmlFor="recovery-owner-search">Find new owner</label>
+                  <input id="recovery-owner-search" onChange={(event) => setRecoveryOwnerSearch(event.target.value.trim())} placeholder="Search active members" type="search" value={recoveryOwnerSearch} />
                   <label htmlFor="recovery-owner">New owner</label>
                   <select id="recovery-owner" onChange={(event) => { setRecoveryTargetId(event.target.value); setReviewOwnershipRecovery(false); setOwnershipRecovered(false); }} value={recoveryTargetId}>
-                    {members.filter((candidate) => candidate.status === "active" && candidate.id !== adminSpaces.find((space) => space.id === recoverySpaceId)?.owner_member_id).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name} (@{candidate.username})</option>)}
+                    {recoveryOwners.filter((candidate) => candidate.id !== adminSpaces.find((space) => space.id === recoverySpaceId)?.owner_member_id).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name} (@{candidate.username})</option>)}
                   </select>
+                  {recoveryOwnerPages.hasMore ? <button className="secondary-button" disabled={recoveryOwnerPages.loadingMore} onClick={() => void recoveryOwnerPages.loadMore()} type="button">Load more member choices</button> : null}
                   <label htmlFor="recovery-reason">Recovery reason</label>
                   <textarea id="recovery-reason" maxLength={500} minLength={5} onChange={(event) => { setRecoveryReason(event.target.value); setReviewOwnershipRecovery(false); setOwnershipRecovered(false); }} required value={recoveryReason} />
                   <p className="ownership-boundary"><ShieldCheck size={14} /> This repair is audited and does not grant the Super Admin access to space content.</p>
@@ -1169,7 +1208,7 @@ export function PeopleConsole() {
                 </div>
               ) : null}
             </div>
-            {error ? <p className="inline-error" role="alert">{error}</p> : null}
+            {error || memberPages.error || adminSpacePages.error || recoveryOwnerPages.error ? <p className="inline-error" role="alert">{error || message(memberPages.error || adminSpacePages.error || recoveryOwnerPages.error)}</p> : null}
           </aside>
         </div>
       )}
@@ -1180,13 +1219,12 @@ export function PeopleConsole() {
 export function SettingsConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
-  const [keys, setKeys] = useState<APIKeySummary[]>([]);
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
-  const [settingsHistory, setSettingsHistory] = useState<RuntimeSettings[]>([]);
-  const [keyCursor, setKeyCursor] = useState<string | null>(null);
-  const [sessionCursor, setSessionCursor] = useState<string | null>(null);
-  const [settingsHistoryCursor, setSettingsHistoryCursor] = useState<string | null>(null);
+  const [keySearch, setKeySearch] = useState("");
+  const [appliedKeySearch, setAppliedKeySearch] = useState("");
+  const [keyStatus, setKeyStatus] = useState<"" | "active" | "revoked" | "expired">("");
+  const [sessionStatus, setSessionStatus] = useState<"" | "active" | "revoked" | "expired">("");
+  const [historyState, setHistoryState] = useState<"" | "active" | "superseded">("");
   const [runtimeDraft, setRuntimeDraft] = useState<RuntimeSettings | null>(null);
   const [pendingSettingsRestore, setPendingSettingsRestore] = useState<RuntimeSettings | null>(null);
   const [runtimeLimit, setRuntimeLimit] = useState(20);
@@ -1200,95 +1238,39 @@ export function SettingsConsole() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadKeys = useCallback(async () => {
-    const response = await contractData(contractClient.GET("/api/v1/api-keys"));
-    setKeys(response.items);
-    setKeyCursor(response.next_cursor);
-  }, []);
-
-  const loadSessions = useCallback(async () => {
-    const response = await contractData(contractClient.GET("/api/v1/sessions"));
-    setSessions(response.items);
-    setSessionCursor(response.next_cursor);
-  }, []);
-
-  const loadSettingsHistory = useCallback(async () => {
+  const loadKeyPage = useCallback((cursor: string | null, signal: AbortSignal) => contractData(
+    contractClient.GET("/api/v1/api-keys", {
+      params: { query: { limit: 25, ...(cursor ? { cursor } : {}), ...(appliedKeySearch ? { q: appliedKeySearch } : {}), ...(keyStatus ? { status: keyStatus } : {}) } },
+      signal,
+    }),
+  ), [appliedKeySearch, keyStatus]);
+  const keyPages = useCursorPagination<APIKeySummary>({ keyOf: (key) => key.id, loadPage: loadKeyPage, queryKey: JSON.stringify([appliedKeySearch, keyStatus]) });
+  const loadSessionPage = useCallback((cursor: string | null, signal: AbortSignal) => contractData(
+    contractClient.GET("/api/v1/sessions", { params: { query: { limit: 25, ...(cursor ? { cursor } : {}), ...(sessionStatus ? { status: sessionStatus } : {}) } }, signal }),
+  ), [sessionStatus]);
+  const sessionPages = useCursorPagination<SessionSummary>({ keyOf: (session) => session.id, loadPage: loadSessionPage, queryKey: sessionStatus });
+  const loadHistoryPage = useCallback((cursor: string | null, signal: AbortSignal) => {
     if (member.system_role !== "super_admin") {
-      return;
+      return Promise.resolve({ items: [], next_cursor: null });
     }
-    const response = await contractData(contractClient.GET("/api/v1/settings/history", { params: { query: { limit: 20 } } }));
-    setSettingsHistory(response.items);
-    setSettingsHistoryCursor(response.next_cursor);
-  }, [member.system_role]);
-
-  const loadMoreKeys = async () => {
-    if (!keyCursor || saving) {
-      return;
-    }
-    setSaving(true);
-    try {
-      const response = await contractData(contractClient.GET("/api/v1/api-keys", { params: { query: { cursor: keyCursor } } }));
-      setKeys((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
-      setKeyCursor(response.next_cursor);
-    } catch (loadError) {
-      setError(message(loadError));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const loadMoreSessions = async () => {
-    if (!sessionCursor || saving) {
-      return;
-    }
-    setSaving(true);
-    try {
-      const response = await contractData(contractClient.GET("/api/v1/sessions", { params: { query: { cursor: sessionCursor } } }));
-      setSessions((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
-      setSessionCursor(response.next_cursor);
-    } catch (loadError) {
-      setError(message(loadError));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const loadMoreSettingsHistory = async () => {
-    if (!settingsHistoryCursor || saving) {
-      return;
-    }
-    setSaving(true);
-    try {
-      const response = await contractData(contractClient.GET("/api/v1/settings/history", { params: { query: { cursor: settingsHistoryCursor, limit: 20 } } }));
-      setSettingsHistory((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.revision === item.revision))]);
-      setSettingsHistoryCursor(response.next_cursor);
-    } catch (loadError) {
-      setError(message(loadError));
-    } finally {
-      setSaving(false);
-    }
-  };
+    return contractData(contractClient.GET("/api/v1/settings/history", { params: { query: { limit: 20, ...(cursor ? { cursor } : {}), ...(historyState ? { state: historyState } : {}) } }, signal }));
+  }, [historyState, member.system_role]);
+  const historyPages = useCursorPagination<RuntimeSettings>({ keyOf: (revision) => String(revision.revision), loadPage: loadHistoryPage, queryKey: `${member.system_role}:${historyState}` });
+  const keys = keyPages.items;
+  const sessions = sessionPages.items;
+  const settingsHistory = historyPages.items;
 
   useEffect(() => {
     let active = true;
     Promise.all([
       contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })),
-      contractData(contractClient.GET("/api/v1/api-keys")),
-      contractData(contractClient.GET("/api/v1/sessions")),
       contractData(contractClient.GET("/api/v1/settings")),
-      member.system_role === "super_admin" ? contractData(contractClient.GET("/api/v1/settings/history", { params: { query: { limit: 20 } } })) : Promise.resolve({ items: [], next_cursor: null }),
-    ]).then(([spaceResponse, keyResponse, sessionResponse, runtimeResponse, historyResponse]) => {
+    ]).then(([spaceResponse, runtimeResponse]) => {
       if (!active) {
         return;
       }
       setSpaces(spaceResponse.items);
-      setKeys(keyResponse.items);
-      setSessions(sessionResponse.items);
       setSettings(runtimeResponse);
-      setSettingsHistory(historyResponse.items);
-      setKeyCursor(keyResponse.next_cursor);
-      setSessionCursor(sessionResponse.next_cursor);
-      setSettingsHistoryCursor(historyResponse.next_cursor);
       setRuntimeLimit(runtimeResponse.values.retrieval?.limit ?? 20);
     }).catch((loadError) => {
       if (active) {
@@ -1320,7 +1302,7 @@ export function SettingsConsole() {
       setCreatedKey(response);
       setKeyName("");
       setSelectedKeyScopes(DEFAULT_API_KEY_SCOPES);
-      await loadKeys();
+      keyPages.reload();
     } catch (createError) {
       setError(message(createError));
     } finally {
@@ -1345,7 +1327,7 @@ export function SettingsConsole() {
         params: { header: { "Idempotency-Key": idempotencyKey() }, path: { key_id: pendingKeyRevocation.id } },
       }));
       setPendingKeyRevocation(null);
-      await loadKeys();
+      keyPages.reload();
     } catch (revokeError) {
       setError(message(revokeError));
     } finally {
@@ -1364,7 +1346,7 @@ export function SettingsConsole() {
         params: { header: { "Idempotency-Key": idempotencyKey() }, path: { family_id: pendingSessionRevocation.id } },
       }));
       setPendingSessionRevocation(null);
-      await loadSessions();
+      sessionPages.reload();
     } catch (revokeError) {
       setError(message(revokeError));
     } finally {
@@ -1416,7 +1398,7 @@ export function SettingsConsole() {
       setSettings(activated);
       setRuntimeLimit(activated.values.retrieval?.limit ?? runtimeLimit);
       setRuntimeDraft(null);
-      await loadSettingsHistory();
+      historyPages.reload();
     } catch (activationError) {
       setError(message(activationError));
     } finally {
@@ -1441,7 +1423,7 @@ export function SettingsConsole() {
       setSettings(restored);
       setRuntimeLimit(restored.values.retrieval?.limit ?? runtimeLimit);
       setPendingSettingsRestore(null);
-      await loadSettingsHistory();
+      historyPages.reload();
     } catch (restoreError) {
       setError(message(restoreError));
     } finally {
@@ -1478,20 +1460,28 @@ export function SettingsConsole() {
             </fieldset>
             <button className="primary-button" disabled={saving || selectedKeyScopes.length === 0} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <KeyRound size={16} />} Create API key</button>
           </form>
+          <form className="list-filter-bar settings-list-filter" onSubmit={(event) => { event.preventDefault(); setAppliedKeySearch(keySearch.trim()); }} role="search">
+            <label><Search aria-hidden="true" size={14} /><input aria-label="Search API keys" onChange={(event) => setKeySearch(event.target.value)} placeholder="Name or public ID" type="search" value={keySearch} /></label>
+            <label><select aria-label="Filter API key status" onChange={(event) => setKeyStatus(event.target.value as typeof keyStatus)} value={keyStatus}><option value="">All statuses</option><option value="active">Active</option><option value="revoked">Revoked</option><option value="expired">Expired</option></select></label>
+            <button className="secondary-button" type="submit">Apply</button>
+          </form>
+          {keyPages.initialLoading ? <ListSkeleton compact rows={3} /> : null}
           <div className="data-list compact-list">
             {keys.map((key) => <article className="data-row" key={key.id}><span className="row-leading violet"><KeyRound size={17} /></span><div className="row-copy"><h3>{key.name}</h3><p>{key.public_id} · {key.scopes.join(", ")}</p></div><span className={`status-pill status-${key.status}`}>{key.status}</span>{key.status === "active" ? <button aria-label={`Revoke ${key.name}`} className="membership-remove-button" onClick={() => setPendingKeyRevocation(key)} type="button"><X size={15} /></button> : null}</article>)}
           </div>
-          {keyCursor ? <button className="secondary-button pagination-button" disabled={saving} onClick={() => void loadMoreKeys()} type="button">Load more API keys</button> : null}
+          {keyPages.hasMore ? <button className="secondary-button pagination-button" disabled={keyPages.loadingMore} onClick={() => void keyPages.loadMore()} type="button">{keyPages.loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more API keys</button> : null}
           {pendingKeyRevocation ? <div className="confirmation-strip" role="alertdialog" aria-label={`Revoke ${pendingKeyRevocation.name}`}><div><strong>Revoke {pendingKeyRevocation.name}?</strong><span>Clients using this key will lose access immediately.</span></div><button className="secondary-button" onClick={() => setPendingKeyRevocation(null)} type="button">Keep key</button><button className="danger-button" disabled={saving} onClick={() => void revokeKey()} type="button">Confirm revoke API key</button></div> : null}
         </section>
 
         <section className="console-panel settings-section">
           <div className="panel-heading"><div><span>Website access</span><h2>Sessions</h2></div><MonitorSmartphone size={20} /></div>
+          <div className="list-filter-bar single-filter-bar"><label><select aria-label="Filter session status" onChange={(event) => setSessionStatus(event.target.value as typeof sessionStatus)} value={sessionStatus}><option value="">All statuses</option><option value="active">Active</option><option value="expired">Expired</option><option value="revoked">Revoked</option></select></label></div>
+          {sessionPages.initialLoading ? <ListSkeleton compact rows={3} /> : null}
           <div className="data-list compact-list">
             {sessions.map((session) => <article className="data-row" key={session.id}><span className="row-leading cyan"><MonitorSmartphone size={17} /></span><div className="row-copy"><h3>{session.current ? "This session" : "Website session"}</h3><p>Last active {new Date(session.last_activity_at).toLocaleString()}</p></div><span className={`status-pill status-${session.status}`}>{session.status}</span>{!session.current && session.status === "active" ? <button aria-label="Sign out website session" className="membership-remove-button" onClick={() => setPendingSessionRevocation(session)} type="button"><X size={15} /></button> : null}</article>)}
-            {sessions.length === 0 ? <div className="console-empty small"><MonitorSmartphone size={20} /><strong>No session records returned</strong></div> : null}
+            {!sessionPages.initialLoading && sessions.length === 0 ? <div className="console-empty small"><MonitorSmartphone size={20} /><strong>No session records returned</strong></div> : null}
           </div>
-          {sessionCursor ? <button className="secondary-button pagination-button" disabled={saving} onClick={() => void loadMoreSessions()} type="button">Load more sessions</button> : null}
+          {sessionPages.hasMore ? <button className="secondary-button pagination-button" disabled={sessionPages.loadingMore} onClick={() => void sessionPages.loadMore()} type="button">{sessionPages.loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more sessions</button> : null}
           {pendingSessionRevocation ? <div className="confirmation-strip" role="alertdialog" aria-label="Sign out website session"><div><strong>Sign out this device?</strong><span>The selected session and all of its credentials will be revoked.</span></div><button className="secondary-button" onClick={() => setPendingSessionRevocation(null)} type="button">Keep signed in</button><button className="danger-button" disabled={saving} onClick={() => void revokeSession()} type="button">Confirm sign out</button></div> : null}
         </section>
 
@@ -1507,8 +1497,10 @@ export function SettingsConsole() {
             </form>
           ) : null}
           {runtimeDraft ? <div className="runtime-draft-review"><div><strong>Draft revision {runtimeDraft.revision} ready</strong><span>Validated against the typed safe-setting schema. Activation remains a separate audited step.</span></div><button className="primary-button" disabled={saving} onClick={() => void activateRuntimeDraft()} type="button">Activate settings</button></div> : null}
+          {member.system_role === "super_admin" ? <div className="list-filter-bar single-filter-bar"><label><select aria-label="Filter settings history state" onChange={(event) => setHistoryState(event.target.value as typeof historyState)} value={historyState}><option value="">All history</option><option value="active">Active</option><option value="superseded">Superseded</option></select></label></div> : null}
+          {historyPages.initialLoading && member.system_role === "super_admin" ? <ListSkeleton compact rows={3} /> : null}
           {settingsHistory.length > 0 ? <div className="data-list compact-list">{settingsHistory.map((revision) => <article className="data-row" key={revision.id || revision.revision}><span className="row-leading violet"><Settings2 size={16} /></span><div className="row-copy"><h3>Revision {revision.revision}</h3><p>Retrieval limit {revision.values.retrieval?.limit ?? "default"} · {revision.state}</p></div>{revision.state === "superseded" ? <button aria-label={`Restore revision ${revision.revision}`} className="row-action-button" disabled={saving} onClick={() => setPendingSettingsRestore(revision)} type="button">Restore</button> : <span className="status-pill status-active">active</span>}</article>)}</div> : null}
-          {settingsHistoryCursor ? <button className="secondary-button pagination-button" disabled={saving} onClick={() => void loadMoreSettingsHistory()} type="button">Load more settings history</button> : null}
+          {historyPages.hasMore ? <button className="secondary-button pagination-button" disabled={historyPages.loadingMore} onClick={() => void historyPages.loadMore()} type="button">{historyPages.loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more settings history</button> : null}
           {pendingSettingsRestore ? <div aria-label={`Restore revision ${pendingSettingsRestore.revision}`} className="confirmation-strip" role="alertdialog"><div><strong>Restore revision {pendingSettingsRestore.revision}?</strong><span>This creates a new active revision from the historical values. The current revision remains preserved for audit and future recovery.</span></div><button className="secondary-button" onClick={() => setPendingSettingsRestore(null)} type="button">Keep current</button><button className="danger-button" disabled={saving || runtimeReason.trim().length < 5} onClick={() => void restoreRuntimeSettings()} type="button">Confirm restore revision {pendingSettingsRestore.revision}</button></div> : null}
           <div className="runtime-values">
             {Object.entries((runtimeDraft?.values || settings?.values || {}) as Record<string, Record<string, unknown> | undefined>).map(([section, entries]) => (
@@ -1524,7 +1516,7 @@ export function SettingsConsole() {
           </div>
         </section>
       </div>
-      {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
+      {error || keyPages.error || sessionPages.error || historyPages.error ? <p className="inline-error wide" role="alert">{error || message(keyPages.error || sessionPages.error || historyPages.error)}</p> : null}
     </ConsoleShell>
   );
 }
@@ -1532,41 +1524,36 @@ export function SettingsConsole() {
 export function IngestionConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
-  const [jobs, setJobs] = useState<IngestionJob[]>([]);
-  const [jobCursor, setJobCursor] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [spaceFilter, setSpaceFilter] = useState("");
+  const [stateFilter, setStateFilter] = useState<"" | "preparing" | "queued" | "running" | "retry_wait" | "succeeded" | "failed" | "cancelled">("");
   const [pendingJobAction, setPendingJobAction] = useState<{ job: IngestionJob; operation: "cancel" | "retry" } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadJobs = useCallback(async () => {
-    try {
-      const response = await contractData(contractClient.GET("/api/v1/ingestion-jobs", { params: { query: { limit: 100 } } }));
-      setJobs(response.items);
-      setJobCursor(response.next_cursor);
-      setError(null);
-    } catch (loadError) {
-      setError(message(loadError));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const loadMoreJobs = async () => {
-    if (!jobCursor || saving) {
-      return;
-    }
-    setSaving(true);
-    try {
-      const response = await contractData(contractClient.GET("/api/v1/ingestion-jobs", { params: { query: { cursor: jobCursor, limit: 100 } } }));
-      setJobs((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
-      setJobCursor(response.next_cursor);
-    } catch (loadError) {
-      setError(message(loadError));
-    } finally {
-      setSaving(false);
-    }
-  };
+  const loadJobPage = useCallback((cursor: string | null, signal: AbortSignal) => contractData(
+    contractClient.GET("/api/v1/ingestion-jobs", {
+      params: { query: {
+        limit: 25,
+        ...(cursor ? { cursor } : {}),
+        ...(spaceFilter ? { space_id: spaceFilter } : {}),
+        ...(stateFilter ? { state: stateFilter } : {}),
+      } },
+      signal,
+    }),
+  ), [spaceFilter, stateFilter]);
+  const {
+    error: paginationError,
+    hasMore,
+    initialLoading,
+    items: jobs,
+    loadingMore,
+    loadMore,
+    reload: reloadJobs,
+  } = useCursorPagination<IngestionJob>({
+    keyOf: (job) => job.id,
+    loadPage: loadJobPage,
+    queryKey: JSON.stringify([spaceFilter, stateFilter]),
+  });
 
   useEffect(() => {
     let active = true;
@@ -1579,13 +1566,10 @@ export function IngestionConsole() {
         setError(message(loadError));
       }
     });
-    void loadJobs();
-    const timer = window.setInterval(loadJobs, 15000);
     return () => {
       active = false;
-      window.clearInterval(timer);
     };
-  }, [loadJobs]);
+  }, []);
 
   const mutateJob = async () => {
     if (!pendingJobAction || saving) {
@@ -1604,7 +1588,7 @@ export function IngestionConsole() {
         await contractData(contractClient.POST("/api/v1/ingestion-jobs/{job_id}/retry", { params }));
       }
       setPendingJobAction(null);
-      await loadJobs();
+      reloadJobs();
     } catch (mutationError) {
       setError(message(mutationError));
     } finally {
@@ -1612,7 +1596,7 @@ export function IngestionConsole() {
     }
   };
 
-  const activeJobs = jobs.filter((job) => !["completed", "failed", "cancelled"].includes(job.state)).length;
+  const activeJobs = jobs.filter((job) => !["succeeded", "failed", "cancelled"].includes(job.state)).length;
   return (
     <ConsoleShell
       description="Follow the durable pipeline from queued source through parsing, activation, retry, or a clear terminal state."
@@ -1621,11 +1605,15 @@ export function IngestionConsole() {
       spaceCount={spaces.length}
       title="Ingestion"
     >
-      <div className="metric-strip"><article><span>Tracked jobs</span><strong>{jobs.length}</strong></article><article><span>In progress</span><strong>{activeJobs}</strong></article><article><span>Refresh</span><strong>15s</strong></article></div>
+      <div className="metric-strip"><article><span>Loaded jobs</span><strong>{jobs.length}{hasMore ? "+" : ""}</strong></article><article><span>In progress on this page</span><strong>{activeJobs}</strong></article><article><span>Refresh</span><button className="metric-refresh-button" onClick={reloadJobs} type="button">Refresh now</button></article></div>
       <section className="console-panel">
         <div className="panel-heading"><div><span>Live durable state</span><h2>Ingestion jobs</h2></div><Layers3 size={20} /></div>
-        {loading ? <ListSkeleton /> : null}
-        {!loading && jobs.length === 0 ? <div className="console-empty"><Layers3 size={23} /><strong>No ingestion jobs</strong><span>Uploaded sources will appear here as soon as preparation begins.</span></div> : null}
+        <div className="list-filter-bar two-filter-bar">
+          <label><span className="visually-hidden">Filter ingestion space</span><select aria-label="Filter ingestion space" onChange={(event) => setSpaceFilter(event.target.value)} value={spaceFilter}><option value="">All spaces</option>{spaces.map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}</select></label>
+          <label><span className="visually-hidden">Filter ingestion state</span><select aria-label="Filter ingestion state" onChange={(event) => setStateFilter(event.target.value as typeof stateFilter)} value={stateFilter}><option value="">All states</option><option value="preparing">Preparing</option><option value="queued">Queued</option><option value="running">Running</option><option value="retry_wait">Retry wait</option><option value="succeeded">Succeeded</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option></select></label>
+        </div>
+        {initialLoading ? <ListSkeleton /> : null}
+        {!initialLoading && jobs.length === 0 ? <div className="console-empty"><Layers3 size={23} /><strong>{spaceFilter || stateFilter ? "No matching ingestion jobs" : "No ingestion jobs"}</strong><span>{spaceFilter || stateFilter ? "Choose a different space or state." : "Uploaded sources will appear here as soon as preparation begins."}</span></div> : null}
         <div className="job-list">
           {jobs.map((job) => (
             <article className="job-card" key={job.id}>
@@ -1638,10 +1626,10 @@ export function IngestionConsole() {
             </article>
           ))}
         </div>
-        {jobCursor ? <button className="secondary-button pagination-button" disabled={saving} onClick={() => void loadMoreJobs()} type="button">Load more ingestion jobs</button> : null}
+        {hasMore ? <button className="secondary-button pagination-button" disabled={loadingMore} onClick={() => void loadMore()} type="button">{loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more ingestion jobs</button> : null}
         {pendingJobAction ? <div aria-label={`${pendingJobAction.operation === "cancel" ? "Cancel" : "Retry"} job ${pendingJobAction.job.id}`} className="confirmation-strip" role="alertdialog"><div><strong>{pendingJobAction.operation === "cancel" ? "Cancel this ingestion job?" : "Retry this ingestion job?"}</strong><span>{pendingJobAction.operation === "cancel" ? "The worker will stop at a safe boundary; completed durable stages and audit history remain preserved." : "This starts a new durable attempt from the preserved original source and records the request in the audit trail."}</span></div><button className="secondary-button" onClick={() => setPendingJobAction(null)} type="button">Not now</button><button className={pendingJobAction.operation === "cancel" ? "danger-button" : "primary-button"} disabled={saving} onClick={() => void mutateJob()} type="button">Confirm {pendingJobAction.operation} job</button></div> : null}
       </section>
-      {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
+      {error || paginationError ? <p className="inline-error wide" role="alert">{error || message(paginationError)}</p> : null}
     </ConsoleShell>
   );
 }
@@ -1649,53 +1637,58 @@ export function IngestionConsole() {
 export function ActivityConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
-  const [events, setEvents] = useState<AuditEvent[]>([]);
-  const [eventCursor, setEventCursor] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [filterQuery, setFilterQuery] = useState("");
+  const [actionFilter, setActionFilter] = useState("");
+  const [outcomeFilter, setOutcomeFilter] = useState<"" | "success" | "denied" | "failed">("");
+  const [resourceFilter, setResourceFilter] = useState("");
+  const [appliedFilters, setAppliedFilters] = useState({ action: "", outcome: "" as "" | "success" | "denied" | "failed", q: "", resourceType: "" });
   const [error, setError] = useState<string | null>(null);
   const isAdmin = member.system_role === "super_admin";
+  const loadAuditPage = useCallback((cursor: string | null, signal: AbortSignal) => {
+    if (!isAdmin) {
+      return Promise.resolve({ items: [], next_cursor: null });
+    }
+    return contractData(contractClient.GET("/api/v1/audit-events", {
+      params: { query: {
+        limit: 25,
+        ...(cursor ? { cursor } : {}),
+        ...(appliedFilters.q ? { q: appliedFilters.q } : {}),
+        ...(appliedFilters.action ? { action: appliedFilters.action } : {}),
+        ...(appliedFilters.outcome ? { outcome: appliedFilters.outcome } : {}),
+        ...(appliedFilters.resourceType ? { resource_type: appliedFilters.resourceType } : {}),
+      } },
+      signal,
+    }));
+  }, [appliedFilters, isAdmin]);
+  const {
+    error: paginationError,
+    hasMore,
+    initialLoading,
+    items: events,
+    loadingMore,
+    loadMore,
+  } = useCursorPagination<AuditEvent>({
+    keyOf: (event) => event.id,
+    loadPage: loadAuditPage,
+    queryKey: JSON.stringify([isAdmin, appliedFilters]),
+  });
 
   useEffect(() => {
     let active = true;
-    Promise.all([
-      contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })),
-      isAdmin ? contractData(contractClient.GET("/api/v1/audit-events", { params: { query: { limit: 100 } } })) : Promise.resolve(null),
-    ]).then(([spaceResponse, auditResponse]) => {
+    contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })).then((spaceResponse) => {
       if (!active) {
         return;
       }
       setSpaces(spaceResponse.items);
-      setEvents(auditResponse?.items || []);
-      setEventCursor(auditResponse?.next_cursor || null);
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
-      }
-    }).finally(() => {
-      if (active) {
-        setLoading(false);
       }
     });
     return () => {
       active = false;
     };
-  }, [isAdmin]);
-
-  const loadMoreEvents = async () => {
-    if (!eventCursor || loading) {
-      return;
-    }
-    setLoading(true);
-    try {
-      const response = await contractData(contractClient.GET("/api/v1/audit-events", { params: { query: { cursor: eventCursor, limit: 100 } } }));
-      setEvents((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
-      setEventCursor(response.next_cursor);
-    } catch (loadError) {
-      setError(message(loadError));
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, []);
 
   return (
     <ConsoleShell
@@ -1708,15 +1701,25 @@ export function ActivityConsole() {
       {!isAdmin ? <section className="console-panel permission-panel"><LockKeyhole size={25} /><div><h2>Audit access is restricted</h2><p>Only super admins can review family-wide audit events. Space membership remains visible to each space owner.</p></div></section> : (
         <section className="console-panel">
           <div className="panel-heading"><div><span>Security chronology</span><h2>Audit events</h2></div><Activity size={20} /></div>
-          {loading ? <ListSkeleton /> : null}
+          <form className="list-filter-bar audit-filter-bar" onSubmit={(event) => {
+            event.preventDefault();
+            setAppliedFilters({ action: actionFilter.trim(), outcome: outcomeFilter, q: filterQuery.trim(), resourceType: resourceFilter.trim() });
+          }} role="search">
+            <label><Search aria-hidden="true" size={15} /><input aria-label="Search audit events" onChange={(event) => setFilterQuery(event.target.value)} placeholder="Request, resource, action" type="search" value={filterQuery} /></label>
+            <label><input aria-label="Filter audit action" onChange={(event) => setActionFilter(event.target.value)} placeholder="Exact action" value={actionFilter} /></label>
+            <label><select aria-label="Filter audit outcome" onChange={(event) => setOutcomeFilter(event.target.value as typeof outcomeFilter)} value={outcomeFilter}><option value="">All outcomes</option><option value="success">Success</option><option value="denied">Denied</option><option value="failed">Failed</option></select></label>
+            <label><input aria-label="Filter audit resource type" onChange={(event) => setResourceFilter(event.target.value)} placeholder="Resource type" value={resourceFilter} /></label>
+            <button className="secondary-button" type="submit">Apply</button>
+          </form>
+          {initialLoading ? <ListSkeleton /> : null}
           <div className="audit-list">
             {events.map((event) => <article className="audit-row" key={event.id}><span className={`audit-outcome outcome-${event.outcome}`} /><time>{new Date(event.occurred_at).toLocaleString()}</time><div><h3>{event.action}</h3><p>{event.resource_type}{event.resource_id ? ` · ${event.resource_id}` : ""}</p></div><code>{event.request_id}</code><span className="status-pill">{event.outcome}</span></article>)}
-            {!loading && events.length === 0 ? <div className="console-empty"><Activity size={23} /><strong>No audit events returned</strong></div> : null}
+            {!initialLoading && events.length === 0 ? <div className="console-empty"><Activity size={23} /><strong>No audit events returned</strong></div> : null}
           </div>
-          {eventCursor ? <button className="secondary-button pagination-button" disabled={loading} onClick={() => void loadMoreEvents()} type="button">Load more audit events</button> : null}
+          {hasMore ? <button className="secondary-button pagination-button" disabled={loadingMore} onClick={() => void loadMore()} type="button">{loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more audit events</button> : null}
         </section>
       )}
-      {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
+      {error || paginationError ? <p className="inline-error wide" role="alert">{error || message(paginationError)}</p> : null}
     </ConsoleShell>
   );
 }
@@ -1747,29 +1750,27 @@ export function AiActionsConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [tools, setTools] = useState<AIManagementTool[]>([]);
-  const [pendingActions, setPendingActions] = useState<PendingAIAction[]>([]);
   const [reviewing, setReviewing] = useState<PendingAIAction | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadActions = useCallback(async () => {
-    const response = await contractData(contractClient.GET("/api/v1/ai-actions"));
-    setPendingActions(response.items);
-  }, []);
+  const loadActionPage = useCallback((cursor: string | null, signal: AbortSignal) => contractData(
+    contractClient.GET("/api/v1/ai-actions", { params: { query: { limit: 25, ...(cursor ? { cursor } : {}) } }, signal }),
+  ), []);
+  const actionPages = useCursorPagination<PendingAIAction>({ keyOf: (action) => action.id, loadPage: loadActionPage, queryKey: "pending" });
+  const pendingActions = actionPages.items;
 
   useEffect(() => {
     let active = true;
     Promise.all([
       contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })),
       contractData(contractClient.GET("/api/v1/ai-tools")),
-      contractData(contractClient.GET("/api/v1/ai-actions")),
-    ]).then(([spaceResponse, toolResponse, actionResponse]) => {
+    ]).then(([spaceResponse, toolResponse]) => {
       if (!active) {
         return;
       }
       setSpaces(spaceResponse.items);
       setTools(toolResponse.items);
-      setPendingActions(actionResponse.items);
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
@@ -1791,7 +1792,7 @@ export function AiActionsConsole() {
         params: { header: { "Idempotency-Key": idempotencyKey() }, path: { action_id: reviewing.id } },
       }));
       setReviewing(null);
-      await loadActions();
+      actionPages.reload();
     } catch (confirmError) {
       setError(message(confirmError));
     } finally {
@@ -1811,8 +1812,10 @@ export function AiActionsConsole() {
       <div className="tool-grid">
         {tools.map((tool, index) => <article className="tool-card" key={tool.name}><div><span className={`tool-icon accent-${index % 4}`}><Code2 size={17} /></span><span className={`mode-pill mode-${tool.confirmation === "required" ? "confirm" : "read"}`}>{tool.confirmation === "required" ? "Confirm" : "Direct"}</span></div><code>{tool.name}</code><p>{tool.description}</p></article>)}
       </div>
-      {pendingActions.length > 0 ? <section className="console-panel pending-ai-panel"><div className="panel-heading"><div><span>Human approval</span><h2>Pending confirmation</h2></div><span className="count-pill">{pendingActions.length}</span></div><div className="data-list">{pendingActions.map((action) => <article className="data-row" key={action.id}><span className="row-leading violet"><Sparkles size={17} /></span><div className="row-copy"><h3>{action.tool_name}</h3><p>{action.target_ids.join(", ")} · revision {action.expected_revision ?? "—"}</p></div><button aria-label={`Review ${action.tool_name} for ${action.target_ids.join(", ")}`} className="row-action-button" onClick={() => setReviewing(action)} type="button">Review</button></article>)}</div>{reviewing ? <div aria-label={`Confirm ${reviewing.tool_name}`} className="confirmation-strip" role="alertdialog"><div><strong>Execute {reviewing.tool_name}?</strong><span>{aiActionImpact(reviewing.tool_name)}</span></div><button className="secondary-button" onClick={() => setReviewing(null)} type="button">Not now</button><button className="danger-button" disabled={saving} onClick={() => void confirmAction()} type="button">Confirm AI action</button></div> : null}</section> : null}
-      {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
+      {actionPages.initialLoading ? <section className="console-panel pending-ai-panel"><ListSkeleton compact rows={3} /></section> : null}
+      {!actionPages.initialLoading && pendingActions.length > 0 ? <section className="console-panel pending-ai-panel"><div className="panel-heading"><div><span>Human approval</span><h2>Pending confirmation</h2></div><span className="count-pill">{pendingActions.length}{actionPages.hasMore ? "+" : ""}</span></div><div className="data-list">{pendingActions.map((action) => <article className="data-row" key={action.id}><span className="row-leading violet"><Sparkles size={17} /></span><div className="row-copy"><h3>{action.tool_name}</h3><p>{action.target_ids.join(", ")} · revision {action.expected_revision ?? "—"}</p></div><button aria-label={`Review ${action.tool_name} for ${action.target_ids.join(", ")}`} className="row-action-button" onClick={() => setReviewing(action)} type="button">Review</button></article>)}</div>{actionPages.hasMore ? <button className="secondary-button pagination-button" disabled={actionPages.loadingMore} onClick={() => void actionPages.loadMore()} type="button">{actionPages.loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more pending actions</button> : null}{reviewing ? <div aria-label={`Confirm ${reviewing.tool_name}`} className="confirmation-strip" role="alertdialog"><div><strong>Execute {reviewing.tool_name}?</strong><span>{aiActionImpact(reviewing.tool_name)}</span></div><button className="secondary-button" onClick={() => setReviewing(null)} type="button">Not now</button><button className="danger-button" disabled={saving} onClick={() => void confirmAction()} type="button">Confirm AI action</button></div> : null}</section> : null}
+      {!actionPages.initialLoading && pendingActions.length === 0 ? <section className="console-panel pending-ai-panel"><div className="console-empty small"><Sparkles size={20} /><strong>No actions need approval</strong></div></section> : null}
+      {error || actionPages.error ? <p className="inline-error wide" role="alert">{error || message(actionPages.error)}</p> : null}
     </ConsoleShell>
   );
 }

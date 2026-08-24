@@ -2582,6 +2582,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 cursor?: string | null;
+                q?: string | null;
             };
             header?: never;
             path?: never;
@@ -2792,7 +2793,10 @@ export interface operations {
     };
     list_ai_actions_api_v1_ai_actions_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3229,6 +3233,8 @@ export interface operations {
             query?: {
                 limit?: number;
                 cursor?: string | null;
+                q?: string | null;
+                status?: ("active" | "revoked" | "expired") | null;
             };
             header?: never;
             path?: never;
@@ -3543,6 +3549,10 @@ export interface operations {
             query?: {
                 limit?: number;
                 cursor?: string | null;
+                q?: string | null;
+                action?: string | null;
+                outcome?: ("success" | "denied" | "failed") | null;
+                resource_type?: string | null;
             };
             header?: never;
             path?: never;
@@ -4383,6 +4393,7 @@ export interface operations {
                 space_id?: string | null;
                 limit?: number;
                 cursor?: string | null;
+                state?: ("preparing" | "queued" | "running" | "retry_wait" | "succeeded" | "failed" | "cancelled") | null;
             };
             header?: never;
             path?: never;
@@ -4698,6 +4709,8 @@ export interface operations {
                 space_id?: string | null;
                 limit?: number;
                 cursor?: string | null;
+                q?: string | null;
+                tag?: string | null;
             };
             header?: never;
             path?: never;
@@ -5327,6 +5340,9 @@ export interface operations {
             query?: {
                 limit?: number;
                 cursor?: string | null;
+                q?: string | null;
+                status?: ("pending" | "active" | "disabled") | null;
+                system_role?: ("super_admin" | "member") | null;
             };
             header?: never;
             path?: never;
@@ -5958,6 +5974,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 cursor?: string | null;
+                status?: ("active" | "revoked" | "expired") | null;
             };
             header?: never;
             path?: never;
@@ -6482,6 +6499,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 cursor?: string | null;
+                state?: ("active" | "superseded") | null;
             };
             header?: never;
             path?: never;
@@ -6696,6 +6714,8 @@ export interface operations {
                 space_id?: string | null;
                 limit?: number;
                 cursor?: string | null;
+                q?: string | null;
+                status?: ("pending" | "processing" | "ready" | "active" | "failed" | "quarantined" | "cancelled") | null;
             };
             header?: never;
             path?: never;
@@ -7012,6 +7032,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 cursor?: string | null;
+                q?: string | null;
             };
             header?: never;
             path?: never;
@@ -7326,6 +7347,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 cursor?: string | null;
+                q?: string | null;
             };
             header?: never;
             path: {
@@ -7429,7 +7451,12 @@ export interface operations {
     };
     list_space_members_api_v1_spaces__space_id__members_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+                q?: string | null;
+                role?: ("owner" | "editor" | "reader") | null;
+            };
             header?: never;
             path: {
                 space_id: string;

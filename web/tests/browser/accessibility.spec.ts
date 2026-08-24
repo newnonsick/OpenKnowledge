@@ -55,7 +55,7 @@ function json<T>(body: T, status = 200) {
   };
 }
 
-async function mockGateway(page: Page) {
+async function mockGateway(page: Page, systemRole: "member" | "super_admin" = "member") {
   await page.route("**/healthz/ready", (route) => route.fulfill(json(readyFixture)));
   await page.route("**/api/v1/**", (route) => {
     const request = route.request();
@@ -64,13 +64,55 @@ async function mockGateway(page: Page) {
       return route.fulfill(json(loginFixture));
     }
     if (pathname === "/api/v1/me") {
-      return route.fulfill(json(memberFixture));
+      return route.fulfill(json({ ...memberFixture, system_role: systemRole }));
     }
     if (pathname === "/api/v1/spaces") {
       return route.fulfill(json(spacesFixture));
     }
     if (pathname === "/api/v1/operations/summary") {
       return route.fulfill(json(operationsFixture));
+    }
+    if (pathname === "/api/v1/knowledge") {
+      return route.fulfill(json({ items: [{ content: "Passport renewal instructions and the emergency contact process for every family member.", created_at: "2026-08-20T12:00:00Z", id: "knowledge-1", revision: 2, source_id: "source-1", space_id: "global", tags: ["travel", "important"], title: "International travel document checklist", updated_at: "2026-08-21T12:00:00Z" }], next_cursor: null }));
+    }
+    if (pathname === "/api/v1/sources") {
+      return route.fulfill(json({ items: [{ display_name: "Family procedures and emergency contacts", id: "source-1", original_filename: "family-procedures-and-emergency-contacts.pdf", revision: 3, size_bytes: 524288, space_id: "global", status: "active", updated_at: "2026-08-20T12:00:00Z" }], next_cursor: null }));
+    }
+    if (pathname === "/api/v1/ingestion-jobs") {
+      return route.fulfill(json({ items: [{ attempt_count: 1, created_at: "2026-08-20T12:00:00Z", document_id: "source-1", id: "job-with-a-deliberately-long-identifier-123456789", max_attempts: 5, progress: 0, space_id: "global", state: "queued", updated_at: "2026-08-20T12:00:00Z" }], next_cursor: null }));
+    }
+    if (pathname === "/api/v1/audit-events") {
+      return route.fulfill(json({ items: [{ action: "knowledge.create.with.a.deliberately.long.action.name", actor_kind: "member", actor_member_id: "member-1", id: "audit-1", occurred_at: "2026-08-20T12:00:00Z", outcome: "success", request_id: "request-123456789", resource_id: "knowledge-1", resource_type: "knowledge" }], next_cursor: null }));
+    }
+    if (pathname === "/api/v1/api-keys") {
+      return route.fulfill(json({ items: [{ created_at: "2026-08-20T12:00:00Z", id: "key-1", name: "Family automation laptop with a long descriptive name", public_id: "pk_live_12345678901234567890", scopes: ["knowledge:read", "knowledge:write"], status: "active" }], next_cursor: null }));
+    }
+    if (pathname === "/api/v1/sessions") {
+      return route.fulfill(json({ items: [{ created_at: "2026-08-20T12:00:00Z", current: true, id: "session-current-123456789", last_activity_at: "2026-08-21T12:00:00Z", status: "active" }], next_cursor: null }));
+    }
+    if (pathname === "/api/v1/settings/history") {
+      return route.fulfill(json({ items: [{ base_revision: 3, id: "revision-4", revision: 4, state: "active", values: { retrieval: { lexical_weight: 1, limit: 20, vector_weight: 1 } } }], next_cursor: null }));
+    }
+    if (pathname === "/api/v1/settings") {
+      return route.fulfill(json({ base_revision: 3, id: "revision-4", revision: 4, state: "active", values: { retrieval: { lexical_weight: 1, limit: 20, vector_weight: 1 } } }));
+    }
+    if (pathname === "/api/v1/ai-actions") {
+      return route.fulfill(json({ items: [{ created_at: "2026-08-20T12:00:00Z", expected_revision: 3, expires_at: "2026-08-20T12:10:00Z", id: "action-1", status: "pending", target_ids: ["private-family-archive-123456789"], tool_name: "spaces.archive.v1" }], next_cursor: null }));
+    }
+    if (pathname === "/api/v1/ai-tools") {
+      return route.fulfill(json({ items: [{ description: "Archive a private family space after an explicit confirmation.", name: "spaces.archive.v1", risk: "high" }] }));
+    }
+    if (pathname === "/api/v1/members") {
+      return route.fulfill(json({ items: [{ display_name: "Nana Arun with a long family display name", id: "member-2", requires_password_change: false, status: "active", system_role: "member", username: "nana-with-a-long-username" }], next_cursor: null }));
+    }
+    if (pathname === "/api/v1/admin/spaces") {
+      return route.fulfill(json({ items: [{ created_at: "2026-08-20T12:00:00Z", id: "private", name: "Private records with a very long household name", owner_display_name: "Nana Arun", owner_member_id: "member-2", owner_username: "nana", revision: 4 }], next_cursor: null }));
+    }
+    if (/^\/api\/v1\/spaces\/[^/]+\/members$/.test(pathname)) {
+      return route.fulfill(json({ items: [{ display_name: "Mai Arun", member_id: "member-1", role: "owner", status: "active", username: "mai" }, { display_name: "Nana Arun", member_id: "member-2", role: "reader", status: "active", username: "nana" }], next_cursor: null }));
+    }
+    if (/^\/api\/v1\/spaces\/[^/]+\/member-candidates$/.test(pathname)) {
+      return route.fulfill(json({ items: [], next_cursor: null }));
     }
     return route.fulfill(json(notFoundFixture, 404));
   });
@@ -162,3 +204,46 @@ test("preserves approved light and dark-ready dashboard visuals", async ({ page 
     maxDiffPixelRatio: 0.005,
   });
 });
+
+const responsiveRoutes = ["/", "/spaces", "/explore", "/knowledge", "/sources", "/ingestion", "/people", "/settings", "/activity", "/ai-actions"];
+const responsiveViewports = [
+  { height: 720, width: 320 },
+  { height: 844, width: 390 },
+  { height: 1024, width: 768 },
+  { height: 900, width: 1024 },
+  { height: 1000, width: 1440 },
+  { height: 1080, width: 1920 },
+];
+
+for (const viewport of responsiveViewports) {
+  test(`keeps every console within a ${viewport.width}px viewport`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await mockGateway(page, "super_admin");
+    for (const route of responsiveRoutes) {
+      await page.goto(route);
+      await expect(page.locator("main")).toBeVisible();
+      await expect.poll(() => page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }))).toEqual({ clientWidth: viewport.width, scrollWidth: viewport.width });
+      const visibleOverflow = await page.evaluate(() => Array.from(document.querySelectorAll<HTMLElement>("main *")).filter((element) => {
+        const style = getComputedStyle(element);
+        return style.display !== "none" && style.visibility !== "hidden" && style.overflowX === "visible" && element.scrollWidth > element.clientWidth + 1;
+      }).map((element) => `${element.tagName.toLowerCase()}.${element.className}`));
+      expect(visibleOverflow, `${route} contains non-scrollable component overflow`).toEqual([]);
+      if (process.env.RESPONSIVE_AUDIT_SHOTS === "1") {
+        const routeName = route === "/" ? "dashboard" : route.slice(1);
+        await page.screenshot({ animations: "disabled", fullPage: true, path: `test-results/responsive-audit/${viewport.width}-${routeName}.png` });
+      }
+    }
+  });
+}
+
+for (const viewport of [{ height: 844, width: 390 }, { height: 1000, width: 1440 }]) {
+  test(`keeps every console accessible at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await mockGateway(page, "super_admin");
+    for (const route of responsiveRoutes) {
+      await page.goto(route);
+      await expect(page.locator("main")).toBeVisible();
+      await expectAccessible(page);
+    }
+  });
+}
