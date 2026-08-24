@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import nextConfig from "@/next.config";
 
 describe("next configuration", () => {
+  it("allows both loopback hosts during development", () => {
+    expect(nextConfig.allowedDevOrigins).toEqual(expect.arrayContaining(["127.0.0.1", "localhost"]));
+  });
+
   it("proxies gateway health probes to the API", async () => {
     if (!nextConfig.rewrites) {
       throw new Error("Gateway rewrites are required");
