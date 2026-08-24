@@ -282,6 +282,20 @@ export async function contractData<T>(
   throw new ApiError(result.response.status, (result.error || {}) as ApiErrorPayload);
 }
 
+export async function contractDataWithSessionRetry<T>(
+  request: () => Promise<{ data?: T; error?: unknown; response: Response }>,
+): Promise<T> {
+  try {
+    return await contractData(request());
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401 && error.code !== "mfa_code_required") {
+      await refreshSession();
+      return contractData(request());
+    }
+    throw error;
+  }
+}
+
 export function idempotencyKey(): string {
   return globalThis.crypto.randomUUID();
 }

@@ -46,6 +46,22 @@ class AuthenticationException(GatewayException):
         )
 
 
+class MfaCodeRequiredException(GatewayException):
+
+    def __init__(
+        self,
+        message: str = "Second-factor authentication code required.",
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            status_code=401,
+            error_type="authentication_error",
+            code="mfa_code_required",
+            details=details,
+        )
+
+
 class RecentAuthenticationRequiredException(GatewayException):
 
     def __init__(self) -> None:

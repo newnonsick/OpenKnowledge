@@ -76,6 +76,16 @@ class IdentityService:
             temporary_credential=credential.temporary,
         )
 
+    async def has_active_totp_factor(self, member_id: UUID) -> bool:
+        factor_id = await self._session.scalar(
+            select(MFAFactorModel.id).where(
+                MFAFactorModel.member_id == member_id,
+                MFAFactorModel.confirmed_at.is_not(None),
+                MFAFactorModel.retired_at.is_(None),
+            )
+        )
+        return factor_id is not None
+
     async def verify_totp_login(self, member_id: UUID, code: str) -> bool:
         if not code:
             return False

@@ -193,7 +193,7 @@ export function DashboardShell({ member, operations, ready, spaces }: DashboardS
               </div>
               <div className="recent-list">
                 {spaces.slice(0, 3).map((space, index) => (
-                  <Link className="recent-row" href={`/spaces/${encodeURIComponent(space.id)}`} key={space.id}>
+                  <Link className="recent-row" href={`/knowledge?space=${encodeURIComponent(space.id)}`} key={space.id}>
                     <span className={`document-glyph ${["violet", "cyan", "mint"][index]}`}><BookOpen aria-hidden="true" size={18} /></span>
                     <span className="recent-copy"><strong>{space.name}</strong><small>{space.role} · available now</small></span>
                     <ArrowRight aria-hidden="true" className="row-arrow" size={17} />

@@ -64,9 +64,24 @@ function message(error: unknown) {
   return error instanceof ApiError ? error.message : "The request could not be completed.";
 }
 
+export function ListSkeleton({ compact = false, rows = 5 }: { compact?: boolean; rows?: number }) {
+  return (
+    <div aria-hidden="true" className={`list-skeleton${compact ? " compact" : ""}`}>
+      {Array.from({ length: rows }).map((_, index) => (
+        <div className="skeleton-row" key={index}>
+          <span className="skeleton-glyph" />
+          <span className="skeleton-lines"><i /><i className="short" /></span>
+          <span className="skeleton-pill" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function SpacesConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
+  const [spaceCursor, setSpaceCursor] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -85,6 +100,7 @@ export function SpacesConsole() {
     try {
       const response = await contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } }));
       setSpaces(response.items);
+      setSpaceCursor(response.next_cursor);
       setError(null);
     } catch (loadError) {
       setError(message(loadError));
@@ -92,6 +108,23 @@ export function SpacesConsole() {
       setLoading(false);
     }
   }, []);
+
+  const loadMoreSpaces = async () => {
+    if (!spaceCursor || loading) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await contractData(contractClient.GET("/api/v1/spaces", { params: { query: { cursor: spaceCursor, limit: 100 } } }));
+      setSpaces((current) => [...current, ...response.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setSpaceCursor(response.next_cursor);
+      setError(null);
+    } catch (loadError) {
+      setError(message(loadError));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -249,7 +282,7 @@ export function SpacesConsole() {
             <div><span>Accessible now</span><h2>Your spaces</h2></div>
             <span className="count-pill">{spaces.length}</span>
           </div>
-          {loading ? <div className="console-loading"><LoaderCircle className="spin" size={18} /> Loading spaces…</div> : null}
+          {loading ? <ListSkeleton /> : null}
           {!loading && spaces.length === 0 ? <div className="console-empty"><FolderKanban size={23} /><strong>No spaces yet</strong><span>Create one for a project or keep using shared knowledge.</span></div> : null}
           <div className="space-card-grid">
             {spaces.map((space, index) => (
@@ -264,6 +297,7 @@ export function SpacesConsole() {
               </article>
             ))}
           </div>
+          {!loading && spaceCursor && spaces.length > 0 ? <button className="secondary-button pagination-button" disabled={loading} onClick={() => void loadMoreSpaces()} type="button">Load more spaces</button> : null}
           {accessLoading ? <div className="console-loading access-loading"><LoaderCircle className="spin" size={18} /> Loading space access…</div> : null}
           {selectedSpace && !accessLoading ? (
             <section className="space-access-panel" aria-label={`${selectedSpace.name} access`}>
@@ -334,6 +368,8 @@ export function KnowledgeConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [items, setItems] = useState<KnowledgeSummary[]>([]);
+  const [itemCursor, setItemCursor] = useState<string | null>(null);
+  const [spaceFilter, setSpaceFilter] = useState<string | null>(null);
   const [spaceId, setSpaceId] = useState("");
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -347,16 +383,24 @@ export function KnowledgeConsole() {
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadItems = useCallback(async () => {
-    const response = await contractData(contractClient.GET("/api/v1/knowledge", { params: { query: { limit: 100 } } }));
-    setItems(response.items);
+  const loadItems = useCallback(async (cursor?: string | null) => {
+    const response = await contractData(contractClient.GET("/api/v1/knowledge", { params: { query: { limit: 100, ...(cursor ? { cursor } : {}) } } }));
+    if (cursor) {
+      setItems((currentList) => [...currentList, ...response.items.filter((item) => !currentList.some((existing) => existing.id === item.id))]);
+    } else {
+      setItems(response.items);
+    }
+    setItemCursor(response.next_cursor);
   }, []);
 
   useEffect(() => {
     let active = true;
+    const searchParams = new URLSearchParams(window.location.search);
+    const requestedSpace = searchParams.get("space");
+    setSpaceFilter(requestedSpace);
     Promise.all([
       contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })),
-      contractData(contractClient.GET("/api/v1/knowledge", { params: { query: { limit: 100 } } })),
+      contractData(contractClient.GET("/api/v1/knowledge", { params: { query: { limit: 100, ...(requestedSpace ? { space_id: requestedSpace } : {}) } } })),
     ]).then(([spaceResponse, knowledgeResponse]) => {
       if (!active) {
         return;
@@ -364,6 +408,7 @@ export function KnowledgeConsole() {
       setSpaces(spaceResponse.items);
       setSpaceId((current) => current || spaceResponse.items[0]?.id || "");
       setItems(knowledgeResponse.items);
+      setItemCursor(knowledgeResponse.next_cursor);
       setError(null);
     }).catch((loadError) => {
       if (active) {
@@ -489,10 +534,11 @@ export function KnowledgeConsole() {
       <div className="console-grid console-grid-knowledge">
         <section className="console-panel">
           <div className="panel-heading">
-            <div><span>Living library</span><h2>Knowledge items</h2></div>
+            <div><span>Living library</span><h2>{spaceFilter ? "Filtered knowledge" : "Knowledge items"}</h2></div>
             <span className="count-pill">{items.length}</span>
           </div>
-          {loading ? <div className="console-loading"><LoaderCircle className="spin" size={18} /> Loading knowledge…</div> : null}
+          {spaceFilter ? <div className="filter-strip"><Search size={13} /> Showing one space only<button onClick={() => { window.location.replace("/knowledge"); }} type="button">Show all spaces</button></div> : null}
+          {loading ? <ListSkeleton /> : null}
           {!loading && items.length === 0 ? <div className="console-empty"><BookOpen size={23} /><strong>Nothing captured yet</strong><span>Add the first durable answer, procedure, or family detail.</span></div> : null}
           <div className="data-list">
             {items.map((item) => (
@@ -504,6 +550,7 @@ export function KnowledgeConsole() {
               </article>
             ))}
           </div>
+          {!loading && itemCursor && items.length > 0 ? <button className="secondary-button pagination-button" disabled={loading} onClick={() => void loadItems(itemCursor)} type="button">Load more knowledge</button> : null}
           {editing ? (
             <section className="knowledge-editor" aria-label={`Edit ${editing.title}`}>
               <div className="space-access-heading">
@@ -794,7 +841,7 @@ export function SourcesConsole() {
             <div><span>Original material</span><h2>Source files</h2></div>
             <span className="count-pill">{sources.length}</span>
           </div>
-          {loading ? <div className="console-loading"><LoaderCircle className="spin" size={18} /> Loading sources…</div> : null}
+          {loading ? <ListSkeleton /> : null}
           {!loading && sources.length === 0 ? <div className="console-empty"><FileText size={23} /><strong>No source files</strong><span>Upload a document without changing its meaning or filtering its contents.</span></div> : null}
           <div className="data-list">
             {sources.map((source) => (
@@ -835,6 +882,7 @@ export function PeopleConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [members, setMembers] = useState<MemberSummary[]>([]);
+  const [memberCursor, setMemberCursor] = useState<string | null>(null);
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [created, setCreated] = useState<CreatedMember | null>(null);
@@ -853,9 +901,14 @@ export function PeopleConsole() {
   const [error, setError] = useState<string | null>(null);
   const isAdmin = member.system_role === "super_admin";
 
-  const loadMembers = useCallback(async () => {
-    const response = await contractData(contractClient.GET("/api/v1/members", { params: { query: { limit: 100 } } }));
-    setMembers(response.items);
+  const loadMembers = useCallback(async (cursor?: string | null) => {
+    const response = await contractData(contractClient.GET("/api/v1/members", { params: { query: { limit: 100, ...(cursor ? { cursor } : {}) } } }));
+    if (cursor) {
+      setMembers((currentList) => [...currentList, ...response.items.filter((item) => !currentList.some((existing) => existing.id === item.id))]);
+    } else {
+      setMembers(response.items);
+    }
+    setMemberCursor(response.next_cursor);
   }, []);
 
   useEffect(() => {
@@ -870,6 +923,7 @@ export function PeopleConsole() {
       }
       setSpaces(spaceResponse.items);
       setMembers(memberResponse?.items || []);
+      setMemberCursor(memberResponse?.next_cursor || null);
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
@@ -1028,7 +1082,7 @@ export function PeopleConsole() {
         <div className="console-grid console-grid-people">
           <section className="console-panel">
             <div className="panel-heading"><div><span>Family directory</span><h2>Members</h2></div><span className="count-pill">{members.length}</span></div>
-            {loading ? <div className="console-loading"><LoaderCircle className="spin" size={18} /> Loading members…</div> : null}
+            {loading ? <ListSkeleton rows={6} /> : null}
             <div className="data-list">
               {members.map((person) => (
                 <article className="data-row member-row" key={person.id}>
@@ -1039,6 +1093,7 @@ export function PeopleConsole() {
                 </article>
               ))}
             </div>
+            {!loading && isAdmin && memberCursor && members.length > 0 ? <button className="secondary-button pagination-button" disabled={loading} onClick={() => void loadMembers(memberCursor)} type="button">Load more members</button> : null}
             {selectedMember ? (
               <section aria-label={`Manage ${selectedMember.display_name}`} className="member-admin-panel">
                 <div className="space-access-heading"><div><span>Account controls</span><h2>{selectedMember.display_name}</h2></div><button aria-label="Close member manager" className="icon-button" onClick={() => setSelectedMember(null)} type="button"><X size={16} /></button></div>
@@ -1402,7 +1457,7 @@ export function SettingsConsole() {
       spaceCount={spaces.length}
       title="Settings"
     >
-      {loading ? <div className="console-loading standalone"><LoaderCircle className="spin" size={18} /> Loading secure settings…</div> : null}
+      {loading ? <ListSkeleton compact /> : null}
       <div className="settings-layout">
         <section className="console-panel settings-section">
           <div className="panel-heading"><div><span>Personal credentials</span><h2>API keys</h2></div><KeyRound size={20} /></div>
@@ -1455,7 +1510,18 @@ export function SettingsConsole() {
           {settingsHistory.length > 0 ? <div className="data-list compact-list">{settingsHistory.map((revision) => <article className="data-row" key={revision.id || revision.revision}><span className="row-leading violet"><Settings2 size={16} /></span><div className="row-copy"><h3>Revision {revision.revision}</h3><p>Retrieval limit {revision.values.retrieval?.limit ?? "default"} · {revision.state}</p></div>{revision.state === "superseded" ? <button aria-label={`Restore revision ${revision.revision}`} className="row-action-button" disabled={saving} onClick={() => setPendingSettingsRestore(revision)} type="button">Restore</button> : <span className="status-pill status-active">active</span>}</article>)}</div> : null}
           {settingsHistoryCursor ? <button className="secondary-button pagination-button" disabled={saving} onClick={() => void loadMoreSettingsHistory()} type="button">Load more settings history</button> : null}
           {pendingSettingsRestore ? <div aria-label={`Restore revision ${pendingSettingsRestore.revision}`} className="confirmation-strip" role="alertdialog"><div><strong>Restore revision {pendingSettingsRestore.revision}?</strong><span>This creates a new active revision from the historical values. The current revision remains preserved for audit and future recovery.</span></div><button className="secondary-button" onClick={() => setPendingSettingsRestore(null)} type="button">Keep current</button><button className="danger-button" disabled={saving || runtimeReason.trim().length < 5} onClick={() => void restoreRuntimeSettings()} type="button">Confirm restore revision {pendingSettingsRestore.revision}</button></div> : null}
-          <pre>{JSON.stringify(runtimeDraft?.values || settings?.values || {}, null, 2)}</pre>
+          <div className="runtime-values">
+            {Object.entries((runtimeDraft?.values || settings?.values || {}) as Record<string, Record<string, unknown> | undefined>).map(([section, entries]) => (
+              <details className="runtime-value-group" key={section} open={section === "retrieval"}>
+                <summary>{section.replaceAll("_", " ")}</summary>
+                <dl>
+                  {Object.entries(entries || {}).map(([key, value]) => (
+                    <div key={key}><dt>{key.replaceAll("_", " ")}</dt><dd>{typeof value === "boolean" ? (value ? "on" : "off") : String(value)}</dd></div>
+                  ))}
+                </dl>
+              </details>
+            ))}
+          </div>
         </section>
       </div>
       {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
@@ -1558,7 +1624,7 @@ export function IngestionConsole() {
       <div className="metric-strip"><article><span>Tracked jobs</span><strong>{jobs.length}</strong></article><article><span>In progress</span><strong>{activeJobs}</strong></article><article><span>Refresh</span><strong>15s</strong></article></div>
       <section className="console-panel">
         <div className="panel-heading"><div><span>Live durable state</span><h2>Ingestion jobs</h2></div><Layers3 size={20} /></div>
-        {loading ? <div className="console-loading"><LoaderCircle className="spin" size={18} /> Loading jobs…</div> : null}
+        {loading ? <ListSkeleton /> : null}
         {!loading && jobs.length === 0 ? <div className="console-empty"><Layers3 size={23} /><strong>No ingestion jobs</strong><span>Uploaded sources will appear here as soon as preparation begins.</span></div> : null}
         <div className="job-list">
           {jobs.map((job) => (
@@ -1642,7 +1708,7 @@ export function ActivityConsole() {
       {!isAdmin ? <section className="console-panel permission-panel"><LockKeyhole size={25} /><div><h2>Audit access is restricted</h2><p>Only super admins can review family-wide audit events. Space membership remains visible to each space owner.</p></div></section> : (
         <section className="console-panel">
           <div className="panel-heading"><div><span>Security chronology</span><h2>Audit events</h2></div><Activity size={20} /></div>
-          {loading ? <div className="console-loading"><LoaderCircle className="spin" size={18} /> Loading activity…</div> : null}
+          {loading ? <ListSkeleton /> : null}
           <div className="audit-list">
             {events.map((event) => <article className="audit-row" key={event.id}><span className={`audit-outcome outcome-${event.outcome}`} /><time>{new Date(event.occurred_at).toLocaleString()}</time><div><h3>{event.action}</h3><p>{event.resource_type}{event.resource_id ? ` · ${event.resource_id}` : ""}</p></div><code>{event.request_id}</code><span className="status-pill">{event.outcome}</span></article>)}
             {!loading && events.length === 0 ? <div className="console-empty"><Activity size={23} /><strong>No audit events returned</strong></div> : null}

@@ -14,7 +14,7 @@ from src.gateway.application.services.identity_service import IdentityService
 from src.gateway.application.services.login_throttle_service import LoginThrottleService, request_client_ip
 from src.gateway.application.services.session_service import RefreshStatus, SessionSecrets, SessionService
 from src.gateway.config import get_settings
-from src.gateway.domain.exceptions import AuthenticationException, CSRFException, RateLimitException
+from src.gateway.domain.exceptions import AuthenticationException, CSRFException, MfaCodeRequiredException, RateLimitException
 from src.gateway.domain.identity import Principal, PrincipalKind, SystemRole
 from src.gateway.infrastructure.database import get_db_session, get_session_factory
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, SessionCredentialModel
@@ -276,7 +276,13 @@ async def login(
         )
         principal = authenticated.principal
         member_id = _member_id(principal)
-        if principal.system_role is SystemRole.SUPER_ADMIN and not principal.restricted:
+        member = await session.get(MemberModel, member_id)
+        if member is None:
+            raise AuthenticationException("Invalid username or password.")
+        requires_password_change = bool(member.force_password_change)
+        is_super_admin = member.system_role == SystemRole.SUPER_ADMIN.value
+        has_active_factor = is_super_admin and await identity.has_active_totp_factor(member_id)
+        if has_active_factor and not requires_password_change:
             if payload.totp_code:
                 second_factor_valid = await identity.verify_totp_login(member_id, payload.totp_code)
             elif payload.recovery_code:
@@ -286,7 +292,7 @@ async def login(
                     request_id=get_request_id(request),
                 )
             else:
-                second_factor_valid = False
+                raise MfaCodeRequiredException()
             if not second_factor_valid:
                 raise AuthenticationException("Invalid username or password.")
     except AuthenticationException:
@@ -307,8 +313,8 @@ async def login(
         response,
         principal,
         secrets,
-        requires_password_change=principal.restricted,
-        requires_mfa_enrollment=False,
+        requires_password_change=requires_password_change,
+        requires_mfa_enrollment=is_super_admin and not requires_password_change and not has_active_factor,
     )
 
 
@@ -400,7 +406,10 @@ async def change_password(
     member = await session.get(MemberModel, member_id)
     if member is None:
         raise AuthenticationException("Authentication required.")
-    requires_mfa = member.system_role == SystemRole.SUPER_ADMIN.value
+    requires_mfa = (
+        member.system_role == SystemRole.SUPER_ADMIN.value
+        and not await identity.has_active_totp_factor(member_id)
+    )
     next_principal = Principal(
         subject_id=str(member.id),
         kind=PrincipalKind.SESSION,

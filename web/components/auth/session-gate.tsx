@@ -13,6 +13,12 @@ const SessionContext = createContext<CurrentMember | null>(null);
 const activityWindow = 20 * 60 * 1000;
 const refreshInterval = 10 * 60 * 1000;
 
+let cachedMember: CurrentMember | null = null;
+
+export function resetCachedMember(): void {
+  cachedMember = null;
+}
+
 export function useCurrentMember(): CurrentMember {
   const member = useContext(SessionContext);
   if (!member) {
@@ -24,7 +30,7 @@ export function useCurrentMember(): CurrentMember {
 export function SessionGate({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [member, setMember] = useState<CurrentMember | null>(null);
+  const [member, setMember] = useState<CurrentMember | null>(cachedMember);
   const [failed, setFailed] = useState(false);
   const [stepUpOpen, setStepUpOpen] = useState(false);
   const [stepUpFactor, setStepUpFactor] = useState<"recovery" | "totp">("totp");
@@ -41,19 +47,14 @@ export function SessionGate({ children }: { children: ReactNode }) {
         if (!active) {
           return;
         }
-        if (current.requires_password_change) {
-          router.replace("/first-use/password");
-          return;
-        }
-        if (current.system_role !== "super_admin" && (pathname.startsWith("/people") || pathname.startsWith("/activity"))) {
-          router.replace("/");
-          return;
-        }
+        cachedMember = current;
         setMember(current);
       })
       .catch(() => {
+        cachedMember = null;
         if (active) {
           setFailed(true);
+          setMember(null);
           router.replace("/login");
         }
       });
@@ -61,6 +62,25 @@ export function SessionGate({ children }: { children: ReactNode }) {
       active = false;
     };
   }, [pathname, router]);
+
+  useEffect(() => {
+    const current = member;
+    if (!current) {
+      return;
+    }
+    if (current.requires_password_change && !pathname.startsWith("/first-use/")) {
+      router.replace("/first-use/password");
+      return;
+    }
+    if (current.system_role !== "super_admin" && (pathname.startsWith("/people") || pathname.startsWith("/activity"))) {
+      router.replace("/");
+    }
+  }, [member, pathname, router]);
+
+  const routeBlocked = member !== null && (
+    (member.requires_password_change && !pathname.startsWith("/first-use/")) ||
+    (member.system_role !== "super_admin" && (pathname.startsWith("/people") || pathname.startsWith("/activity")))
+  );
 
   useEffect(() => {
     const recordActivity = () => {
@@ -134,7 +154,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
     }
   }
 
-  if (!member) {
+  if (!member || routeBlocked) {
     return (
       <main className="session-loading" aria-live="polite">
         <span><Boxes aria-hidden="true" size={20} /></span>

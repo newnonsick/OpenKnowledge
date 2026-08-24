@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 
 import { contractClient, contractData } from "@/lib/api-client";
+import { resetCachedMember } from "@/components/auth/session-gate";
 import { useAlertDialogFocus, useDrawerFocus } from "@/lib/focus-management";
 
 const workspaceNavigation = [
@@ -95,6 +96,7 @@ export function ConsoleShell({ actions, children, description, eyebrow, member, 
     try {
       await contractData(contractClient.POST("/api/v1/auth/logout", { body: {} }));
     } finally {
+      resetCachedMember();
       router.replace("/login");
     }
   };

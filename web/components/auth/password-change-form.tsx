@@ -4,7 +4,8 @@ import { FormEvent, useState } from "react";
 import { Check, Copy, Eye, EyeOff, KeyRound, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { ApiError, contractClient, contractData } from "@/lib/api-client";
+import { ApiError, contractClient, contractDataWithSessionRetry } from "@/lib/api-client";
+import { resetCachedMember } from "@/components/auth/session-gate";
 import type { components } from "@/lib/generated/openapi";
 import { isPasswordValid, passwordPolicy, passwordRuleStates } from "@/lib/password-policy";
 
@@ -29,9 +30,10 @@ export function PasswordChangeForm() {
     setSubmitting(true);
     setError(null);
     try {
-      const session = await contractData(contractClient.POST("/api/v1/auth/password", {
+      const session = await contractDataWithSessionRetry(() => contractClient.POST("/api/v1/auth/password", {
         body: { confirmation, password },
       }));
+      resetCachedMember();
       if (session.requires_mfa_enrollment) {
         router.replace("/first-use/mfa");
       } else if (session.initial_api_key) {

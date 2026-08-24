@@ -4,7 +4,8 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { Check, Copy, KeySquare, LoaderCircle, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { ApiError, contractClient, contractData } from "@/lib/api-client";
+import { ApiError, contractClient, contractDataWithSessionRetry } from "@/lib/api-client";
+import { resetCachedMember } from "@/components/auth/session-gate";
 import type { components } from "@/lib/generated/openapi";
 
 type Enrollment = components["schemas"]["TotpEnrollment"];
@@ -27,7 +28,7 @@ export function MfaEnrollmentForm() {
       return;
     }
     started.current = true;
-    contractData(contractClient.POST("/api/v1/auth/mfa/totp/enroll", { body: {} }))
+    contractDataWithSessionRetry(() => contractClient.POST("/api/v1/auth/mfa/totp/enroll", { body: {} }))
       .then(setEnrollment)
       .catch((requestError) => setError(requestError instanceof ApiError ? requestError.message : "Authenticator setup could not start."))
       .finally(() => setLoading(false));
@@ -41,7 +42,7 @@ export function MfaEnrollmentForm() {
     setSubmitting(true);
     setError(null);
     try {
-      const confirmation = await contractData(contractClient.POST("/api/v1/auth/mfa/totp/confirm", {
+      const confirmation = await contractDataWithSessionRetry(() => contractClient.POST("/api/v1/auth/mfa/totp/confirm", {
         body: { code, factor_id: enrollment.factor_id },
       }));
       setRecoveryCodes(confirmation.recovery_codes);
@@ -73,7 +74,7 @@ export function MfaEnrollmentForm() {
         </div>
         <button className="secondary-action" onClick={copyCodes} type="button"><Copy aria-hidden="true" size={15} />{copied ? "Copied" : "Copy all codes"}</button>
         {initialKey ? <><div className="secret-value"><code>{initialKey.secret}</code><button aria-label="Copy API key" onClick={() => navigator.clipboard.writeText(initialKey.secret)} type="button"><Copy aria-hidden="true" size={15} /></button></div><p className="secret-scope-summary">API access: {initialKey.scopes.join(", ")}</p></> : null}
-        <button className="auth-submit" onClick={() => router.replace("/")} type="button">I have saved these secrets</button>
+        <button className="auth-submit" onClick={() => { resetCachedMember(); router.replace("/"); }} type="button">I have saved these secrets</button>
       </section>
     );
   }
