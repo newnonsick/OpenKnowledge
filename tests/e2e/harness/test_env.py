@@ -145,6 +145,19 @@ def validate_test_schema_name(schema_name: str) -> str:
     return schema_name
 
 
+def postgres_engine_options(schema_name: str) -> dict[str, Any]:
+    return {
+        "connect_args": {
+            "server_settings": {
+                "search_path": f"{validate_test_schema_name(schema_name)},public",
+            },
+        },
+        "max_overflow": 0,
+        "pool_size": 2,
+        "pool_timeout": 30.0,
+    }
+
+
 async def clean_database_tables(engine: AsyncEngine, is_postgres: bool) -> None:
     """Clean all tables and re-seed the default global workspace."""
     async with engine.begin() as conn:
@@ -266,9 +279,9 @@ class TestEnvironment:
             "EMBEDDING_BATCH_SIZE": "16",
             "EMBEDDING_TIMEOUT_SECONDS": "5.0",
             "DB_URL": self.db_url,
-            "DB_POOL_SIZE": "5",
-            "DB_MAX_OVERFLOW": "5",
-            "DB_POOL_TIMEOUT": "10.0",
+            "DB_POOL_SIZE": "2",
+            "DB_MAX_OVERFLOW": "0",
+            "DB_POOL_TIMEOUT": "30.0",
             "DB_ECHO": "false",
         }
         test_env.update(self.custom_env_overrides)
@@ -303,13 +316,7 @@ class TestEnvironment:
                 await bootstrap_engine.dispose()
             self.engine = create_async_engine(
                 self.db_url,
-                pool_size=5,
-                max_overflow=5,
-                connect_args={
-                    "server_settings": {
-                        "search_path": f"{self.postgres_schema},public"
-                    }
-                },
+                **postgres_engine_options(self.postgres_schema),
             )
         else:
             self.engine = create_async_engine(

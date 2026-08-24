@@ -63,6 +63,8 @@ from tests.e2e.harness.runner import (
     TestResultItem,
     TierStatistics,
 )
+from tests.e2e.harness import runner as harness_runner
+from tests.e2e.harness import test_env as harness_test_env
 from tests.e2e.harness.test_env import (
     TestEnvironment,
     configured_database_url,
@@ -88,6 +90,12 @@ class TestRunnerAdversarial:
             code, desc = FEATURES[idx]
             assert code == f"F{idx}"
             assert isinstance(desc, str) and len(desc) > 3
+
+    def test_cli_has_no_implicit_duration_budget(self):
+        assert hasattr(harness_runner, "build_argument_parser")
+        args = harness_runner.build_argument_parser().parse_args(["--tier", "all"])
+
+        assert args.max_duration is None
 
     def test_collector_windows_path_normalization(self):
         """Verify feature and tier extraction handles Windows backslashes and forward slashes."""
@@ -358,6 +366,21 @@ class TestEnvironmentAdversarial:
             validate_test_schema_name("public")
         with pytest.raises(ValueError):
             validate_test_schema_name("gateway_test_bad-name")
+
+    def test_postgres_engine_options_bound_connection_usage(self):
+        assert hasattr(harness_test_env, "postgres_engine_options")
+        options = harness_test_env.postgres_engine_options("gateway_test_0123456789abcdef")
+
+        assert options == {
+            "connect_args": {
+                "server_settings": {
+                    "search_path": "gateway_test_0123456789abcdef,public",
+                },
+            },
+            "max_overflow": 0,
+            "pool_size": 2,
+            "pool_timeout": 30.0,
+        }
 
     def test_database_url_uses_canonical_environment_name(self, monkeypatch):
         monkeypatch.delenv("TEST_DATABASE_URL", raising=False)

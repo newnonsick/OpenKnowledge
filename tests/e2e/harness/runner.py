@@ -647,7 +647,7 @@ class ReportFormatter:
 # CLI Entrypoint
 # ==============================================================================
 
-def main():
+def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Local AI Gateway E2E Test Suite Runner",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -698,7 +698,7 @@ def main():
     parser.add_argument(
         "--max-duration",
         type=float,
-        default=120.0,
+        default=None,
         help="Maximum allowed duration in seconds for entire suite before threshold violation",
     )
     parser.add_argument(
@@ -712,6 +712,11 @@ def main():
         action="store_true",
         help="Collect and list matching test cases without executing them",
     )
+    return parser
+
+
+def main():
+    parser = build_argument_parser()
 
     args = parser.parse_args()
 
