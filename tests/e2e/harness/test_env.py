@@ -97,17 +97,21 @@ SQLiteDDLCompiler.render_default_string = _sqlite_render_default_string
 # 2. Database Detection & Lifecycle Utilities
 # -----------------------------------------------------------------------------
 
-def configured_database_url() -> str:
-    return os.environ.get(
-        "TEST_DATABASE_URL",
-        os.environ.get(
-            "DATABASE_URL",
-            os.environ.get(
-                "DB_URL",
-                "postgresql+asyncpg://postgres:postgres@localhost:5432/gateway_test_db",
-            ),
-        ),
+def _database_url_configuration() -> tuple[str, bool]:
+    explicit_url = (
+        os.environ.get("TEST_DATABASE_URL")
+        or os.environ.get("DATABASE_URL")
+        or os.environ.get("DB_URL")
     )
+    if explicit_url:
+        return explicit_url, True
+    from src.gateway.config import DatabaseSettings
+    database_settings = DatabaseSettings()
+    return database_settings.url, "url" in database_settings.model_fields_set
+
+
+def configured_database_url() -> str:
+    return _database_url_configuration()[0]
 
 
 async def detect_database_configuration() -> Tuple[str, bool]:
@@ -115,12 +119,7 @@ async def detect_database_configuration() -> Tuple[str, bool]:
     Detect whether PostgreSQL is available or if SQLite fallback must be used.
     Returns (db_url, is_postgres).
     """
-    explicit_url = (
-        os.environ.get("TEST_DATABASE_URL")
-        or os.environ.get("DATABASE_URL")
-        or os.environ.get("DB_URL")
-    )
-    pg_url = configured_database_url()
+    pg_url, configured = _database_url_configuration()
     if pg_url.startswith("postgresql"):
         test_engine = None
         try:
@@ -129,7 +128,7 @@ async def detect_database_configuration() -> Tuple[str, bool]:
                 await conn.execute(text("SELECT 1;"))
             return pg_url, True
         except Exception as exc:
-            if explicit_url:
+            if configured:
                 raise RuntimeError("Configured PostgreSQL is unavailable") from exc
         finally:
             if test_engine is not None:

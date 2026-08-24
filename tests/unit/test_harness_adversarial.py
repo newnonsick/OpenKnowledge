@@ -366,11 +366,43 @@ class TestEnvironmentAdversarial:
 
         assert configured_database_url() == "postgresql+asyncpg://canonical.example/gateway"
 
+    def test_database_url_uses_typed_env_file_when_environment_is_empty(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("TEST_DATABASE_URL", raising=False)
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        monkeypatch.delenv("DB_URL", raising=False)
+        (tmp_path / ".env").write_text(
+            "DATABASE_URL=postgresql+asyncpg://env-user:env-pass@env-host/gateway\n",
+            encoding="utf-8",
+        )
+
+        assert configured_database_url() == "postgresql+asyncpg://env-user:env-pass@env-host/gateway"
+
     @pytest.mark.asyncio
     async def test_explicit_postgres_configuration_never_falls_back_to_sqlite(self, monkeypatch):
         monkeypatch.setenv(
             "TEST_DATABASE_URL",
             "postgresql+asyncpg://unavailable.example/gateway",
+        )
+        broken_engine = MagicMock()
+        broken_engine.connect.side_effect = OSError("connection failed")
+
+        with patch(
+            "tests.e2e.harness.test_env.create_async_engine",
+            return_value=broken_engine,
+        ):
+            with pytest.raises(RuntimeError, match="Configured PostgreSQL"):
+                await detect_database_configuration()
+
+    @pytest.mark.asyncio
+    async def test_env_file_postgres_configuration_never_falls_back_to_sqlite(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("TEST_DATABASE_URL", raising=False)
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        monkeypatch.delenv("DB_URL", raising=False)
+        (tmp_path / ".env").write_text(
+            "DATABASE_URL=postgresql+asyncpg://env-user:env-pass@unavailable.example/gateway\n",
+            encoding="utf-8",
         )
         broken_engine = MagicMock()
         broken_engine.connect.side_effect = OSError("connection failed")
