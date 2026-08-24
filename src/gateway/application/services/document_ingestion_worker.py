@@ -9,6 +9,7 @@ import logging
 from time import perf_counter
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from src.gateway.application.parsers.chunker import Chunker
@@ -148,7 +149,20 @@ class DocumentIngestionWorker:
         if idle_delay_seconds <= 0:
             raise ValueError("Worker idle delay must be positive")
         while not stop_event.is_set():
-            claimed = await self.run_once()
+            try:
+                claimed = await self.run_once()
+            except JobLeaseLostException:
+                logger.warning(
+                    "Ingestion job lease lost; the job was cancelled, expired, or reclaimed",
+                    extra={"worker_id": self._worker_id},
+                )
+                claimed = None
+            except (SQLAlchemyError, OSError) as exc:
+                logger.warning(
+                    "Transient database failure while claiming ingestion work",
+                    extra={"worker_id": self._worker_id, "exception_class": type(exc).__name__},
+                )
+                claimed = None
             if claimed is None:
                 try:
                     await asyncio.wait_for(stop_event.wait(), timeout=idle_delay_seconds)

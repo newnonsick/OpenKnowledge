@@ -553,3 +553,152 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 )
             )
             assert len(session_revoke_audits) == 1
+
+
+async def test_knowledge_listing_and_detail_are_scoped_to_effective_spaces(tmp_path) -> None:
+    now = datetime.now(timezone.utc)
+    admin_id = uuid4()
+    member_id = uuid4()
+    settings = Settings(
+        gateway={
+            "environment": "test",
+            "public_base_url": "https://gateway.test",
+            "api_key_peppers": {1: "p" * 32},
+            "active_api_key_pepper_version": 1,
+            "mfa_encryption_keys": {1: Fernet.generate_key().decode("ascii")},
+            "active_mfa_encryption_key_version": 1,
+            "storage_dir": str(tmp_path / "storage"),
+        }
+    )
+
+    async with isolated_postgres_database() as (_, factory):
+        async with factory.begin() as session:
+            session.add_all(
+                [
+                    MemberModel(
+                        id=admin_id,
+                        username="admin",
+                        username_normalized="admin",
+                        display_name="Admin",
+                        status=MemberStatus.ACTIVE.value,
+                        system_role=SystemRole.SUPER_ADMIN.value,
+                        force_password_change=False,
+                    ),
+                    MemberModel(
+                        id=member_id,
+                        username="limited-member",
+                        username_normalized="limited-member",
+                        display_name="Limited Member",
+                        status=MemberStatus.ACTIVE.value,
+                        system_role=SystemRole.MEMBER.value,
+                        force_password_change=False,
+                    ),
+                    Workspace(id="shared-space", name="Shared", created_by_member_id=admin_id),
+                    Workspace(id="secret-space", name="Secret", created_by_member_id=admin_id),
+                ]
+            )
+            await session.flush()
+            session.add_all(
+                [
+                    SpaceMembershipModel(
+                        id=uuid4(),
+                        space_id="shared-space",
+                        member_id=member_id,
+                        role=SpaceRole.EDITOR.value,
+                    ),
+                    SpaceMembershipModel(
+                        id=uuid4(),
+                        space_id="secret-space",
+                        member_id=admin_id,
+                        role=SpaceRole.OWNER.value,
+                    ),
+                    SpaceMembershipModel(
+                        id=uuid4(),
+                        space_id="shared-space",
+                        member_id=admin_id,
+                        role=SpaceRole.OWNER.value,
+                    ),
+                ]
+            )
+            admin_session = await SessionService(session).issue(
+                principal(admin_id, SystemRole.SUPER_ADMIN),
+                now=now,
+                step_up_at=now,
+            )
+            member_session = await SessionService(session).issue(
+                principal(member_id),
+                now=now,
+                step_up_at=now,
+            )
+
+        app = FastAPI()
+        app.state.settings = settings
+        register_exception_handlers(app)
+        app.add_middleware(
+            APIKeyAuthMiddleware,
+            allowed_keys=[],
+            api_key_peppers={1: "p" * 32},
+            session_factory=factory,
+        )
+        app.add_middleware(SettingsContextMiddleware)
+        app.include_router(router)
+        set_session_factory(factory)
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="https://gateway.test",
+                cookies={"__Host-aigw-access": admin_session.access_token.reveal()},
+            ) as admin_client:
+                admin_headers = {
+                    "Origin": "https://gateway.test",
+                    "X-CSRF-Token": admin_session.csrf_token.reveal(),
+                }
+                secret_item = await admin_client.post(
+                    "/api/v1/knowledge",
+                    headers={**admin_headers, "Idempotency-Key": "seed-secret-item"},
+                    json={
+                        "space_id": "secret-space",
+                        "title": "Secret plan",
+                        "content": "Confidential contents for the secret space.",
+                        "tags": [],
+                    },
+                )
+                assert secret_item.status_code == 201
+                secret_item_id = secret_item.json()["id"]
+
+                shared_item = await admin_client.post(
+                    "/api/v1/knowledge",
+                    headers={**admin_headers, "Idempotency-Key": "seed-shared-item"},
+                    json={
+                        "space_id": "shared-space",
+                        "title": "Shared note",
+                        "content": "Visible to space members.",
+                        "tags": [],
+                    },
+                )
+                assert shared_item.status_code == 201
+                shared_item_id = shared_item.json()["id"]
+
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="https://gateway.test",
+                cookies={"__Host-aigw-access": member_session.access_token.reveal()},
+            ) as limited_client:
+                listing = await limited_client.get("/api/v1/knowledge")
+                assert listing.status_code == 200
+                listed_ids = [item["id"] for item in listing.json()["items"]]
+                assert shared_item_id in listed_ids
+                assert secret_item_id not in listed_ids
+
+                scoped_to_secret = await limited_client.get("/api/v1/knowledge?space_id=secret-space")
+                assert scoped_to_secret.status_code == 200
+                assert scoped_to_secret.json()["items"] == []
+
+                denied_detail = await limited_client.get(f"/api/v1/knowledge/{secret_item_id}")
+                assert denied_detail.status_code in (403, 404)
+
+                allowed_detail = await limited_client.get(f"/api/v1/knowledge/{shared_item_id}")
+                assert allowed_detail.status_code == 200
+        finally:
+            set_session_factory(None)

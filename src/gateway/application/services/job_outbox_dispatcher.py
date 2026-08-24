@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import timedelta
@@ -11,6 +12,8 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.gateway.domain.exceptions import JobLeaseLostException
+
+logger = logging.getLogger(__name__)
 from src.gateway.infrastructure.persistence.ingestion_models import JobOutboxModel
 
 
@@ -196,7 +199,13 @@ class JobOutboxDispatcher:
         if idle_delay_seconds <= 0:
             raise ValueError("Outbox idle delay must be positive")
         while not stop_event.is_set():
-            dispatched = await self.dispatch_once()
+            try:
+                dispatched = await self.dispatch_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Outbox dispatch iteration failed")
+                dispatched = None
             if dispatched is None:
                 try:
                     await asyncio.wait_for(stop_event.wait(), timeout=idle_delay_seconds)

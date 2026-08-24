@@ -1367,15 +1367,25 @@ async def list_knowledge(
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     after = _cursor_decode(cursor)
+    effective_space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal))
+    if space_id is not None:
+        if space_id not in effective_space_ids:
+            return {"items": [], "next_cursor": None}
+        scoped_spaces: tuple[str, ...] = (space_id,)
+    else:
+        scoped_spaces = effective_space_ids
+        if not scoped_spaces:
+            return {"items": [], "next_cursor": None}
     query = (
         select(KnowledgeItemModel, KnowledgeRevisionModel)
         .outerjoin(KnowledgeRevisionModel, KnowledgeRevisionModel.id == KnowledgeItemModel.current_revision_id)
-        .where(KnowledgeItemModel.is_deleted.is_(False))
+        .where(
+            KnowledgeItemModel.is_deleted.is_(False),
+            KnowledgeItemModel.workspace_id.in_(scoped_spaces),
+        )
         .order_by(KnowledgeItemModel.id)
         .limit(limit + 1)
     )
-    if space_id is not None:
-        query = query.where(KnowledgeItemModel.workspace_id == space_id)
     if after is not None:
         try:
             query = query.where(KnowledgeItemModel.id > UUID(after))
@@ -1437,6 +1447,7 @@ async def get_knowledge(
     item = await KnowledgeManagementService(session).get(item_id)
     if item is None:
         raise AuthorizationException()
+    await AuthorizationService(session).authorize_space(principal, item.workspace_id, Action.CONTENT_READ)
     return _knowledge_payload(item)
 
 
@@ -1598,9 +1609,24 @@ async def list_sources(
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     position = _position_cursor_decode(cursor)
-    query = select(DocumentModel).where(DocumentModel.archived_at.is_(None)).order_by(DocumentModel.created_at.desc(), DocumentModel.id.desc()).limit(limit + 1)
+    effective_space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal))
     if space_id is not None:
-        query = query.where(DocumentModel.space_id == space_id)
+        if space_id not in effective_space_ids:
+            return {"items": [], "next_cursor": None}
+        scoped_spaces: tuple[str, ...] = (space_id,)
+    else:
+        scoped_spaces = effective_space_ids
+        if not scoped_spaces:
+            return {"items": [], "next_cursor": None}
+    query = (
+        select(DocumentModel)
+        .where(
+            DocumentModel.archived_at.is_(None),
+            DocumentModel.space_id.in_(scoped_spaces),
+        )
+        .order_by(DocumentModel.created_at.desc(), DocumentModel.id.desc())
+        .limit(limit + 1)
+    )
     if position is not None:
         created_at, identifier = position
         query = query.where(
@@ -1710,9 +1736,21 @@ async def list_ingestion_jobs(
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     position = _position_cursor_decode(cursor)
-    query = select(IngestionJobModel).order_by(IngestionJobModel.created_at.desc(), IngestionJobModel.id.desc()).limit(limit + 1)
+    effective_space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal))
     if space_id is not None:
-        query = query.where(IngestionJobModel.space_id == space_id)
+        if space_id not in effective_space_ids:
+            return {"items": [], "next_cursor": None}
+        scoped_spaces: tuple[str, ...] = (space_id,)
+    else:
+        scoped_spaces = effective_space_ids
+        if not scoped_spaces:
+            return {"items": [], "next_cursor": None}
+    query = (
+        select(IngestionJobModel)
+        .where(IngestionJobModel.space_id.in_(scoped_spaces))
+        .order_by(IngestionJobModel.created_at.desc(), IngestionJobModel.id.desc())
+        .limit(limit + 1)
+    )
     if position is not None:
         created_at, identifier = position
         query = query.where(

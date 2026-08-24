@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from src.gateway.application.services.storage_consistency_service import StorageConsistencyResult, StorageConsistencyService
+
+logger = logging.getLogger(__name__)
 
 
 class StorageMaintenanceRunner:
@@ -50,7 +53,12 @@ class StorageMaintenanceRunner:
 
     async def run_until_stopped(self, stop_event: asyncio.Event) -> None:
         while not stop_event.is_set():
-            await self.run_once()
+            try:
+                await self.run_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Storage maintenance iteration failed")
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=self._interval_seconds)
             except TimeoutError:
