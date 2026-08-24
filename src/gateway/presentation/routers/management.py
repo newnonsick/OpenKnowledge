@@ -911,24 +911,38 @@ async def confirm_ai_action(
 
 @router.get("/ai-actions", response_model=Page[PendingAIAction])
 async def list_ai_actions(
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None),
     principal: Principal = Depends(require_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     if principal.kind is not PrincipalKind.SESSION:
         raise AuthorizationException()
     current_time = datetime.now(timezone.utc)
-    actions = list(
-        await session.scalars(
-            select(PendingAIActionModel)
-            .where(
-                PendingAIActionModel.actor_member_id == _actor_id(principal),
-                PendingAIActionModel.state == "pending",
-                PendingAIActionModel.expires_at > current_time,
-            )
-            .order_by(PendingAIActionModel.created_at.desc())
-            .limit(100)
+    position = _position_cursor_decode(cursor)
+    query = (
+        select(PendingAIActionModel)
+        .where(
+            PendingAIActionModel.actor_member_id == _actor_id(principal),
+            PendingAIActionModel.state == "pending",
+            PendingAIActionModel.expires_at > current_time,
         )
+        .order_by(PendingAIActionModel.created_at.desc(), PendingAIActionModel.id.desc())
+        .limit(limit + 1)
     )
+    if position is not None:
+        created_at, identifier = position
+        query = query.where(
+            or_(
+                PendingAIActionModel.created_at < created_at,
+                and_(
+                    PendingAIActionModel.created_at == created_at,
+                    PendingAIActionModel.id < identifier,
+                ),
+            )
+        )
+    rows = list(await session.scalars(query))
+    actions = rows[:limit]
     return {
         "items": [
             {
@@ -942,7 +956,7 @@ async def list_ai_actions(
             }
             for action in actions
         ],
-        "next_cursor": None,
+        "next_cursor": _position_cursor_encode(actions[-1].created_at, actions[-1].id) if len(rows) > limit else None,
     }
 
 
@@ -1099,6 +1113,10 @@ async def create_space(
 @router.get("/spaces/{space_id}/members", response_model=Page[SpaceMember])
 async def list_space_members(
     space_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None),
+    q: str | None = Query(default=None, min_length=1, max_length=255),
+    role: Literal["owner", "editor", "reader"] | None = Query(default=None),
     principal: Principal = Depends(require_scope("spaces:members")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
@@ -1110,14 +1128,29 @@ async def list_space_members(
     )
     if actor_membership is None or actor_membership.role != SpaceRole.OWNER.value:
         raise AuthorizationException()
-    rows = (
-        await session.execute(
-            select(SpaceMembershipModel, MemberModel)
-            .join(MemberModel, MemberModel.id == SpaceMembershipModel.member_id)
-            .where(SpaceMembershipModel.space_id == space_id)
-            .order_by(MemberModel.username_normalized)
+    after = _cursor_decode(cursor)
+    query = (
+        select(SpaceMembershipModel, MemberModel)
+        .join(MemberModel, MemberModel.id == SpaceMembershipModel.member_id)
+        .where(SpaceMembershipModel.space_id == space_id)
+        .order_by(MemberModel.username_normalized)
+        .limit(limit + 1)
+    )
+    if q is not None and q.strip():
+        pattern = f"%{q.strip()}%"
+        query = query.where(
+            or_(
+                MemberModel.username.ilike(pattern),
+                MemberModel.username_normalized.ilike(pattern),
+                MemberModel.display_name.ilike(pattern),
+            )
         )
-    ).all()
+    if role is not None:
+        query = query.where(SpaceMembershipModel.role == role)
+    if after is not None:
+        query = query.where(MemberModel.username_normalized > after)
+    rows = (await session.execute(query)).all()
+    page = rows[:limit]
     return {
         "items": [
             {
@@ -1128,9 +1161,9 @@ async def list_space_members(
                 "role": membership.role,
                 "updated_at": membership.updated_at.isoformat(),
             }
-            for membership, member in rows
+            for membership, member in page
         ],
-        "next_cursor": None,
+        "next_cursor": _cursor_encode(page[-1][1].username_normalized) if len(rows) > limit else None,
     }
 
 
