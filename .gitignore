@@ -15,6 +15,7 @@ lib/
 !web/lib/generated/
 !web/lib/generated/openapi.json
 !web/lib/generated/openapi.ts
+!web/scripts/lib/
 lib64/
 parts/
 sdist/
@@ -92,3 +93,6 @@ web/test-results/
 web/*.tsbuildinfo
 
 .pytest-tmp/
+
+# Local E2E credentials
+web/scripts/credentials.local.json

@@ -79,7 +79,7 @@ def test_operations_summary_and_audit_trail(admin_client, space_factory):
     assert "ingestion" in body and "settings_revision" in body
 
     time.sleep(0.5)
-    audit = admin_client.get("/api/v1/audit-events", params={"limit": 50})
+    audit = admin_client.get("/api/v1/audit-events", params={"page": 1, "page_size": 50})
     assert audit.status_code == 200, audit.text
     actions = [event.get("action") for event in audit.json()["items"]]
     assert any(action and action.startswith("space.") for action in actions), actions[:10]
@@ -125,7 +125,7 @@ def test_ai_tool_proposal_requires_confirmation(admin_client):
     assert proposal["status"] == "confirmation_required"
     pending_action_id = proposal["pending_action_id"]
 
-    pending_list = admin_client.get("/api/v1/ai-actions", params={"limit": 50})
+    pending_list = admin_client.get("/api/v1/ai-actions", params={"page": 1, "page_size": 50})
     assert pending_list.status_code == 200, pending_list.text
     pending_ids = [action["id"] for action in pending_list.json()["items"]]
     assert pending_action_id in pending_ids
@@ -178,13 +178,13 @@ def test_api_key_lifecycle_revocation_blocks_chat(api_key: str):
         client.close()
 
 
-def test_pagination_cursor_walk(admin_client):
-    first_page = admin_client.get("/api/v1/members", params={"limit": 3})
+def test_pagination_numeric_page_walk(admin_client):
+    first_page = admin_client.get("/api/v1/members", params={"page": 1, "page_size": 3})
     assert first_page.status_code == 200
     page_body = first_page.json()
-    if not page_body.get("next_cursor"):
+    if page_body["total_pages"] < 2:
         return
-    second_page = admin_client.get("/api/v1/members", params={"limit": 3, "cursor": page_body["next_cursor"]})
+    second_page = admin_client.get("/api/v1/members", params={"page": 2, "page_size": 3})
     assert second_page.status_code == 200
     first_usernames = {item["username"] for item in page_body["items"]}
     second_usernames = {item["username"] for item in second_page.json()["items"]}

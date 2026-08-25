@@ -32,7 +32,7 @@ Errors use a consistent JSON shape:
 
 Rejected requests on `/v1/messages` return the Anthropic error shape; other paths return the OpenAI error shape. Every response carries a `request_id` that also appears in logs for correlation.
 
-List endpoints use cursor pagination with `limit` and `cursor` query parameters and return `next_cursor` when more rows exist. Mutating management endpoints that create resources accept an `Idempotency-Key` header (required where noted) so retries do not duplicate work.
+Management list endpoints use server-side numeric pagination with `page` and `page_size` query parameters. Responses contain `items`, the requested `page`, the effective `page_size`, `total_items`, and `total_pages`; an out-of-range page returns an empty `items` array while preserving the requested page metadata. Page numbers start at 1 and `page_size` is limited to 100. Mutating management endpoints that create resources accept an `Idempotency-Key` header (required where noted) so retries do not duplicate work.
 
 ## Health and metrics
 
@@ -118,7 +118,7 @@ Cookies set by these endpoints:
 
 ## Management endpoints
 
-All list endpoints use cursor pagination. Ownership transfers, settings activation, and other destructive or privileged mutations require step-up authentication and are audited.
+All management list endpoints use numeric server-side pagination. Ownership transfers, settings activation, and other destructive or privileged mutations require step-up authentication and are audited.
 
 ### Current member and operations
 
@@ -148,7 +148,7 @@ Space roles are `owner`, `editor`, and `reader`. Owners manage membership and ca
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/v1/knowledge` | List knowledge items with cursor pagination. |
+| GET | `/api/v1/knowledge` | List knowledge items with server-side numeric pagination. |
 | POST | `/api/v1/knowledge` | Create an item (first revision). |
 | GET | `/api/v1/knowledge/{item_id}` | Item detail with content and metadata. |
 | PUT | `/api/v1/knowledge/{item_id}` | Append a revision; requires `expected_version`. |

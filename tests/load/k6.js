@@ -43,7 +43,7 @@ export function setup() {
 }
 
 export function management() {
-  const response = http.get(`${baseUrl}/api/v1/spaces?limit=100`, { headers });
+  const response = http.get(`${baseUrl}/api/v1/spaces?page=1&page_size=100`, { headers });
   managementLatency.add(response.timings.duration);
   check(response, { "management status 200": (value) => value.status === 200 });
 }

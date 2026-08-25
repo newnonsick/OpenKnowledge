@@ -268,6 +268,7 @@ class TestEnvironment:
             "TOOL_TIMEOUT_SECONDS": "5.0",
             "LLM_URL": "http://mock-llm.test/v1",
             "LLM_MODEL_ID": "mock-llama-3.1-8b",
+            "LLM_FALLBACK_MODEL_IDS": "",
             "LLM_API_KEY": "mock-llm-key",
             "LLM_CONTEXT_WINDOW": "4096",
             "LLM_TIMEOUT_SECONDS": "10.0",

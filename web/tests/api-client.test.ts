@@ -138,12 +138,12 @@ describe("apiRequest", () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: "invalid_api_key" } }), { status: 401 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: "refreshed", access_expires_at: "2026-08-20T12:15:00Z" }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], page: 1, page_size: 50, total_items: 0, total_pages: 0 }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
     const spaces = await contractData(contractClient.GET("/api/v1/spaces"));
 
-    expect(spaces).toEqual({ items: [], next_cursor: null });
+    expect(spaces).toEqual({ items: [], page: 1, page_size: 50, total_items: 0, total_pages: 0 });
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(new URL((fetchMock.mock.calls[0][0] as Request).url).pathname).toBe("/api/v1/spaces");
     expect(fetchMock.mock.calls[1][0]).toBe("/api/v1/auth/refresh");

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   ArrowRight,
@@ -72,11 +72,19 @@ export type DashboardOperations = {
 };
 
 type DashboardShellProps = {
+  loading?: boolean;
   member: { displayName: string; role: string; systemRole: "member" | "super_admin" };
   operations: DashboardOperations | null;
   ready: boolean;
+  spaceCount?: number;
   spaces: DashboardSpace[];
+  spacesLoaded?: boolean;
 };
+
+function formatClock(value: string): string {
+  const observed = new Date(value);
+  return `${String(observed.getHours()).padStart(2, "0")}:${String(observed.getMinutes()).padStart(2, "0")}`;
+}
 
 function formatBytes(value: number): string {
   if (value < 1024) {
@@ -107,14 +115,49 @@ function NavigationGroup({ label, items }: { label: string; items: typeof naviga
   );
 }
 
-export function DashboardShell({ member, operations, ready, spaces }: DashboardShellProps) {
+export function DashboardShell({
+  loading = false,
+  member,
+  operations,
+  ready,
+  spaces,
+  spaceCount = spaces.length,
+  spacesLoaded = true,
+}: DashboardShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const commandLinkRef = useRef<HTMLAnchorElement>(null);
   const { closeRef, drawerRef, triggerRef } = useDrawerFocus(menuOpen, setMenuOpen);
   const visibleAdministration = member.systemRole === "super_admin"
     ? administration
     : administration.filter((item) => item.href === "/settings");
   const initials = member.displayName.split(/\s+/).map((value) => value[0]).join("").slice(0, 2).toUpperCase();
   const queued = operations ? operations.ingestion.queued + operations.ingestion.retry_wait : 0;
+  const pulseUnavailable = !loading && !ready;
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        event.defaultPrevented
+        || event.altKey
+        || !(event.metaKey || event.ctrlKey)
+        || event.key.toLowerCase() !== "k"
+        || (target instanceof HTMLElement && (
+          target.isContentEditable
+          || target.tagName === "INPUT"
+          || target.tagName === "TEXTAREA"
+          || target.tagName === "SELECT"
+        ))
+      ) {
+        return;
+      }
+      event.preventDefault();
+      commandLinkRef.current?.click();
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, []);
+
   return (
     <div className={`app-frame${menuOpen ? " menu-open" : ""}`}>
       <aside className="sidebar console-sidebar dashboard-sidebar" id="dashboard-navigation" ref={drawerRef}>
@@ -129,7 +172,7 @@ export function DashboardShell({ member, operations, ready, spaces }: DashboardS
           <span className="family-avatar">K</span>
           <span className="family-copy">
             <strong>Family knowledge</strong>
-            <small>{spaces.length} accessible {spaces.length === 1 ? "space" : "spaces"}</small>
+            <small>{loading ? "Loading spaces…" : `${spaceCount} accessible ${spaceCount === 1 ? "space" : "spaces"}`}</small>
           </span>
         </div>
 
@@ -142,7 +185,7 @@ export function DashboardShell({ member, operations, ready, spaces }: DashboardS
           <div className="storage-meter">
             <div className="storage-heading"><span>Access</span><span>Scoped</span></div>
             <div className="storage-track"><span className="access-track" /></div>
-            <p>{spaces.length} spaces available to this account</p>
+            <p>{loading ? "Loading access…" : `${spaceCount} spaces available to this account`}</p>
           </div>
           <Link className="profile-card" href="/settings">
             <span className="profile-avatar">{initials || "M"}</span>
@@ -152,7 +195,7 @@ export function DashboardShell({ member, operations, ready, spaces }: DashboardS
         </div>
       </aside>
 
-      <main className="main-canvas">
+      <main aria-busy={loading} className="main-canvas">
         <header className="console-mobile-bar">
           <button aria-controls="dashboard-navigation" aria-expanded={menuOpen} aria-label="Open navigation" className="mobile-menu-button" onClick={() => setMenuOpen(true)} ref={triggerRef} type="button"><Menu aria-hidden="true" size={19} /></button>
           <span><Boxes aria-hidden="true" size={17} /> Kinbase</span>
@@ -160,12 +203,13 @@ export function DashboardShell({ member, operations, ready, spaces }: DashboardS
         <header className="topbar">
           <div className="scope-indicator"><span className="scope-dot" />Searching all accessible spaces</div>
           <div className="topbar-actions">
-            <Link className="command-button" href="/explore"><Command aria-hidden="true" size={15} /> Command <kbd>⌘ K</kbd></Link>
+            <Link className="command-button" href="/explore" ref={commandLinkRef}><Command aria-hidden="true" size={15} /> Command <kbd>⌘ K</kbd></Link>
             <Link aria-label="Open profile" className="icon-button" href="/settings"><CircleUserRound aria-hidden="true" size={20} /></Link>
           </div>
         </header>
 
         <div className="content-wrap">
+          {loading ? <p aria-label="Loading dashboard" aria-live="polite" className="visually-hidden" role="status">Loading dashboard</p> : null}
           <section className="hero-section">
             <div className="eyebrow"><Sparkles aria-hidden="true" size={15} /> Your family knowledge, in one place</div>
             <h1>Everything your family knows.<br /><span>Ready when you need it.</span></h1>
@@ -192,37 +236,42 @@ export function DashboardShell({ member, operations, ready, spaces }: DashboardS
                 <Link href="/spaces">View all <ArrowRight aria-hidden="true" size={15} /></Link>
               </div>
               <div className="recent-list">
-                {spaces.slice(0, 3).map((space, index) => (
+                {loading ? <div aria-hidden="true" className="dashboard-list-skeleton">
+                  {Array.from({ length: 3 }).map((_, index) => <span className="dashboard-skeleton-row" key={index}><i /><b /><em /></span>)}
+                </div> : spaces.slice(0, 3).map((space, index) => (
                   <Link className="recent-row" href={`/knowledge?space=${encodeURIComponent(space.id)}`} key={space.id}>
                     <span className={`document-glyph ${["violet", "cyan", "mint"][index]}`}><BookOpen aria-hidden="true" size={18} /></span>
                     <span className="recent-copy"><strong>{space.name}</strong><small>{space.role} · available now</small></span>
                     <ArrowRight aria-hidden="true" className="row-arrow" size={17} />
                   </Link>
                 ))}
-                {spaces.length === 0 ? <div className="dashboard-empty"><FolderKanban aria-hidden="true" size={19} /><span><strong>No spaces yet</strong><small>Create the first private working space.</small></span></div> : null}
+                {!loading && spacesLoaded && spaces.length === 0 ? <div className="dashboard-empty"><FolderKanban aria-hidden="true" size={19} /><span><strong>No spaces yet</strong><small>Create the first private working space.</small></span></div> : null}
+                {!loading && !spacesLoaded ? <div className="dashboard-empty"><FolderKanban aria-hidden="true" size={19} /><span><strong>Spaces are unavailable</strong><small>Try refreshing this page before managing access.</small></span></div> : null}
               </div>
             </article>
 
             <article className="pulse-panel">
-              <div className="pulse-topline"><span><span className={`live-dot${ready ? "" : " is-down"}`} /> System pulse</span><span className={`pulse-status${ready ? "" : " is-down"}`}>{ready ? "Ready" : "Needs attention"}</span></div>
-              <div className="pulse-summary"><strong>{operations ? operations.ingestion.running : "—"}</strong><span>jobs processing now</span></div>
-              <p>{operations ? `Observed across ${operations.spaces} accessible ${operations.spaces === 1 ? "space" : "spaces"}` : "Operational snapshot is temporarily unavailable"}</p>
-              <div className="pulse-operational-grid">
-                <div><small>Queue</small><strong>{operations ? `${queued} queued` : "Unavailable"}</strong></div>
-                <div><small>Processing</small><strong>{operations ? `${operations.ingestion.running} running` : "Unavailable"}</strong></div>
-                <div><small>Storage</small><strong>{operations ? `${formatBytes(operations.storage.referenced_bytes)} referenced` : "Unavailable"}</strong></div>
-                <div><small>Retrieval</small><strong>{operations?.retrieval.embedding_generation_active ? "Generation active" : "Check generation"}</strong></div>
-                <div><small>Settings</small><strong>{operations ? `Revision ${operations.settings_revision}` : "Unavailable"}</strong></div>
-                <div><small>Failures</small><strong>{operations ? `${operations.ingestion.failed} terminal` : "Unavailable"}</strong></div>
-              </div>
-              {operations ? <time className="pulse-observed" dateTime={operations.observed_at}>Snapshot {new Date(operations.observed_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time> : null}
+              <div className="pulse-topline"><span><span className={`live-dot${pulseUnavailable ? " is-down" : ""}`} /> System pulse</span><span className={`pulse-status${pulseUnavailable ? " is-down" : ""}`}>{loading ? "Checking" : ready ? "Ready" : "Needs attention"}</span></div>
+              {loading ? <div aria-hidden="true" className="dashboard-pulse-skeleton"><i /><b /><span><em /><em /><em /><em /><em /><em /></span></div> : <>
+                <div className="pulse-summary"><strong>{operations ? operations.ingestion.running : "—"}</strong><span>jobs processing now</span></div>
+                <p>{operations ? `Observed across ${operations.spaces} accessible ${operations.spaces === 1 ? "space" : "spaces"}` : "Operational snapshot is temporarily unavailable"}</p>
+                <div className="pulse-operational-grid">
+                  <div><small>Queue</small><strong>{operations ? `${queued} queued` : "Unavailable"}</strong></div>
+                  <div><small>Processing</small><strong>{operations ? `${operations.ingestion.running} running` : "Unavailable"}</strong></div>
+                  <div><small>Storage</small><strong>{operations ? `${formatBytes(operations.storage.referenced_bytes)} referenced` : "Unavailable"}</strong></div>
+                  <div><small>Retrieval</small><strong>{operations?.retrieval.embedding_generation_active ? "Generation active" : "Check generation"}</strong></div>
+                  <div><small>Settings</small><strong>{operations ? `Revision ${operations.settings_revision}` : "Unavailable"}</strong></div>
+                  <div><small>Failures</small><strong>{operations ? `${operations.ingestion.failed} terminal` : "Unavailable"}</strong></div>
+                </div>
+                {operations ? <time className="pulse-observed" dateTime={operations.observed_at}>Snapshot {formatClock(operations.observed_at)}</time> : null}
+              </>}
             </article>
           </section>
 
           <section className="attention-strip">
             <div className="attention-icon"><Clock3 aria-hidden="true" size={19} /></div>
-            <div><strong>{ready ? "Permission-aware search is active" : "The gateway is not ready"}</strong><p>{ready ? "Every search is limited to spaces this account can access." : "Check database readiness and schema compatibility before continuing."}</p></div>
-            <Link href={ready ? "/spaces" : "/activity"}>{ready ? "Review access" : "View activity"}</Link>
+            <div><strong>{loading ? "Checking system status" : ready ? "Permission-aware search is active" : "The gateway is not ready"}</strong><p>{loading ? "Loading access and operational status." : ready ? "Every search is limited to spaces this account can access." : "Check database readiness and schema compatibility before continuing."}</p></div>
+            {loading ? <span className="attention-loading">Checking…</span> : <Link href={ready ? "/spaces" : "/activity"}>{ready ? "Review access" : "View activity"}</Link>}
           </section>
         </div>
       </main>

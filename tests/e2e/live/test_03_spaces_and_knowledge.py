@@ -79,11 +79,14 @@ def test_space_lifecycle_and_membership_roles(admin_client, member_factory, spac
     space_id = space["id"]
     assert space["role"] == "owner"
 
-    candidates = admin_client.get(f"/api/v1/spaces/{space_id}/member-candidates")
-    assert candidates.status_code == 200, candidates.text
-    candidate_ids = [item["member_id"] for item in candidates.json()["items"]]
-    assert editor["member_id"] in candidate_ids
-    assert reader["member_id"] in candidate_ids
+    for candidate in (editor, reader):
+        candidates = admin_client.get(
+            f"/api/v1/spaces/{space_id}/member-candidates",
+            params={"q": candidate["username"]},
+        )
+        assert candidates.status_code == 200, candidates.text
+        candidate_ids = [item["member_id"] for item in candidates.json()["items"]]
+        assert candidate["member_id"] in candidate_ids
 
     add_editor = admin_client.put(
         f"/api/v1/spaces/{space_id}/members/{editor['member_id']}",

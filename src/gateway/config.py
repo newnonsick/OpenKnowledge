@@ -41,6 +41,15 @@ class LLMSettings(BaseSettings):
         validation_alias=AliasChoices("LLM_MODEL_ID", "llm_model_id", "model_id"),
         description="Default backend LLM model identifier",
     )
+    fallback_model_ids: Union[List[str], str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices(
+            "LLM_FALLBACK_MODEL_IDS",
+            "llm_fallback_model_ids",
+            "fallback_model_ids",
+        ),
+        description="Ordered fallback LLM model identifiers for transient default-model failures",
+    )
     api_key: str = Field(
         default="EMPTY",
         repr=False,
@@ -89,6 +98,26 @@ class LLMSettings(BaseSettings):
         validation_alias=AliasChoices("LLM_MAX_TOKENS", "llm_max_tokens", "max_tokens"),
         description="Default max completion tokens",
     )
+
+    @field_validator("fallback_model_ids", mode="before")
+    @classmethod
+    def parse_fallback_model_ids(cls, value: Any) -> List[str]:
+        if isinstance(value, str):
+            if value.startswith("[") and value.endswith("]"):
+                try:
+                    value = json.loads(value)
+                except json.JSONDecodeError:
+                    pass
+            if isinstance(value, str):
+                value = value.split(",")
+        if isinstance(value, (list, tuple, set)):
+            unique: List[str] = []
+            for item in value:
+                candidate = str(item).strip()
+                if candidate and candidate not in unique:
+                    unique.append(candidate)
+            return unique
+        return []
 
 class EmbeddingSettings(BaseSettings):
 

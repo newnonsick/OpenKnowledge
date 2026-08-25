@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import pytest
 import httpx
@@ -176,6 +177,107 @@ async def test_non_stream_llm_adapter_retries_transient_status() -> None:
         response = await llm.generate([{"role": "user", "content": "hello"}])
     assert response.content == "ok"
     assert attempts == 2
+
+
+async def test_llm_adapter_uses_configured_fallback_after_primary_retries_are_exhausted() -> None:
+    attempted_models: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        model = json.loads(request.content)["model"]
+        attempted_models.append(model)
+        if model == "primary-rate-limited":
+            return httpx.Response(429)
+        return httpx.Response(
+            200,
+            json={
+                "id": "recovered",
+                "model": "recovery-model",
+                "choices": [{"message": {"content": "recovered"}, "finish_reason": "stop"}],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        llm = HttpLLMClient(
+            base_url="https://llm.test/v1",
+            api_key="key",
+            default_model="primary-rate-limited",
+            client=client,
+            resilience_policy=ResiliencePolicy(max_attempts=2, base_backoff_seconds=0, max_backoff_seconds=0),
+        )
+        llm.fallback_model_ids = ["recovery-model"]
+        response = await llm.generate([{"role": "user", "content": "hello"}])
+
+    assert response.content == "recovered"
+    assert response.model == "recovery-model"
+    assert attempted_models == ["primary-rate-limited", "primary-rate-limited", "recovery-model"]
+
+
+async def test_llm_adapter_fallbacks_are_default_only_and_isolate_an_open_primary_circuit() -> None:
+    attempted_models: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        model = json.loads(request.content)["model"]
+        attempted_models.append(model)
+        if model == "primary-circuit":
+            return httpx.Response(429)
+        if model == "caller-selected":
+            return httpx.Response(429)
+        return httpx.Response(
+            200,
+            json={
+                "id": "recovered",
+                "model": "recovery-circuit",
+                "choices": [{"message": {"content": "recovered"}, "finish_reason": "stop"}],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        llm = HttpLLMClient(
+            base_url="https://llm.test/v1",
+            api_key="key",
+            default_model="primary-circuit",
+            client=client,
+            resilience_policy=ResiliencePolicy(
+                max_attempts=1,
+                base_backoff_seconds=0,
+                max_backoff_seconds=0,
+                circuit_failure_threshold=1,
+            ),
+        )
+        llm.fallback_model_ids = ["recovery-circuit"]
+
+        recovered = await llm.generate([{"role": "user", "content": "hello"}])
+        with pytest.raises(LLMProviderException):
+            await llm.generate([{"role": "user", "content": "hello"}], model="caller-selected")
+
+    assert recovered.content == "recovered"
+    assert attempted_models == ["primary-circuit", "recovery-circuit", "caller-selected"]
+
+
+async def test_stream_adapter_uses_fallback_before_the_stream_opens() -> None:
+    attempted_models: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        model = json.loads(request.content)["model"]
+        attempted_models.append(model)
+        if model == "primary-stream":
+            return httpx.Response(503)
+        body = 'data: {"id":"one","model":"recovery-stream","choices":[{"delta":{"content":"recovered"}}]}\n\ndata: [DONE]\n\n'
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        llm = HttpLLMClient(
+            base_url="https://llm.test/v1",
+            api_key="key",
+            default_model="primary-stream",
+            client=client,
+            resilience_policy=ResiliencePolicy(max_attempts=2, base_backoff_seconds=0, max_backoff_seconds=0),
+        )
+        llm.fallback_model_ids = ["recovery-stream"]
+        chunks = [chunk async for chunk in llm.generate_stream([{"role": "user", "content": "hello"}])]
+
+    assert [chunk.delta_content for chunk in chunks] == ["recovered"]
+    assert attempted_models == ["primary-stream", "primary-stream", "recovery-stream"]
 
 
 async def test_llm_adapter_does_not_retry_client_rejection() -> None:

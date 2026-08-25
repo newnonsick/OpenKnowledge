@@ -106,6 +106,8 @@ The management API under `/api/v1` and the web console share one authentication 
 
 Sensitive operations additionally require a recent step-up: the caller must have re-authenticated within the last 10 minutes via `POST /api/v1/auth/step-up`.
 
+Management list routes use one shared numeric pagination contract: filtered queries are counted before a bounded `page_size` slice is loaded, and the response reports `page`, `page_size`, `total_items`, and `total_pages` alongside `items`. The console keeps filters server-side, resets to page 1 when a filter changes, and replaces the visible slice when a user jumps between pages. Stable ordering remains part of each route's query so direct page navigation is deterministic.
+
 ## Worker pipeline
 
 `python -m src.gateway.worker` starts four concurrent loops in one task group. The worker refuses to start when `WORKER_DATABASE_URL` is missing, when it matches the web runtime role, when the schema is incompatible, or when its database role privileges are wrong.

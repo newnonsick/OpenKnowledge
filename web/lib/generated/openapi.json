@@ -351,21 +351,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "AISpaceListExecution",
         "type": "object"
@@ -2864,21 +2872,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "Page[AIIngestionJobResult]",
         "type": "object"
@@ -2893,21 +2909,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "Page[AISourceResult]",
         "type": "object"
@@ -2922,21 +2946,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "Page[AISpaceMemberResult]",
         "type": "object"
@@ -2951,21 +2983,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "Page[APIKeySummary]",
         "type": "object"
@@ -2980,21 +3020,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "Page[AdminSpaceSummary]",
         "type": "object"
@@ -3009,21 +3057,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "Page[AuditEvent]",
         "type": "object"
@@ -3038,21 +3094,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "Page[IngestionJob]",
         "type": "object"
@@ -3067,21 +3131,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "Page[KnowledgeSummary]",
         "type": "object"
@@ -3096,21 +3168,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "Page[MemberSummary]",
         "type": "object"
@@ -3125,21 +3205,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "Page[PendingAIAction]",
         "type": "object"
@@ -3154,21 +3242,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "Page[RuntimeSettings]",
         "type": "object"
@@ -3183,21 +3279,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "Page[SessionSummary]",
         "type": "object"
@@ -3212,21 +3316,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "Page[SourceSummary]",
         "type": "object"
@@ -3241,21 +3353,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "Page[SpaceMemberCandidate]",
         "type": "object"
@@ -3270,21 +3390,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "Page[SpaceMember]",
         "type": "object"
@@ -3299,21 +3427,29 @@
             "title": "Items",
             "type": "array"
           },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "page",
+          "page_size",
+          "total_items",
+          "total_pages"
         ],
         "title": "Page[SpaceSummary]",
         "type": "object"
@@ -4790,30 +4926,25 @@
         "parameters": [
           {
             "in": "query",
-            "name": "limit",
+            "name": "page",
             "required": false,
             "schema": {
-              "default": 50,
-              "maximum": 100,
+              "default": 1,
               "minimum": 1,
-              "title": "Limit",
+              "title": "Page",
               "type": "integer"
             }
           },
           {
             "in": "query",
-            "name": "cursor",
+            "name": "page_size",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
             }
           },
           {
@@ -5108,30 +5239,25 @@
         "parameters": [
           {
             "in": "query",
-            "name": "limit",
+            "name": "page",
             "required": false,
             "schema": {
-              "default": 50,
-              "maximum": 100,
+              "default": 1,
               "minimum": 1,
-              "title": "Limit",
+              "title": "Page",
               "type": "integer"
             }
           },
           {
             "in": "query",
-            "name": "cursor",
+            "name": "page_size",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
             }
           }
         ],
@@ -5776,30 +5902,25 @@
         "parameters": [
           {
             "in": "query",
-            "name": "limit",
+            "name": "page",
             "required": false,
             "schema": {
-              "default": 50,
-              "maximum": 100,
+              "default": 1,
               "minimum": 1,
-              "title": "Limit",
+              "title": "Page",
               "type": "integer"
             }
           },
           {
             "in": "query",
-            "name": "cursor",
+            "name": "page_size",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
             }
           },
           {
@@ -6239,30 +6360,25 @@
         "parameters": [
           {
             "in": "query",
-            "name": "limit",
+            "name": "page",
             "required": false,
             "schema": {
-              "default": 50,
-              "maximum": 100,
+              "default": 1,
               "minimum": 1,
-              "title": "Limit",
+              "title": "Page",
               "type": "integer"
             }
           },
           {
             "in": "query",
-            "name": "cursor",
+            "name": "page_size",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
             }
           },
           {
@@ -7352,30 +7468,25 @@
           },
           {
             "in": "query",
-            "name": "limit",
+            "name": "page",
             "required": false,
             "schema": {
-              "default": 50,
-              "maximum": 100,
+              "default": 1,
               "minimum": 1,
-              "title": "Limit",
+              "title": "Page",
               "type": "integer"
             }
           },
           {
             "in": "query",
-            "name": "cursor",
+            "name": "page_size",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
             }
           },
           {
@@ -7827,30 +7938,25 @@
           },
           {
             "in": "query",
-            "name": "limit",
+            "name": "page",
             "required": false,
             "schema": {
-              "default": 50,
-              "maximum": 100,
+              "default": 1,
               "minimum": 1,
-              "title": "Limit",
+              "title": "Page",
               "type": "integer"
             }
           },
           {
             "in": "query",
-            "name": "cursor",
+            "name": "page_size",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
             }
           },
           {
@@ -8695,30 +8801,25 @@
         "parameters": [
           {
             "in": "query",
-            "name": "limit",
+            "name": "page",
             "required": false,
             "schema": {
-              "default": 50,
-              "maximum": 100,
+              "default": 1,
               "minimum": 1,
-              "title": "Limit",
+              "title": "Page",
               "type": "integer"
             }
           },
           {
             "in": "query",
-            "name": "cursor",
+            "name": "page_size",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
             }
           },
           {
@@ -9585,30 +9686,25 @@
         "parameters": [
           {
             "in": "query",
-            "name": "limit",
+            "name": "page",
             "required": false,
             "schema": {
-              "default": 50,
-              "maximum": 100,
+              "default": 1,
               "minimum": 1,
-              "title": "Limit",
+              "title": "Page",
               "type": "integer"
             }
           },
           {
             "in": "query",
-            "name": "cursor",
+            "name": "page_size",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
             }
           },
           {
@@ -10303,30 +10399,25 @@
         "parameters": [
           {
             "in": "query",
-            "name": "limit",
+            "name": "page",
             "required": false,
             "schema": {
-              "default": 50,
-              "maximum": 100,
+              "default": 1,
               "minimum": 1,
-              "title": "Limit",
+              "title": "Page",
               "type": "integer"
             }
           },
           {
             "in": "query",
-            "name": "cursor",
+            "name": "page_size",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
             }
           },
           {
@@ -10640,30 +10731,25 @@
           },
           {
             "in": "query",
-            "name": "limit",
+            "name": "page",
             "required": false,
             "schema": {
-              "default": 50,
-              "maximum": 100,
+              "default": 1,
               "minimum": 1,
-              "title": "Limit",
+              "title": "Page",
               "type": "integer"
             }
           },
           {
             "in": "query",
-            "name": "cursor",
+            "name": "page_size",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
             }
           },
           {
@@ -11119,30 +11205,25 @@
         "parameters": [
           {
             "in": "query",
-            "name": "limit",
+            "name": "page",
             "required": false,
             "schema": {
-              "default": 50,
-              "maximum": 100,
+              "default": 1,
               "minimum": 1,
-              "title": "Limit",
+              "title": "Page",
               "type": "integer"
             }
           },
           {
             "in": "query",
-            "name": "cursor",
+            "name": "page_size",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
             }
           },
           {
@@ -11569,30 +11650,25 @@
           },
           {
             "in": "query",
-            "name": "limit",
+            "name": "page",
             "required": false,
             "schema": {
-              "default": 50,
-              "maximum": 100,
+              "default": 1,
               "minimum": 1,
-              "title": "Limit",
+              "title": "Page",
               "type": "integer"
             }
           },
           {
             "in": "query",
-            "name": "cursor",
+            "name": "page_size",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
             }
           },
           {
@@ -11745,30 +11821,25 @@
           },
           {
             "in": "query",
-            "name": "limit",
+            "name": "page",
             "required": false,
             "schema": {
-              "default": 50,
-              "maximum": 100,
+              "default": 1,
               "minimum": 1,
-              "title": "Limit",
+              "title": "Page",
               "type": "integer"
             }
           },
           {
             "in": "query",
-            "name": "cursor",
+            "name": "page_size",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
             }
           },
           {

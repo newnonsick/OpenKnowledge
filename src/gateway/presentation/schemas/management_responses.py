@@ -83,7 +83,10 @@ MANAGEMENT_ERROR_RESPONSES = {
 
 class Page(ContractModel, Generic[T]):
     items: list[T]
-    next_cursor: str | None
+    page: int
+    page_size: int
+    total_items: int
+    total_pages: int
 
 
 class IngestionCounts(ContractModel):
@@ -413,7 +416,10 @@ class AISpaceToolResult(ContractModel):
 
 class AISpaceListExecution(ContractModel):
     items: list[AISpaceToolResult]
-    next_cursor: str | None
+    page: int
+    page_size: int
+    total_items: int
+    total_pages: int
 
 
 class AISpaceMemberResult(ContractModel):

@@ -91,6 +91,7 @@ class HttpLLMClient(ILLMClient):
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         default_model: Optional[str] = None,
+        fallback_model_ids: Optional[List[str]] = None,
         timeout_seconds: Optional[float] = None,
         client: Optional[httpx.AsyncClient] = None,
         resilience_policy: ResiliencePolicy | None = None,
@@ -112,6 +113,10 @@ class HttpLLMClient(ILLMClient):
         self.default_model = (
             default_model if default_model is not None else current_settings.llm.model_id
         )
+        configured_fallbacks = current_settings.llm.fallback_model_ids
+        self.fallback_model_ids = list(
+            fallback_model_ids if fallback_model_ids is not None else configured_fallbacks
+        )
         self.timeout_seconds = (
             timeout_seconds
             if timeout_seconds is not None
@@ -128,6 +133,58 @@ class HttpLLMClient(ILLMClient):
             circuit_failure_threshold=llm_cfg.circuit_failure_threshold,
             circuit_recovery_seconds=llm_cfg.circuit_recovery_seconds,
             total_timeout_seconds=self.timeout_seconds,
+        )
+
+    def _model_candidates(self, target_model: str) -> List[str]:
+        if target_model != self.default_model:
+            return [target_model]
+        candidates = [target_model, *self.fallback_model_ids]
+        return list(dict.fromkeys(candidate for candidate in candidates if candidate))
+
+    @staticmethod
+    def _resilience_name(model: str) -> str:
+        return f"llm:{model}"
+
+    async def _send_completion(
+        self,
+        client: httpx.AsyncClient,
+        payload: Dict[str, Any],
+        headers: Dict[str, str],
+        timeout: httpx.Timeout,
+        model: str,
+    ) -> httpx.Response:
+        payload["model"] = model
+
+        async def send() -> httpx.Response:
+            response = await client.post(
+                self.endpoint,
+                json=payload,
+                headers=headers,
+                timeout=timeout,
+            )
+            if response.status_code in {408, 429} or response.status_code >= 500:
+                raise RetryableStatusError(response.status_code)
+            return response
+
+        return await shared_upstream_resilience(
+            self._resilience_name(model),
+            self._resilience_policy,
+        ).call(
+            send,
+            retry_if=lambda exc: isinstance(exc, (httpx.RequestError, RetryableStatusError)),
+        )
+
+    @staticmethod
+    def _fallbackable_exception(exc: Exception) -> bool:
+        return isinstance(
+            exc,
+            (httpx.RequestError, RetryableStatusError, TimeoutError, CircuitOpenError),
+        )
+
+    def _log_fallback(self, failed_model: str, fallback_model: str) -> None:
+        logger.warning(
+            "LLM default model failed; trying configured fallback",
+            extra={"failed_model": failed_model, "fallback_model": fallback_model},
         )
 
     def _get_headers(self) -> Dict[str, str]:
@@ -152,8 +209,9 @@ class HttpLLMClient(ILLMClient):
         payload: Dict[str, Any],
         headers: Dict[str, str],
         timeout: httpx.Timeout,
+        model: str,
     ) -> AsyncIterator[httpx.Response]:
-        guard = shared_upstream_resilience("llm", self._resilience_policy)
+        guard = shared_upstream_resilience(self._resilience_name(model), self._resilience_policy)
         response: httpx.Response | None = None
         async with asyncio.timeout(self.timeout_seconds):
             async with guard.lease() as lease:
@@ -255,21 +313,26 @@ class HttpLLMClient(ILLMClient):
         started = perf_counter()
         outcome = "success"
         try:
-            async def send() -> httpx.Response:
-                response = await client.post(
-                    self.endpoint,
-                    json=payload,
-                    headers=headers,
-                    timeout=req_timeout,
-                )
-                if response.status_code in {408, 429} or response.status_code >= 500:
-                    raise RetryableStatusError(response.status_code)
-                return response
-
-            resp = await shared_upstream_resilience("llm", self._resilience_policy).call(
-                send,
-                retry_if=lambda exc: isinstance(exc, (httpx.RequestError, RetryableStatusError)),
-            )
+            candidates = self._model_candidates(target_model)
+            selected_model = target_model
+            for candidate_index, candidate in enumerate(candidates):
+                try:
+                    resp = await self._send_completion(
+                        client,
+                        payload,
+                        headers,
+                        req_timeout,
+                        candidate,
+                    )
+                except (httpx.RequestError, RetryableStatusError, TimeoutError, CircuitOpenError) as exc:
+                    if candidate_index + 1 >= len(candidates) or not self._fallbackable_exception(exc):
+                        raise
+                    self._log_fallback(candidate, candidates[candidate_index + 1])
+                    continue
+                selected_model = candidate
+                break
+            else:
+                raise RuntimeError("LLM model candidate loop did not select a response")
 
             if 400 <= resp.status_code < 500:
                 logger.error(
@@ -325,7 +388,7 @@ class HttpLLMClient(ILLMClient):
 
             return CanonicalLLMResponse(
                 id=data.get("id", f"chatcmpl-{uuid.uuid4().hex[:12]}"),
-                model=data.get("model", target_model),
+                model=data.get("model", selected_model),
                 content=content,
                 reasoning_content=reasoning_content,
                 tool_calls=tool_calls,
@@ -413,85 +476,107 @@ class HttpLLMClient(ILLMClient):
         started = perf_counter()
         outcome = "success"
         try:
-            async with self._resilient_stream(client, payload, headers, req_timeout) as response:
-                if 400 <= response.status_code < 500:
-                    await response.aread()
-                    raise LLMProviderException(
-                        message="LLM provider rejected the streaming request.",
-                        details={"status_code": response.status_code},
-                    )
-                async for line in response.aiter_lines():
-                    line = line.strip()
-                    if not line or line.startswith(":"):
-                        continue
+            candidates = self._model_candidates(target_model)
+            emitted_any_chunk = False
+            for candidate_index, candidate in enumerate(candidates):
+                payload["model"] = candidate
+                try:
+                    async with self._resilient_stream(
+                        client,
+                        payload,
+                        headers,
+                        req_timeout,
+                        candidate,
+                    ) as response:
+                        if 400 <= response.status_code < 500:
+                            await response.aread()
+                            raise LLMProviderException(
+                                message="LLM provider rejected the streaming request.",
+                                details={"status_code": response.status_code},
+                            )
+                        async for line in response.aiter_lines():
+                            line = line.strip()
+                            if not line or line.startswith(":"):
+                                continue
 
-                    if line.startswith("data: "):
-                        data_content = line[6:].strip()
-                    elif line.startswith("data:"):
-                        data_content = line[5:].strip()
-                    else:
-                        continue
+                            if line.startswith("data: "):
+                                data_content = line[6:].strip()
+                            elif line.startswith("data:"):
+                                data_content = line[5:].strip()
+                            else:
+                                continue
 
-                    if data_content == "[DONE]":
-                        break
+                            if data_content == "[DONE]":
+                                break
 
-                    try:
-                        chunk_dict = json.loads(data_content)
-                    except json.JSONDecodeError:
-                        logger.debug("Skipping malformed SSE chunk")
-                        continue
+                            try:
+                                chunk_dict = json.loads(data_content)
+                            except json.JSONDecodeError:
+                                logger.debug("Skipping malformed SSE chunk")
+                                continue
 
-                    choices = chunk_dict.get("choices", [])
-                    delta_content: Optional[str] = None
-                    delta_reasoning: Optional[str] = None
-                    delta_tool_calls: Optional[List[ToolCall]] = None
-                    finish_reason: Optional[str] = None
+                            choices = chunk_dict.get("choices", [])
+                            delta_content: Optional[str] = None
+                            delta_reasoning: Optional[str] = None
+                            delta_tool_calls: Optional[List[ToolCall]] = None
+                            finish_reason: Optional[str] = None
 
-                    if choices:
-                        choice = choices[0]
-                        finish_reason = _normalize_finish_reason(choice.get("finish_reason"))
-                        delta = choice.get("delta", {})
-                        delta_content = delta.get("content")
-                        delta_reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                            if choices:
+                                choice = choices[0]
+                                finish_reason = _normalize_finish_reason(choice.get("finish_reason"))
+                                delta = choice.get("delta", {})
+                                delta_content = delta.get("content")
+                                delta_reasoning = delta.get("reasoning_content") or delta.get("reasoning")
 
-                        raw_tcs = delta.get("tool_calls", [])
-                        if raw_tcs:
-                            delta_tool_calls = []
-                            for tc in raw_tcs:
-                                fn = tc.get("function", {})
-                                delta_tool_calls.append(
-                                    ToolCall(
+                                raw_tcs = delta.get("tool_calls", [])
+                                if raw_tcs:
+                                    delta_tool_calls = []
+                                    for tc in raw_tcs:
+                                        fn = tc.get("function", {})
+                                        delta_tool_calls.append(
+                                            ToolCall(
+                                                id=tc.get("id") or "",
+                                                type="function",
+                                                index=tc.get("index"),
+                                                function=FunctionCall(
+                                                    name=fn.get("name", ""),
+                                                    arguments=fn.get("arguments", "") or "",
+                                                ),
+                                            )
+                                        )
 
-                                        id=tc.get("id") or "",
-                                        type="function",
-                                        index=tc.get("index"),
-                                        function=FunctionCall(
-                                            name=fn.get("name", ""),
-                                            arguments=fn.get("arguments", "") or "",
-                                        ),
-                                    )
+                            usage_data = chunk_dict.get("usage")
+                            usage_obj = None
+                            if usage_data:
+                                usage_obj = CanonicalUsage(
+                                    prompt_tokens=usage_data.get("prompt_tokens", 0),
+                                    completion_tokens=usage_data.get("completion_tokens", 0),
+                                    total_tokens=usage_data.get("total_tokens", 0),
                                 )
+                                observe_metric("gateway_llm_token_count", usage_obj.prompt_tokens, direction="input", outcome="success")
+                                observe_metric("gateway_llm_token_count", usage_obj.completion_tokens, direction="output", outcome="success")
 
-                    usage_data = chunk_dict.get("usage")
-                    usage_obj = None
-                    if usage_data:
-                        usage_obj = CanonicalUsage(
-                            prompt_tokens=usage_data.get("prompt_tokens", 0),
-                            completion_tokens=usage_data.get("completion_tokens", 0),
-                            total_tokens=usage_data.get("total_tokens", 0),
-                        )
-                        observe_metric("gateway_llm_token_count", usage_obj.prompt_tokens, direction="input", outcome="success")
-                        observe_metric("gateway_llm_token_count", usage_obj.completion_tokens, direction="output", outcome="success")
-
-                    yield CanonicalLLMStreamChunk(
-                        id=chunk_dict.get("id", f"chatcmpl-{uuid.uuid4().hex[:8]}"),
-                        model=chunk_dict.get("model", target_model),
-                        delta_content=delta_content,
-                        delta_reasoning_content=delta_reasoning,
-                        delta_tool_calls=delta_tool_calls,
-                        finish_reason=finish_reason,
-                        usage=usage_obj,
-                    )
+                            emitted_any_chunk = True
+                            yield CanonicalLLMStreamChunk(
+                                id=chunk_dict.get("id", f"chatcmpl-{uuid.uuid4().hex[:8]}"),
+                                model=chunk_dict.get("model", candidate),
+                                delta_content=delta_content,
+                                delta_reasoning_content=delta_reasoning,
+                                delta_tool_calls=delta_tool_calls,
+                                finish_reason=finish_reason,
+                                usage=usage_obj,
+                            )
+                except (httpx.RequestError, RetryableStatusError, TimeoutError, CircuitOpenError) as exc:
+                    if (
+                        emitted_any_chunk
+                        or candidate_index + 1 >= len(candidates)
+                        or not self._fallbackable_exception(exc)
+                    ):
+                        raise
+                    self._log_fallback(candidate, candidates[candidate_index + 1])
+                    continue
+                return
+            raise RuntimeError("LLM stream candidate loop did not open a response")
 
         except RetryableStatusError as exc:
             outcome = "error"

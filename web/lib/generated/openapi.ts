@@ -1042,8 +1042,14 @@ export interface components {
         AISpaceListExecution: {
             /** Items */
             items: components["schemas"]["AISpaceToolResult"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** AISpaceMemberResult */
         AISpaceMemberResult: {
@@ -1921,113 +1927,209 @@ export interface components {
         Page_AIIngestionJobResult_: {
             /** Items */
             items: components["schemas"]["AIIngestionJobResult"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** Page[AISourceResult] */
         Page_AISourceResult_: {
             /** Items */
             items: components["schemas"]["AISourceResult"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** Page[AISpaceMemberResult] */
         Page_AISpaceMemberResult_: {
             /** Items */
             items: components["schemas"]["AISpaceMemberResult"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** Page[APIKeySummary] */
         Page_APIKeySummary_: {
             /** Items */
             items: components["schemas"]["APIKeySummary"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** Page[AdminSpaceSummary] */
         Page_AdminSpaceSummary_: {
             /** Items */
             items: components["schemas"]["AdminSpaceSummary"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** Page[AuditEvent] */
         Page_AuditEvent_: {
             /** Items */
             items: components["schemas"]["AuditEvent"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** Page[IngestionJob] */
         Page_IngestionJob_: {
             /** Items */
             items: components["schemas"]["IngestionJob"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** Page[KnowledgeSummary] */
         Page_KnowledgeSummary_: {
             /** Items */
             items: components["schemas"]["KnowledgeSummary"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** Page[MemberSummary] */
         Page_MemberSummary_: {
             /** Items */
             items: components["schemas"]["MemberSummary"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** Page[PendingAIAction] */
         Page_PendingAIAction_: {
             /** Items */
             items: components["schemas"]["PendingAIAction"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** Page[RuntimeSettings] */
         Page_RuntimeSettings_: {
             /** Items */
             items: components["schemas"]["RuntimeSettings"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** Page[SessionSummary] */
         Page_SessionSummary_: {
             /** Items */
             items: components["schemas"]["SessionSummary"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** Page[SourceSummary] */
         Page_SourceSummary_: {
             /** Items */
             items: components["schemas"]["SourceSummary"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** Page[SpaceMemberCandidate] */
         Page_SpaceMemberCandidate_: {
             /** Items */
             items: components["schemas"]["SpaceMemberCandidate"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** Page[SpaceMember] */
         Page_SpaceMember_: {
             /** Items */
             items: components["schemas"]["SpaceMember"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** Page[SpaceSummary] */
         Page_SpaceSummary_: {
             /** Items */
             items: components["schemas"]["SpaceSummary"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Items */
+            total_items: number;
+            /** Total Pages */
+            total_pages: number;
         };
         /** PasswordChangeRequest */
         PasswordChangeRequest: {
@@ -2580,8 +2682,8 @@ export interface operations {
     list_admin_spaces_api_v1_admin_spaces_get: {
         parameters: {
             query?: {
-                limit?: number;
-                cursor?: string | null;
+                page?: number;
+                page_size?: number;
                 q?: string | null;
             };
             header?: never;
@@ -2794,8 +2896,8 @@ export interface operations {
     list_ai_actions_api_v1_ai_actions_get: {
         parameters: {
             query?: {
-                limit?: number;
-                cursor?: string | null;
+                page?: number;
+                page_size?: number;
             };
             header?: never;
             path?: never;
@@ -3231,8 +3333,8 @@ export interface operations {
     list_api_keys_api_v1_api_keys_get: {
         parameters: {
             query?: {
-                limit?: number;
-                cursor?: string | null;
+                page?: number;
+                page_size?: number;
                 q?: string | null;
                 status?: ("active" | "revoked" | "expired") | null;
             };
@@ -3547,8 +3649,8 @@ export interface operations {
     list_audit_events_api_v1_audit_events_get: {
         parameters: {
             query?: {
-                limit?: number;
-                cursor?: string | null;
+                page?: number;
+                page_size?: number;
                 q?: string | null;
                 action?: string | null;
                 outcome?: ("success" | "denied" | "failed") | null;
@@ -4391,8 +4493,8 @@ export interface operations {
         parameters: {
             query?: {
                 space_id?: string | null;
-                limit?: number;
-                cursor?: string | null;
+                page?: number;
+                page_size?: number;
                 state?: ("preparing" | "queued" | "running" | "retry_wait" | "succeeded" | "failed" | "cancelled") | null;
             };
             header?: never;
@@ -4707,8 +4809,8 @@ export interface operations {
         parameters: {
             query?: {
                 space_id?: string | null;
-                limit?: number;
-                cursor?: string | null;
+                page?: number;
+                page_size?: number;
                 q?: string | null;
                 tag?: string | null;
             };
@@ -5338,8 +5440,8 @@ export interface operations {
     list_members_api_v1_members_get: {
         parameters: {
             query?: {
-                limit?: number;
-                cursor?: string | null;
+                page?: number;
+                page_size?: number;
                 q?: string | null;
                 status?: ("pending" | "active" | "disabled") | null;
                 system_role?: ("super_admin" | "member") | null;
@@ -5972,8 +6074,8 @@ export interface operations {
     list_sessions_api_v1_sessions_get: {
         parameters: {
             query?: {
-                limit?: number;
-                cursor?: string | null;
+                page?: number;
+                page_size?: number;
                 status?: ("active" | "revoked" | "expired") | null;
             };
             header?: never;
@@ -6497,8 +6599,8 @@ export interface operations {
     runtime_settings_history_api_v1_settings_history_get: {
         parameters: {
             query?: {
-                limit?: number;
-                cursor?: string | null;
+                page?: number;
+                page_size?: number;
                 state?: ("active" | "superseded") | null;
             };
             header?: never;
@@ -6712,8 +6814,8 @@ export interface operations {
         parameters: {
             query?: {
                 space_id?: string | null;
-                limit?: number;
-                cursor?: string | null;
+                page?: number;
+                page_size?: number;
                 q?: string | null;
                 status?: ("pending" | "processing" | "ready" | "active" | "failed" | "quarantined" | "cancelled") | null;
             };
@@ -7030,8 +7132,8 @@ export interface operations {
     list_spaces_api_v1_spaces_get: {
         parameters: {
             query?: {
-                limit?: number;
-                cursor?: string | null;
+                page?: number;
+                page_size?: number;
                 q?: string | null;
             };
             header?: never;
@@ -7345,8 +7447,8 @@ export interface operations {
     list_space_member_candidates_api_v1_spaces__space_id__member_candidates_get: {
         parameters: {
             query?: {
-                limit?: number;
-                cursor?: string | null;
+                page?: number;
+                page_size?: number;
                 q?: string | null;
             };
             header?: never;
@@ -7452,8 +7554,8 @@ export interface operations {
     list_space_members_api_v1_spaces__space_id__members_get: {
         parameters: {
             query?: {
-                limit?: number;
-                cursor?: string | null;
+                page?: number;
+                page_size?: number;
                 q?: string | null;
                 role?: ("owner" | "editor" | "reader") | null;
             };

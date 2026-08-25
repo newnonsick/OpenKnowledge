@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import base64
 from datetime import datetime, timezone
-import json
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -387,62 +385,40 @@ async def _family_id(session: AsyncSession, principal: Principal) -> UUID:
     return credential.family_id
 
 
-def _cursor_encode(value: str) -> str:
-    return base64.urlsafe_b64encode(
-        json.dumps({"after": value}, separators=(",", ":")).encode("utf-8")
-    ).decode("ascii").rstrip("=")
-
-
-def _cursor_decode(value: str | None) -> str | None:
-    if value is None:
-        return None
-    try:
-        padding = "=" * (-len(value) % 4)
-        payload = json.loads(
-            base64.urlsafe_b64decode((value + padding).encode("ascii")).decode("utf-8")
-        )
-        after = payload["after"]
-        if not isinstance(after, str) or not after:
-            raise ValueError
-        return after
-    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
-        raise ValidationException("Invalid pagination cursor.") from exc
-
-
-def _position_cursor_encode(created_at: datetime, identifier: UUID) -> str:
-    return _cursor_encode(f"{created_at.isoformat()}|{identifier}")
-
-
 def _contains_pattern(value: str) -> str:
     escaped = value.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
 
 
-def _position_cursor_decode(value: str | None) -> tuple[datetime, UUID] | None:
-    decoded = _cursor_decode(value)
-    if decoded is None:
-        return None
-    try:
-        timestamp_value, identifier_value = decoded.rsplit("|", 1)
-        timestamp = datetime.fromisoformat(timestamp_value)
-        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
-            raise ValueError
-        return timestamp, UUID(identifier_value)
-    except (ValueError, TypeError) as exc:
-        raise ValidationException("Invalid pagination cursor.") from exc
+def _page_metadata(*, page: int, page_size: int, total_items: int) -> dict[str, int]:
+    total_pages = (total_items + page_size - 1) // page_size if total_items else 0
+    return {
+        "page": min(page, total_pages) if total_pages else 1,
+        "page_size": page_size,
+        "total_items": total_items,
+        "total_pages": total_pages,
+    }
 
 
-def _revision_cursor_decode(value: str | None) -> int | None:
-    decoded = _cursor_decode(value)
-    if decoded is None:
-        return None
-    try:
-        revision = int(decoded)
-        if revision < 1 or str(revision) != decoded:
-            raise ValueError
-        return revision
-    except ValueError as exc:
-        raise ValidationException("Invalid pagination cursor.") from exc
+async def _paginate(
+    session: AsyncSession,
+    query,
+    *,
+    page: int,
+    page_size: int,
+    scalars: bool = False,
+) -> tuple[list, dict[str, int]]:
+    count_query = select(func.count()).select_from(query.order_by(None).subquery())
+    total_items = int(await session.scalar(count_query) or 0)
+    metadata = _page_metadata(page=page, page_size=page_size, total_items=total_items)
+    if metadata["total_pages"] == 0:
+        return [], metadata
+    page_query = query.offset((metadata["page"] - 1) * page_size).limit(page_size)
+    if scalars:
+        items = list(await session.scalars(page_query))
+    else:
+        items = list((await session.execute(page_query)).all())
+    return items, metadata
 
 
 async def _reserve(
@@ -464,12 +440,18 @@ async def _reserve(
 
 
 def _settings_payload(revision: RuntimeSettingsRevision) -> dict:
+    values = revision.values
+    serialized_values = (
+        values.model_dump(mode="json")
+        if isinstance(values, RuntimeSettingsValues)
+        else RuntimeSettingsValues.model_validate(values).model_dump(mode="json")
+    )
     return {
         "id": str(revision.id) if revision.id else None,
         "revision": revision.revision,
         "base_revision": revision.base_revision,
         "state": revision.state,
-        "values": revision.values.model_dump(mode="json"),
+        "values": serialized_values,
         "created_at": revision.created_at.isoformat() if revision.created_at else None,
         "activated_at": revision.activated_at.isoformat() if revision.activated_at else None,
     }
@@ -576,17 +558,27 @@ async def _ai_resource_space_ids(
     return await AuthorizationService(session).effective_space_ids(_actor_id(principal))
 
 
-async def _ai_source_items(session: AsyncSession, principal: Principal, arguments: AIListResourcesArguments) -> list[dict]:
+async def _ai_source_page(session: AsyncSession, principal: Principal, arguments: AIListResourcesArguments) -> dict:
     space_ids = await _ai_resource_space_ids(session, principal, arguments)
     if not space_ids:
-        return []
-    query = select(DocumentModel).where(
-        DocumentModel.archived_at.is_(None),
-        DocumentModel.space_id.in_(space_ids),
-    ).order_by(DocumentModel.created_at.desc()).limit(arguments.limit)
+        return {"items": [], **_page_metadata(page=1, page_size=arguments.limit, total_items=0)}
+    query = (
+        select(DocumentModel)
+        .where(
+            DocumentModel.archived_at.is_(None),
+            DocumentModel.space_id.in_(space_ids),
+        )
+        .order_by(DocumentModel.created_at.desc(), DocumentModel.id.desc())
+    )
     if arguments.space_id is not None:
         query = query.where(DocumentModel.space_id == arguments.space_id)
-    documents = list(await session.scalars(query))
+    documents, metadata = await _paginate(
+        session,
+        query,
+        page=1,
+        page_size=arguments.limit,
+        scalars=True,
+    )
     document_ids = [document.id for document in documents]
     revisions = list(
         await session.scalars(
@@ -598,45 +590,59 @@ async def _ai_source_items(session: AsyncSession, principal: Principal, argument
     latest: dict[UUID, DocumentRevisionModel] = {}
     for revision in revisions:
         latest.setdefault(revision.document_id, revision)
-    return [
-        {
-            "id": str(document.id),
-            "space_id": document.space_id,
-            "display_name": document.display_name,
-            "revision": document.revision,
-            "status": latest[document.id].status if document.id in latest else "pending",
-            "original_filename": latest[document.id].original_filename if document.id in latest else None,
-            "size_bytes": latest[document.id].size_bytes if document.id in latest else None,
-            "updated_at": document.updated_at.isoformat(),
-        }
-        for document in documents
-    ]
+    return {
+        "items": [
+            {
+                "id": str(document.id),
+                "space_id": document.space_id,
+                "display_name": document.display_name,
+                "revision": document.revision,
+                "status": latest[document.id].status if document.id in latest else "pending",
+                "original_filename": latest[document.id].original_filename if document.id in latest else None,
+                "size_bytes": latest[document.id].size_bytes if document.id in latest else None,
+                "updated_at": document.updated_at.isoformat(),
+            }
+            for document in documents
+        ],
+        **metadata,
+    }
 
 
-async def _ai_job_items(session: AsyncSession, principal: Principal, arguments: AIListResourcesArguments) -> list[dict]:
+async def _ai_job_page(session: AsyncSession, principal: Principal, arguments: AIListResourcesArguments) -> dict:
     space_ids = await _ai_resource_space_ids(session, principal, arguments)
     if not space_ids:
-        return []
-    query = select(IngestionJobModel).where(
-        IngestionJobModel.space_id.in_(space_ids)
-    ).order_by(IngestionJobModel.created_at.desc()).limit(arguments.limit)
+        return {"items": [], **_page_metadata(page=1, page_size=arguments.limit, total_items=0)}
+    query = (
+        select(IngestionJobModel)
+        .where(IngestionJobModel.space_id.in_(space_ids))
+        .order_by(IngestionJobModel.created_at.desc(), IngestionJobModel.id.desc())
+    )
     if arguments.space_id is not None:
         query = query.where(IngestionJobModel.space_id == arguments.space_id)
-    jobs = list(await session.scalars(query))
-    return [
-        {
-            "id": str(job.id),
-            "space_id": job.space_id,
-            "document_id": str(job.document_id),
-            "state": job.state,
-            "progress": job.progress,
-            "attempt_count": job.attempt_count,
-            "max_attempts": job.max_attempts,
-            "last_error_code": job.last_error_code,
-            "updated_at": job.updated_at.isoformat(),
-        }
-        for job in jobs
-    ]
+    jobs, metadata = await _paginate(
+        session,
+        query,
+        page=1,
+        page_size=arguments.limit,
+        scalars=True,
+    )
+    return {
+        "items": [
+            {
+                "id": str(job.id),
+                "space_id": job.space_id,
+                "document_id": str(job.document_id),
+                "state": job.state,
+                "progress": job.progress,
+                "attempt_count": job.attempt_count,
+                "max_attempts": job.max_attempts,
+                "last_error_code": job.last_error_code,
+                "updated_at": job.updated_at.isoformat(),
+            }
+            for job in jobs
+        ],
+        **metadata,
+    }
 
 
 @router.get("/ai-tools", response_model=AIToolList)
@@ -724,17 +730,17 @@ async def execute_ai_tool(
             "expires_at": expires_at.isoformat(),
         }
     if tool_name == "spaces.list.v1":
-        rows = list(
-            await session.execute(
-                select(Workspace, SpaceMembershipModel.role)
-                .join(SpaceMembershipModel, SpaceMembershipModel.space_id == Workspace.id)
-                .where(
-                    SpaceMembershipModel.member_id == _actor_id(principal),
-                    Workspace.archived_at.is_(None),
-                )
-                .order_by(Workspace.name, Workspace.id)
-                .limit(arguments.limit)
+        rows, metadata = await _paginate(
+            session,
+            select(Workspace, SpaceMembershipModel.role)
+            .join(SpaceMembershipModel, SpaceMembershipModel.space_id == Workspace.id)
+            .where(
+                SpaceMembershipModel.member_id == _actor_id(principal),
+                Workspace.archived_at.is_(None),
             )
+            .order_by(Workspace.name, Workspace.id),
+            page=1,
+            page_size=arguments.limit,
         )
         result = [
             {"id": space.id, "name": space.name, "role": role, "revision": space.revision}
@@ -747,7 +753,7 @@ async def execute_ai_tool(
                 resource_ids=[space["id"] for space in result],
             )
         response.status_code = status.HTTP_200_OK
-        return {"items": result, "next_cursor": None}
+        return {"items": result, **metadata}
     if tool_name == "spaces.create.v1":
         if reservation.status is ReservationStatus.REPLAY:
             space = await session.get(Workspace, reservation.resource_ids[0])
@@ -775,15 +781,15 @@ async def execute_ai_tool(
         role = await AuthorizationService(session).authorize_space(principal, arguments.space_id, Action.MEMBERSHIP_MANAGE)
         if role is not SpaceRole.OWNER:
             raise AuthorizationException()
-        rows = (
-            await session.execute(
-                select(SpaceMembershipModel, MemberModel)
-                .join(MemberModel, MemberModel.id == SpaceMembershipModel.member_id)
-                .where(SpaceMembershipModel.space_id == arguments.space_id)
-                .order_by(MemberModel.username_normalized)
-                .limit(arguments.limit)
-            )
-        ).all()
+        rows, metadata = await _paginate(
+            session,
+            select(SpaceMembershipModel, MemberModel)
+            .join(MemberModel, MemberModel.id == SpaceMembershipModel.member_id)
+            .where(SpaceMembershipModel.space_id == arguments.space_id)
+            .order_by(MemberModel.username_normalized),
+            page=1,
+            page_size=arguments.limit,
+        )
         items = [
             {
                 "member_id": str(member.id),
@@ -794,7 +800,7 @@ async def execute_ai_tool(
             }
             for membership, member in rows
         ]
-        result = {"items": items, "next_cursor": None}
+        result = {"items": items, **metadata}
         resource_ids = [item["member_id"] for item in items]
     elif tool_name in {"knowledge.search.v1", "retrieval.explain.v1"}:
         result = await _ai_retrieval_result(principal, arguments)
@@ -848,13 +854,11 @@ async def execute_ai_tool(
         result = _knowledge_payload(item)
         resource_ids = [str(item.id)]
     elif tool_name == "sources.list.v1":
-        items = await _ai_source_items(session, principal, arguments)
-        result = {"items": items, "next_cursor": None}
-        resource_ids = [item["id"] for item in items]
+        result = await _ai_source_page(session, principal, arguments)
+        resource_ids = [item["id"] for item in result["items"]]
     elif tool_name == "ingestion_jobs.list.v1":
-        items = await _ai_job_items(session, principal, arguments)
-        result = {"items": items, "next_cursor": None}
-        resource_ids = [item["id"] for item in items]
+        result = await _ai_job_page(session, principal, arguments)
+        resource_ids = [item["id"] for item in result["items"]]
     elif tool_name == "settings.inspect.v1":
         result = _settings_payload(await RuntimeSettingsService(session).active())
         if result["id"] is not None:
@@ -916,15 +920,14 @@ async def confirm_ai_action(
 
 @router.get("/ai-actions", response_model=Page[PendingAIAction])
 async def list_ai_actions(
-    limit: int = Query(default=50, ge=1, le=100),
-    cursor: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     principal: Principal = Depends(require_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     if principal.kind is not PrincipalKind.SESSION:
         raise AuthorizationException()
     current_time = datetime.now(timezone.utc)
-    position = _position_cursor_decode(cursor)
     query = (
         select(PendingAIActionModel)
         .where(
@@ -933,21 +936,14 @@ async def list_ai_actions(
             PendingAIActionModel.expires_at > current_time,
         )
         .order_by(PendingAIActionModel.created_at.desc(), PendingAIActionModel.id.desc())
-        .limit(limit + 1)
     )
-    if position is not None:
-        created_at, identifier = position
-        query = query.where(
-            or_(
-                PendingAIActionModel.created_at < created_at,
-                and_(
-                    PendingAIActionModel.created_at == created_at,
-                    PendingAIActionModel.id < identifier,
-                ),
-            )
-        )
-    rows = list(await session.scalars(query))
-    actions = rows[:limit]
+    actions, metadata = await _paginate(
+        session,
+        query,
+        page=page,
+        page_size=page_size,
+        scalars=True,
+    )
     return {
         "items": [
             {
@@ -961,7 +957,7 @@ async def list_ai_actions(
             }
             for action in actions
         ],
-        "next_cursor": _position_cursor_encode(actions[-1].created_at, actions[-1].id) if len(rows) > limit else None,
+        **metadata,
     }
 
 
@@ -985,14 +981,13 @@ async def me(
 
 @router.get("/spaces", response_model=Page[SpaceSummary])
 async def list_spaces(
-    limit: int = Query(default=50, ge=1, le=100),
-    cursor: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     q: str | None = Query(default=None, min_length=1, max_length=255),
     principal: Principal = Depends(require_scope("spaces:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     member_id = _actor_id(principal)
-    after = _cursor_decode(cursor)
     query = (
         select(Workspace, SpaceMembershipModel.role)
         .join(SpaceMembershipModel, SpaceMembershipModel.space_id == Workspace.id)
@@ -1001,15 +996,11 @@ async def list_spaces(
             Workspace.archived_at.is_(None),
         )
         .order_by(Workspace.id)
-        .limit(limit + 1)
     )
-    if after is not None:
-        query = query.where(Workspace.id > after)
     if q is not None and q.strip():
         pattern = _contains_pattern(q)
         query = query.where(or_(Workspace.id.ilike(pattern, escape="\\"), Workspace.name.ilike(pattern, escape="\\")))
-    rows = (await session.execute(query)).all()
-    page = rows[:limit]
+    rows, metadata = await _paginate(session, query, page=page, page_size=page_size)
     return {
         "items": [
             {
@@ -1020,23 +1011,22 @@ async def list_spaces(
                 "revision": space.revision,
                 "created_at": space.created_at.isoformat(),
             }
-            for space, role in page
+            for space, role in rows
         ],
-        "next_cursor": _cursor_encode(page[-1][0].id) if len(rows) > limit else None,
+        **metadata,
     }
 
 
 @router.get("/admin/spaces", response_model=Page[AdminSpaceSummary])
 async def list_admin_spaces(
-    limit: int = Query(default=50, ge=1, le=100),
-    cursor: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     q: str | None = Query(default=None, min_length=1, max_length=255),
     principal: Principal = Depends(require_scope("members:admin")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     if principal.system_role is not SystemRole.SUPER_ADMIN:
         raise AuthorizationException()
-    after = _cursor_decode(cursor)
     query = (
         select(Workspace, SpaceMembershipModel, MemberModel)
         .join(
@@ -1049,10 +1039,7 @@ async def list_admin_spaces(
         .join(MemberModel, MemberModel.id == SpaceMembershipModel.member_id)
         .where(Workspace.archived_at.is_(None))
         .order_by(Workspace.id)
-        .limit(limit + 1)
     )
-    if after is not None:
-        query = query.where(Workspace.id > after)
     if q is not None and q.strip():
         pattern = _contains_pattern(q)
         query = query.where(
@@ -1063,8 +1050,7 @@ async def list_admin_spaces(
                 MemberModel.display_name.ilike(pattern, escape="\\"),
             )
         )
-    rows = list((await session.execute(query)).all())
-    page = rows[:limit]
+    rows, metadata = await _paginate(session, query, page=page, page_size=page_size)
     return {
         "items": [
             {
@@ -1076,9 +1062,9 @@ async def list_admin_spaces(
                 "owner_display_name": owner.display_name,
                 "created_at": space.created_at,
             }
-            for space, _, owner in page
+            for space, _, owner in rows
         ],
-        "next_cursor": _cursor_encode(page[-1][0].id) if len(rows) > limit else None,
+        **metadata,
     }
 
 
@@ -1133,8 +1119,8 @@ async def create_space(
 @router.get("/spaces/{space_id}/members", response_model=Page[SpaceMember])
 async def list_space_members(
     space_id: str,
-    limit: int = Query(default=50, ge=1, le=100),
-    cursor: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     q: str | None = Query(default=None, min_length=1, max_length=255),
     role: Literal["owner", "editor", "reader"] | None = Query(default=None),
     principal: Principal = Depends(require_scope("spaces:members")),
@@ -1148,13 +1134,11 @@ async def list_space_members(
     )
     if actor_membership is None or actor_membership.role != SpaceRole.OWNER.value:
         raise AuthorizationException()
-    after = _cursor_decode(cursor)
     query = (
         select(SpaceMembershipModel, MemberModel)
         .join(MemberModel, MemberModel.id == SpaceMembershipModel.member_id)
         .where(SpaceMembershipModel.space_id == space_id)
         .order_by(MemberModel.username_normalized)
-        .limit(limit + 1)
     )
     if q is not None and q.strip():
         pattern = f"%{q.strip()}%"
@@ -1167,10 +1151,7 @@ async def list_space_members(
         )
     if role is not None:
         query = query.where(SpaceMembershipModel.role == role)
-    if after is not None:
-        query = query.where(MemberModel.username_normalized > after)
-    rows = (await session.execute(query)).all()
-    page = rows[:limit]
+    rows, metadata = await _paginate(session, query, page=page, page_size=page_size)
     return {
         "items": [
             {
@@ -1181,17 +1162,17 @@ async def list_space_members(
                 "role": membership.role,
                 "updated_at": membership.updated_at.isoformat(),
             }
-            for membership, member in page
+            for membership, member in rows
         ],
-        "next_cursor": _cursor_encode(page[-1][1].username_normalized) if len(rows) > limit else None,
+        **metadata,
     }
 
 
 @router.get("/spaces/{space_id}/member-candidates", response_model=Page[SpaceMemberCandidate])
 async def list_space_member_candidates(
     space_id: str,
-    limit: int = Query(default=50, ge=1, le=100),
-    cursor: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     q: str | None = Query(default=None, min_length=1, max_length=255),
     principal: Principal = Depends(require_scope("spaces:members")),
     session: AsyncSession = Depends(get_db_session),
@@ -1204,7 +1185,6 @@ async def list_space_member_candidates(
     )
     if actor_membership is None or actor_membership.role != SpaceRole.OWNER.value:
         raise AuthorizationException()
-    after = _cursor_decode(cursor)
     query = (
         select(MemberModel)
         .where(
@@ -1215,10 +1195,7 @@ async def list_space_member_candidates(
             ),
         )
         .order_by(MemberModel.username_normalized)
-        .limit(limit + 1)
     )
-    if after is not None:
-        query = query.where(MemberModel.username_normalized > after)
     if q is not None and q.strip():
         pattern = _contains_pattern(q)
         query = query.where(
@@ -1228,8 +1205,13 @@ async def list_space_member_candidates(
                 MemberModel.display_name.ilike(pattern, escape="\\"),
             )
         )
-    rows = list(await session.scalars(query))
-    page = rows[:limit]
+    rows, metadata = await _paginate(
+        session,
+        query,
+        page=page,
+        page_size=page_size,
+        scalars=True,
+    )
     return {
         "items": [
             {
@@ -1237,9 +1219,9 @@ async def list_space_member_candidates(
                 "username": member.username,
                 "display_name": member.display_name,
             }
-            for member in page
+            for member in rows
         ],
-        "next_cursor": _cursor_encode(page[-1].username_normalized) if len(rows) > limit else None,
+        **metadata,
     }
 
 
@@ -1424,23 +1406,22 @@ async def archive_space(
 @router.get("/knowledge", response_model=Page[KnowledgeSummary])
 async def list_knowledge(
     space_id: str | None = Query(default=None, max_length=64),
-    limit: int = Query(default=50, ge=1, le=100),
-    cursor: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     q: str | None = Query(default=None, min_length=1, max_length=500),
     tag: str | None = Query(default=None, min_length=1, max_length=80),
     principal: Principal = Depends(require_scope("knowledge:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    position = _position_cursor_decode(cursor)
     effective_space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal))
     if space_id is not None:
         if space_id not in effective_space_ids:
-            return {"items": [], "next_cursor": None}
+            return {"items": [], **_page_metadata(page=page, page_size=page_size, total_items=0)}
         scoped_spaces: tuple[str, ...] = (space_id,)
     else:
         scoped_spaces = effective_space_ids
         if not scoped_spaces:
-            return {"items": [], "next_cursor": None}
+            return {"items": [], **_page_metadata(page=page, page_size=page_size, total_items=0)}
     query = (
         select(KnowledgeItemModel, KnowledgeRevisionModel)
         .outerjoin(KnowledgeRevisionModel, KnowledgeRevisionModel.id == KnowledgeItemModel.current_revision_id)
@@ -1449,16 +1430,7 @@ async def list_knowledge(
             KnowledgeItemModel.workspace_id.in_(scoped_spaces),
         )
         .order_by(KnowledgeItemModel.updated_at.desc(), KnowledgeItemModel.id.desc())
-        .limit(limit + 1)
     )
-    if position is not None:
-        updated_at, identifier = position
-        query = query.where(
-            or_(
-                KnowledgeItemModel.updated_at < updated_at,
-                and_(KnowledgeItemModel.updated_at == updated_at, KnowledgeItemModel.id < identifier),
-            )
-        )
     if q is not None and q.strip():
         pattern = _contains_pattern(q)
         query = query.where(
@@ -1471,11 +1443,10 @@ async def list_knowledge(
         )
     if tag is not None and tag.strip():
         query = query.where(KnowledgeItemModel.tags.contains([tag.strip()]))
-    rows = (await session.execute(query)).all()
-    page = rows[:limit]
+    rows, metadata = await _paginate(session, query, page=page, page_size=page_size)
     return {
-        "items": [_orm_knowledge_payload(item, revision, include_content=False) for item, revision in page],
-        "next_cursor": _position_cursor_encode(page[-1][0].updated_at, page[-1][0].id) if len(rows) > limit else None,
+        "items": [_orm_knowledge_payload(item, revision, include_content=False) for item, revision in rows],
+        **metadata,
     }
 
 
@@ -1683,8 +1654,8 @@ async def upload_source(
 @router.get("/sources", response_model=Page[SourceSummary])
 async def list_sources(
     space_id: str | None = Query(default=None, max_length=64),
-    limit: int = Query(default=50, ge=1, le=100),
-    cursor: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     q: str | None = Query(default=None, min_length=1, max_length=500),
     status_filter: Literal["pending", "processing", "ready", "active", "failed", "quarantined", "cancelled"] | None = Query(
         default=None,
@@ -1693,16 +1664,15 @@ async def list_sources(
     principal: Principal = Depends(require_scope("knowledge:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    position = _position_cursor_decode(cursor)
     effective_space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal))
     if space_id is not None:
         if space_id not in effective_space_ids:
-            return {"items": [], "next_cursor": None}
+            return {"items": [], **_page_metadata(page=page, page_size=page_size, total_items=0)}
         scoped_spaces: tuple[str, ...] = (space_id,)
     else:
         scoped_spaces = effective_space_ids
         if not scoped_spaces:
-            return {"items": [], "next_cursor": None}
+            return {"items": [], **_page_metadata(page=page, page_size=page_size, total_items=0)}
     query = (
         select(DocumentModel)
         .outerjoin(DocumentRevisionModel, DocumentRevisionModel.id == DocumentModel.current_revision_id)
@@ -1711,16 +1681,7 @@ async def list_sources(
             DocumentModel.space_id.in_(scoped_spaces),
         )
         .order_by(DocumentModel.created_at.desc(), DocumentModel.id.desc())
-        .limit(limit + 1)
     )
-    if position is not None:
-        created_at, identifier = position
-        query = query.where(
-            or_(
-                DocumentModel.created_at < created_at,
-                and_(DocumentModel.created_at == created_at, DocumentModel.id < identifier),
-            )
-        )
     if q is not None and q.strip():
         pattern = _contains_pattern(q)
         query = query.where(
@@ -1731,8 +1692,13 @@ async def list_sources(
         )
     if status_filter is not None:
         query = query.where(DocumentRevisionModel.status == status_filter)
-    rows = list(await session.scalars(query))
-    documents = rows[:limit]
+    documents, metadata = await _paginate(
+        session,
+        query,
+        page=page,
+        page_size=page_size,
+        scalars=True,
+    )
     document_ids = [document.id for document in documents]
     revisions = list(
         await session.scalars(
@@ -1760,7 +1726,7 @@ async def list_sources(
             }
             for document in documents
         ],
-        "next_cursor": _position_cursor_encode(documents[-1].created_at, documents[-1].id) if len(rows) > limit else None,
+        **metadata,
     }
 
 
@@ -1826,40 +1792,35 @@ async def archive_source(
 @router.get("/ingestion-jobs", response_model=Page[IngestionJob])
 async def list_ingestion_jobs(
     space_id: str | None = Query(default=None, max_length=64),
-    limit: int = Query(default=50, ge=1, le=100),
-    cursor: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     state: Literal["preparing", "queued", "running", "retry_wait", "succeeded", "failed", "cancelled"] | None = Query(default=None),
     principal: Principal = Depends(require_scope("knowledge:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    position = _position_cursor_decode(cursor)
     effective_space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal))
     if space_id is not None:
         if space_id not in effective_space_ids:
-            return {"items": [], "next_cursor": None}
+            return {"items": [], **_page_metadata(page=page, page_size=page_size, total_items=0)}
         scoped_spaces: tuple[str, ...] = (space_id,)
     else:
         scoped_spaces = effective_space_ids
         if not scoped_spaces:
-            return {"items": [], "next_cursor": None}
+            return {"items": [], **_page_metadata(page=page, page_size=page_size, total_items=0)}
     query = (
         select(IngestionJobModel)
         .where(IngestionJobModel.space_id.in_(scoped_spaces))
         .order_by(IngestionJobModel.created_at.desc(), IngestionJobModel.id.desc())
-        .limit(limit + 1)
     )
-    if position is not None:
-        created_at, identifier = position
-        query = query.where(
-            or_(
-                IngestionJobModel.created_at < created_at,
-                and_(IngestionJobModel.created_at == created_at, IngestionJobModel.id < identifier),
-            )
-        )
     if state is not None:
         query = query.where(IngestionJobModel.state == state)
-    rows = list(await session.scalars(query))
-    jobs = rows[:limit]
+    jobs, metadata = await _paginate(
+        session,
+        query,
+        page=page,
+        page_size=page_size,
+        scalars=True,
+    )
     return {
         "items": [
             {
@@ -1879,7 +1840,7 @@ async def list_ingestion_jobs(
             }
             for job in jobs
         ],
-        "next_cursor": _position_cursor_encode(jobs[-1].created_at, jobs[-1].id) if len(rows) > limit else None,
+        **metadata,
     }
 
 
@@ -1955,29 +1916,19 @@ async def retry_ingestion_job(
 
 @router.get("/api-keys", response_model=Page[APIKeySummary])
 async def list_api_keys(
-    limit: int = Query(default=50, ge=1, le=100),
-    cursor: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     q: str | None = Query(default=None, min_length=1, max_length=255),
     status_filter: Literal["active", "revoked", "expired"] | None = Query(default=None, alias="status"),
     principal: Principal = Depends(require_scope("api_keys:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     member_id = _actor_id(principal)
-    position = _position_cursor_decode(cursor)
     query = (
         select(PersonalAPIKeyModel)
         .where(PersonalAPIKeyModel.member_id == member_id)
         .order_by(PersonalAPIKeyModel.created_at.desc(), PersonalAPIKeyModel.id.desc())
-        .limit(limit + 1)
     )
-    if position is not None:
-        created_at, identifier = position
-        query = query.where(
-            or_(
-                PersonalAPIKeyModel.created_at < created_at,
-                and_(PersonalAPIKeyModel.created_at == created_at, PersonalAPIKeyModel.id < identifier),
-            )
-        )
     if q is not None and q.strip():
         pattern = _contains_pattern(q)
         query = query.where(
@@ -1988,12 +1939,13 @@ async def list_api_keys(
         )
     if status_filter is not None:
         query = query.where(PersonalAPIKeyModel.status == status_filter)
-    rows = list(
-        await session.scalars(
-            query
-        )
+    keys, metadata = await _paginate(
+        session,
+        query,
+        page=page,
+        page_size=page_size,
+        scalars=True,
     )
-    keys = rows[:limit]
     key_ids = [key.id for key in keys]
     scope_rows = (
         (
@@ -2024,7 +1976,7 @@ async def list_api_keys(
             }
             for key in keys
         ],
-        "next_cursor": _position_cursor_encode(keys[-1].created_at, keys[-1].id) if len(rows) > limit else None,
+        **metadata,
     }
 
 
@@ -2103,8 +2055,8 @@ async def revoke_api_key(
 
 @router.get("/members", response_model=Page[MemberSummary])
 async def list_members(
-    limit: int = Query(default=50, ge=1, le=100),
-    cursor: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     q: str | None = Query(default=None, min_length=1, max_length=255),
     status_filter: Literal["pending", "active", "disabled"] | None = Query(default=None, alias="status"),
     system_role: Literal["super_admin", "member"] | None = Query(default=None),
@@ -2113,10 +2065,7 @@ async def list_members(
 ) -> dict:
     if principal.system_role is not SystemRole.SUPER_ADMIN:
         raise AuthorizationException()
-    after = _cursor_decode(cursor)
-    query = select(MemberModel).order_by(MemberModel.username_normalized).limit(limit + 1)
-    if after is not None:
-        query = query.where(MemberModel.username_normalized > after)
+    query = select(MemberModel).order_by(MemberModel.username_normalized)
     if q is not None and q.strip():
         pattern = _contains_pattern(q)
         query = query.where(
@@ -2130,8 +2079,13 @@ async def list_members(
         query = query.where(MemberModel.status == status_filter)
     if system_role is not None:
         query = query.where(MemberModel.system_role == system_role)
-    rows = list(await session.scalars(query))
-    page = rows[:limit]
+    rows, metadata = await _paginate(
+        session,
+        query,
+        page=page,
+        page_size=page_size,
+        scalars=True,
+    )
     return {
         "items": [
             {
@@ -2144,9 +2098,9 @@ async def list_members(
                 "created_at": member.created_at.isoformat(),
                 "updated_at": member.updated_at.isoformat(),
             }
-            for member in page
+            for member in rows
         ],
-        "next_cursor": _cursor_encode(page[-1].username_normalized) if len(rows) > limit else None,
+        **metadata,
     }
 
 
@@ -2281,29 +2235,19 @@ async def reset_member_password(
 
 @router.get("/sessions", response_model=Page[SessionSummary])
 async def list_sessions(
-    limit: int = Query(default=50, ge=1, le=100),
-    cursor: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     status_filter: Literal["active", "expired", "revoked"] | None = Query(default=None, alias="status"),
     principal: Principal = Depends(require_scope("sessions:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     current_family = await _family_id(session, principal)
     current_time = datetime.now(timezone.utc)
-    position = _position_cursor_decode(cursor)
     query = (
         select(SessionFamilyModel)
         .where(SessionFamilyModel.member_id == _actor_id(principal))
         .order_by(SessionFamilyModel.created_at.desc(), SessionFamilyModel.id.desc())
-        .limit(limit + 1)
     )
-    if position is not None:
-        created_at, identifier = position
-        query = query.where(
-            or_(
-                SessionFamilyModel.created_at < created_at,
-                and_(SessionFamilyModel.created_at == created_at, SessionFamilyModel.id < identifier),
-            )
-        )
     if status_filter == "active":
         query = query.where(
             SessionFamilyModel.revoked_at.is_(None),
@@ -2320,12 +2264,13 @@ async def list_sessions(
                 SessionFamilyModel.absolute_expires_at <= current_time,
             ),
         )
-    all_rows = list(
-        await session.scalars(
-            query
-        )
+    rows, metadata = await _paginate(
+        session,
+        query,
+        page=page,
+        page_size=page_size,
+        scalars=True,
     )
-    rows = all_rows[:limit]
     return {
         "items": [
             {
@@ -2340,7 +2285,7 @@ async def list_sessions(
             }
             for family in rows
         ],
-        "next_cursor": _position_cursor_encode(rows[-1].created_at, rows[-1].id) if len(all_rows) > limit else None,
+        **metadata,
     }
 
 
@@ -2382,8 +2327,8 @@ async def revoke_session(
 
 @router.get("/audit-events", response_model=Page[AuditEvent])
 async def list_audit_events(
-    limit: int = Query(default=50, ge=1, le=100),
-    cursor: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     q: str | None = Query(default=None, min_length=1, max_length=255),
     action_filter: str | None = Query(default=None, min_length=1, max_length=128, alias="action"),
     outcome: Literal["success", "denied", "failed"] | None = Query(default=None),
@@ -2393,16 +2338,7 @@ async def list_audit_events(
 ) -> dict:
     if principal.system_role is not SystemRole.SUPER_ADMIN:
         raise AuthorizationException()
-    position = _position_cursor_decode(cursor)
-    query = select(AuditEventModel).order_by(AuditEventModel.occurred_at.desc(), AuditEventModel.id.desc()).limit(limit + 1)
-    if position is not None:
-        occurred_at, identifier = position
-        query = query.where(
-            or_(
-                AuditEventModel.occurred_at < occurred_at,
-                and_(AuditEventModel.occurred_at == occurred_at, AuditEventModel.id < identifier),
-            )
-        )
+    query = select(AuditEventModel).order_by(AuditEventModel.occurred_at.desc(), AuditEventModel.id.desc())
     if q is not None and q.strip():
         pattern = _contains_pattern(q)
         query = query.where(
@@ -2419,12 +2355,13 @@ async def list_audit_events(
         query = query.where(AuditEventModel.outcome == outcome)
     if resource_type is not None:
         query = query.where(AuditEventModel.resource_type == resource_type)
-    all_rows = list(
-        await session.scalars(
-            query
-        )
+    rows, metadata = await _paginate(
+        session,
+        query,
+        page=page,
+        page_size=page_size,
+        scalars=True,
     )
-    rows = all_rows[:limit]
     return {
         "items": [
             {
@@ -2440,7 +2377,7 @@ async def list_audit_events(
             }
             for event in rows
         ],
-        "next_cursor": _position_cursor_encode(rows[-1].occurred_at, rows[-1].id) if len(all_rows) > limit else None,
+        **metadata,
     }
 
 
@@ -2454,21 +2391,29 @@ async def active_runtime_settings(
 
 @router.get("/settings/history", response_model=Page[RuntimeSettings])
 async def runtime_settings_history(
-    limit: int = Query(default=50, ge=1, le=100),
-    cursor: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     state: Literal["active", "superseded"] | None = Query(default=None),
     principal: Principal = Depends(require_scope("settings:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    history = await RuntimeSettingsService(session).history(
-        limit=limit + 1,
-        before_revision=_revision_cursor_decode(cursor),
-        state=state,
+    query = (
+        select(RuntimeSettingRevisionModel)
+        .where(RuntimeSettingRevisionModel.state.in_(("active", "superseded")))
+        .order_by(RuntimeSettingRevisionModel.revision.desc())
     )
-    page = history[:limit]
+    if state is not None:
+        query = query.where(RuntimeSettingRevisionModel.state == state)
+    history, metadata = await _paginate(
+        session,
+        query,
+        page=page,
+        page_size=page_size,
+        scalars=True,
+    )
     return {
-        "items": [_settings_payload(revision) for revision in page],
-        "next_cursor": _cursor_encode(str(page[-1].revision)) if len(history) > limit else None,
+        "items": [_settings_payload(revision) for revision in history],
+        **metadata,
     }
 
 

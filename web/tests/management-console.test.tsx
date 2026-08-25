@@ -36,15 +36,22 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
     }
     const query = new URLSearchParams();
     const queryEntries = Object.entries(options.params?.query || {}).sort(([left], [right]) => {
-      const order = ["limit", "cursor"];
+      const order = ["limit"];
       const leftIndex = order.indexOf(left);
       const rightIndex = order.indexOf(right);
       return (leftIndex < 0 ? order.length : leftIndex) - (rightIndex < 0 ? order.length : rightIndex) || left.localeCompare(right);
     });
+    const requestedPage = options.params?.query?.page;
     for (const [name, value] of queryEntries) {
       if (value !== undefined && value !== null) {
-        query.set(name, String(value));
+        if (name === "page") {
+          continue;
+        }
+        query.set(name === "page_size" ? "limit" : name, String(value));
       }
+    }
+    if (requestedPage !== undefined && requestedPage !== null && String(requestedPage) !== "1") {
+      query.set("page", String(requestedPage));
     }
     if (query.size > 0) {
       resolvedPath += `?${query.toString()}`;
@@ -76,7 +83,19 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
       POST: request("POST"),
       PUT: request("PUT"),
     },
-    contractData: async <T,>(pending: Promise<T>) => pending,
+    contractData: async <T,>(pending: Promise<T>) => {
+      const response = await pending;
+      if (response && typeof response === "object" && "items" in response && Array.isArray(response.items) && !("page" in response)) {
+        return {
+          ...response,
+          page: 1,
+          page_size: 25,
+          total_items: response.items.length,
+          total_pages: response.items.length ? 1 : 0,
+        } as T;
+      }
+      return response;
+    },
   };
 });
 
@@ -90,12 +109,12 @@ describe("management console", () => {
 
   it("creates a private space and refreshes the accessible list", async () => {
     vi.mocked(apiRequest)
-      .mockResolvedValueOnce({ items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null })
+      .mockResolvedValueOnce({ items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] })
       .mockResolvedValueOnce({ id: "travel", name: "Travel plans", role: "owner", revision: 1 })
       .mockResolvedValueOnce({ items: [
         { id: "global", name: "Family Shared", role: "editor", revision: 1 },
         { id: "travel", name: "Travel plans", role: "owner", revision: 1 },
-      ], next_cursor: null });
+      ] });
     render(<SpacesConsole />);
 
     expect(await screen.findByText("Family Shared")).toBeInTheDocument();
@@ -110,15 +129,62 @@ describe("management console", () => {
     expect(await screen.findByText("Travel plans")).toBeInTheDocument();
   });
 
+  it("shows an unavailable state instead of an empty knowledge library after the initial page request fails", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path === "/api/v1/spaces?limit=100") {
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] } as never;
+      }
+      if (path === "/api/v1/knowledge?limit=25") {
+        throw new Error("Gateway unavailable");
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+
+    render(<KnowledgeConsole />);
+
+    expect(await screen.findByText("Unable to load knowledge")).toBeInTheDocument();
+    expect(screen.queryByText("Nothing captured yet")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Retry knowledge" })).toBeEnabled();
+  });
+
+  it("does not switch to an empty knowledge library while retrying a failed initial page", async () => {
+    let knowledgeAttempts = 0;
+    let resolveRetry: ((value: unknown) => void) | undefined;
+    vi.mocked(apiRequest).mockImplementation((path) => {
+      if (path === "/api/v1/spaces?limit=100") {
+        return Promise.resolve({ items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] }) as never;
+      }
+      if (path === "/api/v1/knowledge?limit=25") {
+        knowledgeAttempts += 1;
+        if (knowledgeAttempts === 1) {
+          return Promise.reject(new Error("Gateway unavailable")) as never;
+        }
+        return new Promise((resolve) => {
+          resolveRetry = resolve;
+        }) as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+
+    render(<KnowledgeConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry knowledge" }));
+
+    expect(screen.queryByText("Nothing captured yet")).not.toBeInTheDocument();
+    resolveRetry?.({ items: [{ id: "note-1", space_id: "global", title: "Water valve", tags: ["home"], version: 1, updated_at: "2026-08-20T12:00:00Z" }] });
+    expect(await screen.findByText("Water valve")).toBeInTheDocument();
+  });
+
   it("lets a space owner add and remove family members with explicit confirmation", async () => {
     let added = false;
     let removed = false;
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
       if (path === "/api/v1/spaces?limit=25") {
-        return { items: [{ id: "travel", name: "Travel plans", role: "owner", revision: 1 }], next_cursor: null } as never;
+        return { items: [{ id: "travel", name: "Travel plans", role: "owner", revision: 1 }] } as never;
       }
       if (path === "/api/v1/spaces/travel/member-candidates?limit=25") {
-        return { items: added ? [] : [{ member_id: "member-2", username: "nana", display_name: "Nana" }], next_cursor: null } as never;
+        return { items: added ? [] : [{ member_id: "member-2", username: "nana", display_name: "Nana" }] } as never;
       }
       if (path === "/api/v1/spaces/travel/members?limit=25") {
         return {
@@ -126,7 +192,6 @@ describe("management console", () => {
             { member_id: "member-1", username: "mai", display_name: "Mai", status: "active", role: "owner" },
             ...(!removed && added ? [{ member_id: "member-2", username: "nana", display_name: "Nana", status: "active", role: "reader" }] : []),
           ],
-          next_cursor: null,
         } as never;
       }
       if (path === "/api/v1/spaces/travel/members/member-2" && options?.method === "PUT") {
@@ -166,16 +231,16 @@ describe("management console", () => {
   it("uses the step-up ownership command instead of an ordinary role change", async () => {
     vi.mocked(apiRequest).mockImplementation(async (path) => {
       if (path === "/api/v1/spaces?limit=25") {
-        return { items: [{ id: "travel", name: "Travel plans", role: "owner", revision: 2 }], next_cursor: null } as never;
+        return { items: [{ id: "travel", name: "Travel plans", role: "owner", revision: 2 }] } as never;
       }
       if (path === "/api/v1/spaces/travel/member-candidates?limit=25") {
-        return { items: [], next_cursor: null } as never;
+        return { items: [] } as never;
       }
       if (path === "/api/v1/spaces/travel/members?limit=25") {
         return { items: [
           { member_id: "member-1", username: "mai", display_name: "Mai", status: "active", role: "owner" },
           { member_id: "member-2", username: "nana", display_name: "Nana", status: "active", role: "editor" },
-        ], next_cursor: null } as never;
+        ] } as never;
       }
       if (path === "/api/v1/spaces/travel/ownership") {
         return { member_id: "member-2", role: "owner", space_id: "travel" } as never;
@@ -199,13 +264,13 @@ describe("management console", () => {
     let archived = false;
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
       if (path === "/api/v1/spaces?limit=25") {
-        return { items: archived ? [] : [{ id: "travel", name: "Travel plans", role: "owner", revision: 1 }], next_cursor: null } as never;
+        return { items: archived ? [] : [{ id: "travel", name: "Travel plans", role: "owner", revision: 1 }] } as never;
       }
       if (path === "/api/v1/spaces/travel/members?limit=25") {
-        return { items: [{ member_id: "member-1", username: "mai", display_name: "Mai", status: "active", role: "owner" }], next_cursor: null } as never;
+        return { items: [{ member_id: "member-1", username: "mai", display_name: "Mai", status: "active", role: "owner" }] } as never;
       }
       if (path === "/api/v1/spaces/travel/member-candidates?limit=25") {
-        return { items: [], next_cursor: null } as never;
+        return { items: [] } as never;
       }
       if (path === "/api/v1/spaces/travel" && options?.method === "DELETE") {
         archived = true;
@@ -228,14 +293,14 @@ describe("management console", () => {
     let created = false;
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
       if (path.startsWith("/api/v1/spaces")) {
-        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] } as never;
       }
       if (path.startsWith("/api/v1/knowledge") && options?.method === "POST") {
         created = true;
         return { id: "note-1", title: "Water valve", version: 1 } as never;
       }
       if (path.startsWith("/api/v1/knowledge")) {
-        return { items: created ? [{ id: "note-1", space_id: "global", title: "Water valve", tags: ["home"], version: 1, updated_at: "2026-08-20T12:00:00Z" }] : [], next_cursor: null } as never;
+        return { items: created ? [{ id: "note-1", space_id: "global", title: "Water valve", tags: ["home"], version: 1, updated_at: "2026-08-20T12:00:00Z" }] : [] } as never;
       }
       throw new Error(`Unexpected path ${path}`);
     });
@@ -260,27 +325,67 @@ describe("management console", () => {
     expect(await screen.findByText("Water valve")).toBeInTheDocument();
   });
 
-  it("paginates and filters knowledge on the server without hiding loaded rows", async () => {
+  it("loads every accessible-space page before offering native space selectors", async () => {
     vi.mocked(apiRequest).mockImplementation(async (path) => {
       if (path === "/api/v1/spaces?limit=100") {
-        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
+        return {
+          items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }],
+          page: 1,
+          page_size: 100,
+          total_items: 101,
+          total_pages: 2,
+        } as never;
+      }
+      if (path === "/api/v1/spaces?limit=100&page=2") {
+        return {
+          items: [{ id: "later", name: "Later space", role: "reader", revision: 1 }],
+          page: 2,
+          page_size: 100,
+          total_items: 101,
+          total_pages: 2,
+        } as never;
+      }
+      if (path === "/api/v1/knowledge?limit=25") {
+        return { items: [] } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<KnowledgeConsole />);
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/spaces?limit=100&page=2", {}));
+    expect(await screen.findByRole("option", { name: "Later space" })).toBeInTheDocument();
+  });
+
+  it("paginates knowledge with numeric pages and resets after filtering", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path === "/api/v1/spaces?limit=100") {
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] } as never;
       }
       if (path === "/api/v1/knowledge?limit=25") {
         return {
           items: [{ id: "note-1", space_id: "global", title: "First note", tags: [], version: 1, updated_at: "2026-08-20T12:00:00Z" }],
-          next_cursor: "knowledge-cursor",
+          page: 1,
+          page_size: 25,
+          total_items: 2,
+          total_pages: 2,
         } as never;
       }
-      if (path === "/api/v1/knowledge?limit=25&cursor=knowledge-cursor") {
+      if (path === "/api/v1/knowledge?limit=25&page=2") {
         return {
           items: [{ id: "note-2", space_id: "global", title: "Second note", tags: [], version: 1, updated_at: "2026-08-20T11:00:00Z" }],
-          next_cursor: null,
+          page: 2,
+          page_size: 25,
+          total_items: 2,
+          total_pages: 2,
         } as never;
       }
       if (path === "/api/v1/knowledge?limit=25&q=budget&tag=finance") {
         return {
           items: [{ id: "note-3", space_id: "global", title: "Budget plan", tags: ["finance"], version: 1, updated_at: "2026-08-20T10:00:00Z" }],
-          next_cursor: null,
+          page: 1,
+          page_size: 25,
+          total_items: 1,
+          total_pages: 1,
         } as never;
       }
       throw new Error(`Unexpected path ${path}`);
@@ -288,9 +393,9 @@ describe("management console", () => {
     render(<KnowledgeConsole />);
 
     expect(await screen.findByText("First note")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Load more knowledge" }));
-    expect(screen.getByText("First note")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Page 2" }));
     expect(await screen.findByText("Second note")).toBeInTheDocument();
+    expect(screen.queryByText("First note")).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Search knowledge list"), { target: { value: "budget" } });
     fireEvent.change(screen.getByLabelText("Filter by tag"), { target: { value: "finance" } });
@@ -305,10 +410,10 @@ describe("management console", () => {
     let archived = false;
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
       if (path.startsWith("/api/v1/spaces")) {
-        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] } as never;
       }
       if (path === "/api/v1/knowledge?limit=25") {
-        return { items: archived ? [] : [{ id: "note-1", space_id: "global", title: "Water valve", tags: ["home"], version, updated_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
+        return { items: archived ? [] : [{ id: "note-1", space_id: "global", title: "Water valve", tags: ["home"], version, updated_at: "2026-08-20T12:00:00Z" }] } as never;
       }
       if (path === "/api/v1/knowledge/note-1" && !options?.method) {
         return { id: "note-1", space_id: "global", title: "Water valve", content: "Turn clockwise.", tags: ["home"], version, updated_at: "2026-08-20T12:00:00Z" } as never;
@@ -355,7 +460,7 @@ describe("management console", () => {
   it("searches every accessible space and exposes degraded semantic health", async () => {
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
       if (path.startsWith("/api/v1/spaces")) {
-        return { items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }], next_cursor: null } as never;
+        return { items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }] } as never;
       }
       if (path === "/api/v1/retrieval/search" && options?.method === "POST") {
         return {
@@ -383,10 +488,10 @@ describe("management console", () => {
     let uploaded = false;
     vi.mocked(apiRequest).mockImplementation(async (path) => {
       if (path.startsWith("/api/v1/spaces")) {
-        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] } as never;
       }
       if (path.startsWith("/api/v1/sources")) {
-        return { items: uploaded ? [{ id: "source-1", space_id: "global", display_name: "Procedures", status: "pending", original_filename: "procedures.txt", size_bytes: 32, updated_at: "2026-08-20T12:00:00Z" }] : [], next_cursor: null } as never;
+        return { items: uploaded ? [{ id: "source-1", space_id: "global", display_name: "Procedures", status: "pending", original_filename: "procedures.txt", size_bytes: 32, updated_at: "2026-08-20T12:00:00Z" }] : [] } as never;
       }
       throw new Error(`Unexpected path ${path}`);
     });
@@ -413,10 +518,10 @@ describe("management console", () => {
     let archived = false;
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
       if (path.startsWith("/api/v1/spaces")) {
-        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] } as never;
       }
       if (path === "/api/v1/sources?limit=25") {
-        return { items: archived ? [] : [{ id: "source-1", space_id: "global", display_name: "Procedures", status: "active", original_filename: "procedures.txt", size_bytes: 32, revision: 3, updated_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
+        return { items: archived ? [] : [{ id: "source-1", space_id: "global", display_name: "Procedures", status: "active", original_filename: "procedures.txt", size_bytes: 32, revision: 3, updated_at: "2026-08-20T12:00:00Z" }] } as never;
       }
       if (path === "/api/v1/sources/source-1?expected_revision=3" && options?.method === "DELETE") {
         archived = true;
@@ -435,27 +540,26 @@ describe("management console", () => {
     await waitFor(() => expect(screen.queryByText("Procedures")).not.toBeInTheDocument());
   });
 
-  it("loads the next cursor page of sources without replacing the first page", async () => {
+  it("loads a direct numeric source page and replaces the page contents", async () => {
     vi.mocked(apiRequest).mockImplementation(async (path) => {
       if (path.startsWith("/api/v1/spaces")) {
-        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] } as never;
       }
       if (path === "/api/v1/sources?limit=25") {
-        return { items: [{ id: "source-2", space_id: "global", display_name: "Second", status: "active", original_filename: "second.txt", size_bytes: 12, revision: 1, updated_at: "2026-08-20T12:00:00Z" }], next_cursor: "source-cursor" } as never;
+        return { items: [{ id: "source-2", space_id: "global", display_name: "Second", status: "active", original_filename: "second.txt", size_bytes: 12, revision: 1, updated_at: "2026-08-20T12:00:00Z" }], page: 1, page_size: 25, total_items: 2, total_pages: 2 } as never;
       }
-      if (path === "/api/v1/sources?limit=25&cursor=source-cursor") {
-        return { items: [{ id: "source-1", space_id: "global", display_name: "First", status: "active", original_filename: "first.txt", size_bytes: 10, revision: 1, updated_at: "2026-08-20T11:00:00Z" }], next_cursor: null } as never;
+      if (path === "/api/v1/sources?limit=25&page=2") {
+        return { items: [{ id: "source-1", space_id: "global", display_name: "First", status: "active", original_filename: "first.txt", size_bytes: 10, revision: 1, updated_at: "2026-08-20T11:00:00Z" }], page: 2, page_size: 25, total_items: 2, total_pages: 2 } as never;
       }
       throw new Error(`Unexpected path ${path}`);
     });
     render(<SourcesConsole />);
 
     expect(await screen.findByText("Second")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Load more sources" }));
+    fireEvent.click(screen.getByRole("button", { name: "Page 2" }));
 
     expect(await screen.findByText("First")).toBeInTheDocument();
-    expect(screen.getByText("Second")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Load more sources" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Second")).not.toBeInTheDocument();
   });
 
   it("reveals a generated member password exactly in the creation result", async () => {
@@ -463,14 +567,14 @@ describe("management console", () => {
     let created = false;
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
       if (path.startsWith("/api/v1/spaces")) {
-        return { items: [{ id: "global", name: "Family Shared", role: "owner", revision: 1 }], next_cursor: null } as never;
+        return { items: [{ id: "global", name: "Family Shared", role: "owner", revision: 1 }] } as never;
       }
       if (path.startsWith("/api/v1/members") && options?.method === "POST") {
         created = true;
         return { id: "member-1", username: "nana", display_name: "Nana", temporary_password: "Temp-Only-Once!42", temporary_password_expires_at: "2026-08-21T12:00:00Z", requires_password_change: true } as never;
       }
       if (path.startsWith("/api/v1/members")) {
-        return { items: created ? [{ id: "member-1", username: "nana", display_name: "Nana", status: "active", system_role: "member", requires_password_change: true }] : [], next_cursor: null } as never;
+        return { items: created ? [{ id: "member-1", username: "nana", display_name: "Nana", status: "active", system_role: "member", requires_password_change: true }] : [] } as never;
       }
       throw new Error(`Unexpected path ${path}`);
     });
@@ -490,10 +594,10 @@ describe("management console", () => {
     let disabled = false;
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
       if (path.startsWith("/api/v1/spaces")) {
-        return { items: [{ id: "global", name: "Family Shared", role: "owner", revision: 1 }], next_cursor: null } as never;
+        return { items: [{ id: "global", name: "Family Shared", role: "owner", revision: 1 }] } as never;
       }
       if (path === "/api/v1/members?limit=25") {
-        return { items: [{ id: "member-1", username: "nana", display_name: "Nana", status: disabled ? "disabled" : "active", system_role: "member", requires_password_change: false }], next_cursor: null } as never;
+        return { items: [{ id: "member-1", username: "nana", display_name: "Nana", status: disabled ? "disabled" : "active", system_role: "member", requires_password_change: false }] } as never;
       }
       if (path === "/api/v1/members/member-1/password-reset" && options?.method === "POST") {
         return { id: "member-1", temporary_password: "Reset-Only-Once!42", temporary_password_expires_at: "2026-08-21T12:00:00Z", requires_password_change: true } as never;
@@ -527,16 +631,16 @@ describe("management console", () => {
     currentMember.system_role = "super_admin";
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
       if (path === "/api/v1/spaces?limit=100") {
-        return { items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }], next_cursor: null } as never;
+        return { items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }] } as never;
       }
       if (path === "/api/v1/members?limit=25" || path === "/api/v1/members?limit=25&status=active") {
         return { items: [
           { id: "member-1", username: "old-owner", display_name: "Old Owner", status: "active", system_role: "member", requires_password_change: false },
           { id: "member-2", username: "new-owner", display_name: "New Owner", status: "active", system_role: "member", requires_password_change: false },
-        ], next_cursor: null } as never;
+        ] } as never;
       }
       if (path === "/api/v1/admin/spaces?limit=25") {
-        return { items: [{ id: "private", name: "Private records", revision: 4, owner_member_id: "member-1", owner_username: "old-owner", owner_display_name: "Old Owner", created_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
+        return { items: [{ id: "private", name: "Private records", revision: 4, owner_member_id: "member-1", owner_username: "old-owner", owner_display_name: "Old Owner", created_at: "2026-08-20T12:00:00Z" }] } as never;
       }
       if (path === "/api/v1/admin/spaces/private/ownership" && options?.method === "PUT") {
         return { space_id: "private", member_id: "member-2", role: "owner" } as never;
@@ -564,13 +668,13 @@ describe("management console", () => {
     currentMember.system_role = "super_admin";
     vi.mocked(apiRequest).mockImplementation(async (path) => {
       if (path === "/api/v1/spaces?limit=100") {
-        return { items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }], next_cursor: null } as never;
+        return { items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }] } as never;
       }
       if (path.startsWith("/api/v1/members")) {
-        return { items: [{ id: "member-1", username: "owner", display_name: "Owner", status: "active", system_role: "member", requires_password_change: false }], next_cursor: null } as never;
+        return { items: [{ id: "member-1", username: "owner", display_name: "Owner", status: "active", system_role: "member", requires_password_change: false }] } as never;
       }
       if (path.startsWith("/api/v1/admin/spaces")) {
-        return { items: [{ id: "private", name: "Private records", revision: 4, owner_member_id: "member-1", owner_username: "owner", owner_display_name: "Owner", created_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
+        return { items: [{ id: "private", name: "Private records", revision: 4, owner_member_id: "member-1", owner_username: "owner", owner_display_name: "Owner", created_at: "2026-08-20T12:00:00Z" }] } as never;
       }
       throw new Error(`Unexpected path ${path}`);
     });
@@ -595,17 +699,17 @@ describe("management console", () => {
     let created = false;
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
       if (path.startsWith("/api/v1/spaces")) {
-        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] } as never;
       }
       if (path === "/api/v1/api-keys" && options?.method === "POST") {
         created = true;
         return { id: "key-1", public_id: "pk_live_1", secret: "aigw_v1_once_only", scopes: ["knowledge:read"] } as never;
       }
       if (path.startsWith("/api/v1/api-keys")) {
-        return { items: created ? [{ id: "key-1", public_id: "pk_live_1", name: "Laptop", status: "active", scopes: ["knowledge:read"], created_at: "2026-08-20T12:00:00Z" }] : [], next_cursor: null } as never;
+        return { items: created ? [{ id: "key-1", public_id: "pk_live_1", name: "Laptop", status: "active", scopes: ["knowledge:read"], created_at: "2026-08-20T12:00:00Z" }] : [] } as never;
       }
       if (path.startsWith("/api/v1/sessions")) {
-        return { items: [], next_cursor: null } as never;
+        return { items: [] } as never;
       }
       if (path === "/api/v1/settings") {
         return { revision: 0, state: "active", values: { retrieval: { limit: 20 } } } as never;
@@ -633,10 +737,10 @@ describe("management console", () => {
     let sessionRevoked = false;
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
       if (path.startsWith("/api/v1/spaces")) {
-        return { items: [], next_cursor: null } as never;
+        return { items: [] } as never;
       }
       if (path === "/api/v1/api-keys?limit=25" && !options?.method) {
-        return { items: keyRevoked ? [] : [{ id: "key-1", public_id: "pk_live_1", name: "Laptop", status: "active", scopes: ["knowledge:read"], created_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
+        return { items: keyRevoked ? [] : [{ id: "key-1", public_id: "pk_live_1", name: "Laptop", status: "active", scopes: ["knowledge:read"], created_at: "2026-08-20T12:00:00Z" }] } as never;
       }
       if (path === "/api/v1/api-keys/key-1" && options?.method === "DELETE") {
         keyRevoked = true;
@@ -646,7 +750,7 @@ describe("management console", () => {
         return { items: [
           { id: "session-current", current: true, status: "active", created_at: "2026-08-20T12:00:00Z", last_activity_at: "2026-08-20T12:00:00Z" },
           ...(!sessionRevoked ? [{ id: "session-other", current: false, status: "active", created_at: "2026-08-19T12:00:00Z", last_activity_at: "2026-08-19T13:00:00Z" }] : []),
-        ], next_cursor: null } as never;
+        ] } as never;
       }
       if (path === "/api/v1/sessions/session-other" && options?.method === "DELETE") {
         sessionRevoked = true;
@@ -675,19 +779,19 @@ describe("management console", () => {
     const activeValues = { retrieval: { limit: 20, lexical_weight: 1, vector_weight: 1 } };
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
       if (path.startsWith("/api/v1/spaces")) {
-        return { items: [], next_cursor: null } as never;
+        return { items: [] } as never;
       }
       if (path === "/api/v1/api-keys?limit=25") {
-        return { items: [], next_cursor: null } as never;
+        return { items: [] } as never;
       }
       if (path === "/api/v1/sessions?limit=25") {
-        return { items: [], next_cursor: null } as never;
+        return { items: [] } as never;
       }
       if (path === "/api/v1/settings" && !options?.method) {
         return { id: null, revision: 0, base_revision: 0, state: "active", values: activeValues } as never;
       }
       if (path === "/api/v1/settings/history?limit=20") {
-        return { items: [], next_cursor: null } as never;
+        return { items: [] } as never;
       }
       if (path === "/api/v1/settings/drafts" && options?.method === "POST") {
         return { id: "draft-1", revision: 1, base_revision: 0, state: "draft", values: { retrieval: { ...activeValues.retrieval, limit: 15 } } } as never;
@@ -729,19 +833,19 @@ describe("management console", () => {
     const revisionTwo = { id: "revision-2", revision: 2, base_revision: 1, state: "active", values: { retrieval: { limit: 25 } } };
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
       if (path.startsWith("/api/v1/spaces")) {
-        return { items: [], next_cursor: null } as never;
+        return { items: [] } as never;
       }
       if (path === "/api/v1/api-keys?limit=25") {
-        return { items: [], next_cursor: null } as never;
+        return { items: [] } as never;
       }
       if (path === "/api/v1/sessions?limit=25") {
-        return { items: [], next_cursor: null } as never;
+        return { items: [] } as never;
       }
       if (path === "/api/v1/settings" && !options?.method) {
         return revisionTwo as never;
       }
       if (path === "/api/v1/settings/history?limit=20") {
-        return { items: [revisionTwo, revisionOne], next_cursor: null } as never;
+        return { items: [revisionTwo, revisionOne] } as never;
       }
       if (path === "/api/v1/settings/rollback/1" && options?.method === "POST") {
         return { ...revisionOne, id: "revision-3", revision: 3, base_revision: 2, state: "active" } as never;
@@ -766,10 +870,10 @@ describe("management console", () => {
   it("shows durable ingestion state without inventing progress", async () => {
     vi.mocked(apiRequest).mockImplementation(async (path) => {
       if (path.startsWith("/api/v1/spaces")) {
-        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] } as never;
       }
       if (path.startsWith("/api/v1/ingestion-jobs")) {
-        return { items: [{ id: "job-1", space_id: "global", document_id: "doc-1", state: "queued", progress: 0, attempt_count: 0, max_attempts: 5, created_at: "2026-08-20T12:00:00Z", updated_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
+        return { items: [{ id: "job-1", space_id: "global", document_id: "doc-1", state: "queued", progress: 0, attempt_count: 0, max_attempts: 5, created_at: "2026-08-20T12:00:00Z", updated_at: "2026-08-20T12:00:00Z" }] } as never;
       }
       throw new Error(`Unexpected path ${path}`);
     });
@@ -784,10 +888,10 @@ describe("management console", () => {
     let state = "queued";
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
       if (path.startsWith("/api/v1/spaces")) {
-        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }], next_cursor: null } as never;
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] } as never;
       }
       if (path === "/api/v1/ingestion-jobs?limit=25") {
-        return { items: [{ id: "job-1", space_id: "global", document_id: "doc-1", state, progress: 0, attempt_count: 1, max_attempts: 5, created_at: "2026-08-20T12:00:00Z", updated_at: "2026-08-20T12:00:00Z" }], next_cursor: null } as never;
+        return { items: [{ id: "job-1", space_id: "global", document_id: "doc-1", state, progress: 0, attempt_count: 1, max_attempts: 5, created_at: "2026-08-20T12:00:00Z", updated_at: "2026-08-20T12:00:00Z" }] } as never;
       }
       if (path === "/api/v1/ingestion-jobs/job-1/cancel" && options?.method === "POST") {
         state = "cancelled";
@@ -816,10 +920,10 @@ describe("management console", () => {
     currentMember.system_role = "super_admin";
     vi.mocked(apiRequest).mockImplementation(async (path) => {
       if (path.startsWith("/api/v1/spaces")) {
-        return { items: [], next_cursor: null } as never;
+        return { items: [] } as never;
       }
       if (path.startsWith("/api/v1/audit-events")) {
-        return { items: [{ id: "event-1", occurred_at: "2026-08-20T12:00:00Z", actor_kind: "session", action: "knowledge.create", resource_type: "knowledge_item", resource_id: "note-1", outcome: "success", request_id: "request-1" }], next_cursor: null } as never;
+        return { items: [{ id: "event-1", occurred_at: "2026-08-20T12:00:00Z", actor_kind: "session", action: "knowledge.create", resource_type: "knowledge_item", resource_id: "note-1", outcome: "success", request_id: "request-1" }] } as never;
       }
       throw new Error(`Unexpected path ${path}`);
     });
@@ -833,13 +937,13 @@ describe("management console", () => {
     let confirmed = false;
     vi.mocked(apiRequest).mockImplementation(async (path, options) => {
       if (path === "/api/v1/spaces?limit=100") {
-        return { items: [{ id: "private", name: "Private", role: "owner", revision: 1 }], next_cursor: null } as never;
+        return { items: [{ id: "private", name: "Private", role: "owner", revision: 1 }] } as never;
       }
       if (path === "/api/v1/ai-tools") {
         return { items: [{ name: "spaces.archive.v1", description: "Archive an owned space.", confirmation: "required", parameters: {} }] } as never;
       }
       if (path === "/api/v1/ai-actions?limit=25") {
-        return { items: confirmed ? [] : [{ id: "action-1", tool_name: "spaces.archive.v1", target_ids: ["private"], expected_revision: 1, status: "pending", created_at: "2026-08-20T12:00:00Z", expires_at: "2026-08-20T12:10:00Z" }], next_cursor: null } as never;
+        return { items: confirmed ? [] : [{ id: "action-1", tool_name: "spaces.archive.v1", target_ids: ["private"], expected_revision: 1, status: "pending", created_at: "2026-08-20T12:00:00Z", expires_at: "2026-08-20T12:10:00Z" }] } as never;
       }
       if (path === "/api/v1/ai-actions/action-1/confirm" && options?.method === "POST") {
         confirmed = true;
@@ -861,13 +965,13 @@ describe("management console", () => {
   it("explains the exact impact of each pending AI action", async () => {
     vi.mocked(apiRequest).mockImplementation(async (path) => {
       if (path === "/api/v1/spaces?limit=100") {
-        return { items: [{ id: "private", name: "Private", role: "owner", revision: 1 }], next_cursor: null } as never;
+        return { items: [{ id: "private", name: "Private", role: "owner", revision: 1 }] } as never;
       }
       if (path === "/api/v1/ai-tools") {
         return { items: [] } as never;
       }
       if (path === "/api/v1/ai-actions?limit=25") {
-        return { items: [{ id: "action-2", tool_name: "spaces.members.set.v1", target_ids: ["private", "member-2"], expected_revision: 1, status: "pending", created_at: "2026-08-20T12:00:00Z", expires_at: "2026-08-20T12:10:00Z" }], next_cursor: null } as never;
+        return { items: [{ id: "action-2", tool_name: "spaces.members.set.v1", target_ids: ["private", "member-2"], expected_revision: 1, status: "pending", created_at: "2026-08-20T12:00:00Z", expires_at: "2026-08-20T12:10:00Z" }] } as never;
       }
       throw new Error(`Unexpected path ${path}`);
     });

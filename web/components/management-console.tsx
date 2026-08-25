@@ -1,14 +1,16 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Activity, Archive, ArrowUpRight, BookOpen, Code2, Copy, FileText, FileUp, FolderKanban, KeyRound, Layers3, LoaderCircle, LockKeyhole, MonitorSmartphone, Plus, Save, Search, Settings2, ShieldCheck, Sparkles, Tag, UserMinus, UserPlus, UsersRound, X } from "lucide-react";
+import { Activity, Archive, ArrowUpRight, BookOpen, CircleAlert, Code2, Copy, FileText, FileUp, FolderKanban, KeyRound, Layers3, LoaderCircle, LockKeyhole, MonitorSmartphone, Plus, Save, Search, Settings2, ShieldCheck, Sparkles, Tag, UserMinus, UserPlus, UsersRound, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 
 import { useCurrentMember } from "@/components/auth/session-gate";
 import { ConsoleShell } from "@/components/console-shell";
+import { PaginationControls } from "@/components/pagination-controls";
 import { ApiError, apiMultipart, contractClient, contractData, idempotencyKey } from "@/lib/api-client";
 import type { components } from "@/lib/generated/openapi";
-import { useCursorPagination } from "@/lib/use-cursor-pagination";
+import { usePagePagination } from "@/lib/use-page-pagination";
+import { loadAccessibleSpaces } from "@/lib/space-options";
 
 type Space = components["schemas"]["SpaceSummary"];
 type SpaceListResponse = components["schemas"]["Page_SpaceSummary_"];
@@ -65,6 +67,10 @@ function message(error: unknown) {
   return error instanceof ApiError ? error.message : "The request could not be completed.";
 }
 
+function spaceLabel(spaces: Space[], spaceId: string) {
+  return spaces.find((space) => space.id === spaceId)?.name ?? spaceId;
+}
+
 export function ListSkeleton({ compact = false, rows = 5 }: { compact?: boolean; rows?: number }) {
   return (
     <div aria-hidden="true" className={`list-skeleton${compact ? " compact" : ""}`}>
@@ -75,6 +81,16 @@ export function ListSkeleton({ compact = false, rows = 5 }: { compact?: boolean;
           <span className="skeleton-pill" />
         </div>
       ))}
+    </div>
+  );
+}
+
+export function ListUnavailable({ label, onRetry }: { label: string; onRetry: () => void }) {
+  return (
+    <div className="console-unavailable" role="alert">
+      <CircleAlert aria-hidden="true" size={22} />
+      <div><strong>Unable to load {label}</strong><span>Check your connection and try again.</span></div>
+      <button aria-label={`Retry ${label}`} className="secondary-button" onClick={onRetry} type="button">Retry</button>
     </div>
   );
 }
@@ -96,23 +112,24 @@ export function SpacesConsole() {
   const [pendingRemoval, setPendingRemoval] = useState<SpaceMember | null>(null);
   const [pendingOwnership, setPendingOwnership] = useState<SpaceMember | null>(null);
   const [confirmSpaceArchive, setConfirmSpaceArchive] = useState(false);
+  const [createdSpaceName, setCreatedSpaceName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const loadSpacePage = useCallback((cursor: string | null, signal: AbortSignal) => contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 25, ...(cursor ? { cursor } : {}), ...(appliedSpaceSearch ? { q: appliedSpaceSearch } : {}) } }, signal })), [appliedSpaceSearch]);
-  const spacePages = useCursorPagination<Space>({ keyOf: (space) => space.id, loadPage: loadSpacePage, queryKey: appliedSpaceSearch });
+  const loadSpacePage = useCallback((page: number, signal: AbortSignal) => contractData(contractClient.GET("/api/v1/spaces", { params: { query: { page, page_size: 25, ...(appliedSpaceSearch ? { q: appliedSpaceSearch } : {}) } }, signal })), [appliedSpaceSearch]);
+  const spacePages = usePagePagination<Space>({ loadPage: loadSpacePage, queryKey: appliedSpaceSearch });
   const spaces = spacePages.items;
-  const loadMemberPage = useCallback((cursor: string | null, signal: AbortSignal) => selectedSpace
-    ? contractData(contractClient.GET("/api/v1/spaces/{space_id}/members", { params: { path: { space_id: selectedSpace.id }, query: { limit: 25, ...(cursor ? { cursor } : {}), ...(appliedMemberSearch ? { q: appliedMemberSearch } : {}), ...(memberRoleFilter ? { role: memberRoleFilter } : {}) } }, signal }))
-    : Promise.resolve({ items: [], next_cursor: null }), [appliedMemberSearch, memberRoleFilter, selectedSpace]);
-  const memberPages = useCursorPagination<SpaceMember>({ keyOf: (spaceMember) => spaceMember.member_id, loadPage: loadMemberPage, queryKey: JSON.stringify([selectedSpace?.id, appliedMemberSearch, memberRoleFilter]) });
+  const loadMemberPage = useCallback((page: number, signal: AbortSignal) => selectedSpace
+    ? contractData(contractClient.GET("/api/v1/spaces/{space_id}/members", { params: { path: { space_id: selectedSpace.id }, query: { page, page_size: 25, ...(appliedMemberSearch ? { q: appliedMemberSearch } : {}), ...(memberRoleFilter ? { role: memberRoleFilter } : {}) } }, signal }))
+    : Promise.resolve({ items: [], page: 1, page_size: 25, total_items: 0, total_pages: 0 }), [appliedMemberSearch, memberRoleFilter, selectedSpace]);
+  const memberPages = usePagePagination<SpaceMember>({ loadPage: loadMemberPage, queryKey: JSON.stringify([selectedSpace?.id, appliedMemberSearch, memberRoleFilter]) });
   const spaceMembers = memberPages.items;
-  const loadCandidatePage = useCallback((cursor: string | null, signal: AbortSignal) => selectedSpace
-    ? contractData(contractClient.GET("/api/v1/spaces/{space_id}/member-candidates", { params: { path: { space_id: selectedSpace.id }, query: { limit: 25, ...(cursor ? { cursor } : {}), ...(appliedCandidateSearch ? { q: appliedCandidateSearch } : {}) } }, signal }))
-    : Promise.resolve({ items: [], next_cursor: null }), [appliedCandidateSearch, selectedSpace]);
-  const candidatePages = useCursorPagination<SpaceMemberCandidate>({ keyOf: (candidate) => candidate.member_id, loadPage: loadCandidatePage, queryKey: JSON.stringify([selectedSpace?.id, appliedCandidateSearch]) });
+  const loadCandidatePage = useCallback((page: number, signal: AbortSignal) => selectedSpace
+    ? contractData(contractClient.GET("/api/v1/spaces/{space_id}/member-candidates", { params: { path: { space_id: selectedSpace.id }, query: { page, page_size: 25, ...(appliedCandidateSearch ? { q: appliedCandidateSearch } : {}) } }, signal }))
+    : Promise.resolve({ items: [], page: 1, page_size: 25, total_items: 0, total_pages: 0 }), [appliedCandidateSearch, selectedSpace]);
+  const candidatePages = usePagePagination<SpaceMemberCandidate>({ loadPage: loadCandidatePage, queryKey: JSON.stringify([selectedSpace?.id, appliedCandidateSearch]) });
   const memberCandidates = candidatePages.items;
   const selectedCandidateId = memberCandidates.some((candidate) => candidate.member_id === candidateId) ? candidateId : memberCandidates[0]?.member_id || "";
-  const accessLoading = selectedSpace !== null && (memberPages.initialLoading || candidatePages.initialLoading);
+  const accessLoading = selectedSpace !== null && (memberPages.initialLoading || candidatePages.initialLoading || (memberPages.loading && spaceMembers.length === 0) || (candidatePages.loading && memberCandidates.length === 0));
 
   useEffect(() => {
     setCandidateId((current) => memberCandidates.some((candidate) => candidate.member_id === current) ? current : memberCandidates[0]?.member_id || "");
@@ -129,6 +146,21 @@ export function SpacesConsole() {
     setError(null);
   }, []);
 
+  const refreshSelectedSpace = useCallback(async () => {
+    if (!selectedSpace) {
+      return;
+    }
+    try {
+      const response = await contractData(contractClient.GET("/api/v1/spaces", { params: { query: { page: 1, page_size: 5, q: selectedSpace.id } } }));
+      const updated = response.items.find((space) => space.id === selectedSpace.id);
+      if (updated) {
+        setSelectedSpace(updated);
+      }
+    } catch {
+      return;
+    }
+  }, [selectedSpace]);
+
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const value = name.trim();
@@ -139,6 +171,7 @@ export function SpacesConsole() {
     setError(null);
     try {
       await contractData(contractClient.POST("/api/v1/spaces", { body: { name: value }, params: { header: { "Idempotency-Key": idempotencyKey() } } }));
+      setCreatedSpaceName(value);
       setName("");
       spacePages.reload();
     } catch (createError) {
@@ -162,6 +195,7 @@ export function SpacesConsole() {
       }));
       memberPages.reload();
       candidatePages.reload();
+      await refreshSelectedSpace();
     } catch (updateError) {
       setError(message(updateError));
     } finally {
@@ -181,6 +215,7 @@ export function SpacesConsole() {
         params: { header: { "Idempotency-Key": idempotencyKey() }, path: { member_id: spaceMember.member_id, space_id: selectedSpace.id } },
       }));
       memberPages.reload();
+      await refreshSelectedSpace();
     } catch (updateError) {
       setError(message(updateError));
     } finally {
@@ -222,6 +257,7 @@ export function SpacesConsole() {
       setPendingRemoval(null);
       memberPages.reload();
       candidatePages.reload();
+      await refreshSelectedSpace();
     } catch (removeError) {
       setError(message(removeError));
     } finally {
@@ -261,11 +297,12 @@ export function SpacesConsole() {
         <section className="console-panel">
           <div className="panel-heading">
             <div><span>Accessible now</span><h2>Your spaces</h2></div>
-            <span className="count-pill">{spaces.length}{spacePages.hasMore ? "+" : ""}</span>
+            <span className="count-pill">{spacePages.totalItems}</span>
           </div>
           <form className="list-filter-bar space-filter-bar" onSubmit={(event) => { event.preventDefault(); setAppliedSpaceSearch(spaceSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={15} /><input aria-label="Search spaces" onChange={(event) => setSpaceSearch(event.target.value)} placeholder="Search name or ID" type="search" value={spaceSearch} /></label><button className="secondary-button" type="submit">Apply</button>{appliedSpaceSearch ? <button className="filter-clear-button" onClick={() => { setSpaceSearch(""); setAppliedSpaceSearch(""); }} type="button">Clear</button> : null}</form>
-          {spacePages.initialLoading ? <ListSkeleton /> : null}
-          {!spacePages.initialLoading && spaces.length === 0 ? <div className="console-empty"><FolderKanban size={23} /><strong>{appliedSpaceSearch ? "No matching spaces" : "No spaces yet"}</strong><span>{appliedSpaceSearch ? "Try a broader name or clear the search." : "Create one for a project or keep using shared knowledge."}</span></div> : null}
+          {spacePages.initialLoading || (spacePages.loading && spaces.length === 0) ? <ListSkeleton /> : null}
+          {spacePages.error ? <ListUnavailable label="spaces" onRetry={() => void spacePages.reload()} /> : null}
+          {!spacePages.initialLoading && !spacePages.loading && !spacePages.error && spaces.length === 0 ? <div className="console-empty"><FolderKanban size={23} /><strong>{appliedSpaceSearch ? "No matching spaces" : "No spaces yet"}</strong><span>{appliedSpaceSearch ? "Try a broader name or clear the search." : "Create one for a project or keep using shared knowledge."}</span></div> : null}
           <div className="space-card-grid">
             {spaces.map((space, index) => (
               <article className="space-card" key={space.id}>
@@ -279,7 +316,7 @@ export function SpacesConsole() {
               </article>
             ))}
           </div>
-          {spacePages.hasMore && spaces.length > 0 ? <button className="secondary-button pagination-button" disabled={spacePages.loadingMore} onClick={() => void spacePages.loadMore()} type="button">{spacePages.loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more spaces</button> : null}
+          {spacePages.totalItems > 0 ? <PaginationControls loading={spacePages.loading} loadingPage={spacePages.loadingPage} onPageChange={(nextPage) => void spacePages.goToPage(nextPage)} page={spacePages.page} pageSize={spacePages.pageSize} totalItems={spacePages.totalItems} totalPages={spacePages.totalPages} /> : null}
           {accessLoading ? <div className="console-loading access-loading"><LoaderCircle className="spin" size={18} /> Loading space access…</div> : null}
           {selectedSpace && !accessLoading ? (
             <section className="space-access-panel" aria-label={`${selectedSpace.name} access`}>
@@ -294,8 +331,9 @@ export function SpacesConsole() {
               <form className="membership-add-form" onSubmit={addMember}>
                 <div>
                   <label htmlFor="space-member-candidate">Family member</label>
-                  <select disabled={memberCandidates.length === 0} id="space-member-candidate" onChange={(event) => setCandidateId(event.target.value)} value={selectedCandidateId}>
-                    {memberCandidates.length === 0 ? <option value="">Everyone already has access</option> : null}
+                  <select disabled={memberCandidates.length === 0 || Boolean(candidatePages.error)} id="space-member-candidate" onChange={(event) => setCandidateId(event.target.value)} value={selectedCandidateId}>
+                    {candidatePages.error ? <option value="">Members are unavailable</option> : null}
+                    {!candidatePages.error && memberCandidates.length === 0 ? <option value="">Everyone already has access</option> : null}
                     {memberCandidates.map((candidate) => <option key={candidate.member_id} value={candidate.member_id}>{candidate.display_name} (@{candidate.username})</option>)}
                   </select>
                 </div>
@@ -319,8 +357,9 @@ export function SpacesConsole() {
                   </article>
                 ))}
               </div>
-              {memberPages.hasMore ? <button className="secondary-button pagination-button" disabled={memberPages.loadingMore} onClick={() => void memberPages.loadMore()} type="button">Load more members</button> : null}
-              {candidatePages.hasMore ? <button className="secondary-button pagination-button" disabled={candidatePages.loadingMore} onClick={() => void candidatePages.loadMore()} type="button">Load more member choices</button> : null}
+              {memberPages.error || candidatePages.error ? <ListUnavailable label="space access" onRetry={() => { void memberPages.reload(); void candidatePages.reload(); }} /> : null}
+              {memberPages.totalItems > 0 ? <PaginationControls loading={memberPages.loading} loadingPage={memberPages.loadingPage} onPageChange={(nextPage) => void memberPages.goToPage(nextPage)} page={memberPages.page} pageSize={memberPages.pageSize} totalItems={memberPages.totalItems} totalPages={memberPages.totalPages} /> : null}
+              {candidatePages.totalItems > 0 ? <PaginationControls loading={candidatePages.loading} loadingPage={candidatePages.loadingPage} onPageChange={(nextPage) => void candidatePages.goToPage(nextPage)} page={candidatePages.page} pageSize={candidatePages.pageSize} totalItems={candidatePages.totalItems} totalPages={candidatePages.totalPages} /> : null}
               {pendingRemoval ? (
                 <div className="confirmation-strip" role="alertdialog" aria-label={`Remove ${pendingRemoval.display_name} from ${selectedSpace.name}`}>
                   <div><strong>Remove {pendingRemoval.display_name}?</strong><span>They will immediately lose access to this space and its search results.</span></div>
@@ -340,10 +379,11 @@ export function SpacesConsole() {
           <p>Best for a trip, home project, personal archive, or anything with a smaller access list.</p>
           <form className="console-form" onSubmit={create}>
             <label htmlFor="space-name">Space name</label>
-            <input id="space-name" maxLength={120} onChange={(event) => setName(event.target.value)} placeholder="e.g. Japan trip" required value={name} />
+            <input id="space-name" maxLength={120} onChange={(event) => { setCreatedSpaceName(null); setName(event.target.value); }} placeholder="e.g. Japan trip" required value={name} />
             <button className="primary-button" disabled={saving} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} Create space</button>
           </form>
-          {error || spacePages.error || memberPages.error || candidatePages.error ? <p className="inline-error" role="alert">{error || message(spacePages.error || memberPages.error || candidatePages.error)}</p> : null}
+          {createdSpaceName ? <p className="inline-success" role="status"><ShieldCheck size={14} /> {createdSpaceName} is ready. It may be listed on a later page.</p> : null}
+          {error ? <p className="inline-error" role="alert">{error}</p> : null}
         </aside>
       </div>
     </ConsoleShell>
@@ -373,12 +413,12 @@ export function KnowledgeConsole() {
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadKnowledgePage = useCallback((cursor: string | null, signal: AbortSignal) => contractData(
+  const loadKnowledgePage = useCallback((page: number, signal: AbortSignal) => contractData(
     contractClient.GET("/api/v1/knowledge", {
       params: {
         query: {
-          limit: 25,
-          ...(cursor ? { cursor } : {}),
+          page,
+          page_size: 25,
           ...(spaceFilter ? { space_id: spaceFilter } : {}),
           ...(appliedSearch ? { q: appliedSearch } : {}),
           ...(appliedTag ? { tag: appliedTag } : {}),
@@ -389,26 +429,29 @@ export function KnowledgeConsole() {
   ), [appliedSearch, appliedTag, spaceFilter]);
   const {
     error: paginationError,
-    hasMore,
     initialLoading,
     items,
-    loadingMore,
-    loadMore,
+    page: knowledgePage,
+    pageSize: knowledgePageSize,
+    loadingPage: knowledgeLoadingPage,
+    totalItems: knowledgeTotalItems,
+    totalPages: knowledgeTotalPages,
+    loading,
+    goToPage: goToKnowledgePage,
     reload: reloadItems,
-  } = useCursorPagination<KnowledgeSummary>({
-    keyOf: (item) => item.id,
+  } = usePagePagination<KnowledgeSummary>({
     loadPage: loadKnowledgePage,
     queryKey: JSON.stringify([spaceFilter, appliedSearch, appliedTag]),
   });
 
   useEffect(() => {
     let active = true;
-    contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })).then((spaceResponse) => {
+    loadAccessibleSpaces().then((spaceResponse) => {
       if (!active) {
         return;
       }
-      setSpaces(spaceResponse.items);
-      setSpaceId((current) => current || spaceResponse.items[0]?.id || "");
+      setSpaces(spaceResponse);
+      setSpaceId((current) => current || spaceResponse[0]?.id || "");
       setError(null);
     }).catch((loadError) => {
       if (active) {
@@ -444,7 +487,7 @@ export function KnowledgeConsole() {
       setTitle("");
       setContent("");
       setTags("");
-      reloadItems();
+      await goToKnowledgePage(1);
     } catch (createError) {
       setError(message(createError));
     } finally {
@@ -535,7 +578,7 @@ export function KnowledgeConsole() {
         <section className="console-panel">
           <div className="panel-heading">
             <div><span>Living library</span><h2>{spaceFilter ? "Filtered knowledge" : "Knowledge items"}</h2></div>
-            <span className="count-pill" aria-label={`${items.length} knowledge items loaded`}>{items.length}{hasMore ? "+" : ""}</span>
+            <span className="count-pill" aria-label={`${knowledgeTotalItems} knowledge items`}>{knowledgeTotalItems}</span>
           </div>
           {spaceFilter ? <div className="filter-strip"><Search size={13} /> Showing one space only<button onClick={() => { window.location.replace("/knowledge"); }} type="button">Show all spaces</button></div> : null}
           <form className="list-filter-bar" onSubmit={(event) => {
@@ -561,19 +604,20 @@ export function KnowledgeConsole() {
               setAppliedTag("");
             }} type="button">Clear</button> : null}
           </form>
-          {initialLoading ? <ListSkeleton /> : null}
-          {!initialLoading && items.length === 0 ? <div className="console-empty"><BookOpen size={23} /><strong>{appliedSearch || appliedTag ? "No matching knowledge" : "Nothing captured yet"}</strong><span>{appliedSearch || appliedTag ? "Try a broader phrase or clear one of the filters." : "Add the first durable answer, procedure, or family detail."}</span></div> : null}
+          {initialLoading || (loading && items.length === 0) ? <ListSkeleton /> : null}
+          {paginationError ? <ListUnavailable label="knowledge" onRetry={() => void reloadItems()} /> : null}
+          {!initialLoading && !loading && !paginationError && items.length === 0 ? <div className="console-empty"><BookOpen size={23} /><strong>{appliedSearch || appliedTag ? "No matching knowledge" : "Nothing captured yet"}</strong><span>{appliedSearch || appliedTag ? "Try a broader phrase or clear one of the filters." : "Add the first durable answer, procedure, or family detail."}</span></div> : null}
           <div className="data-list">
             {items.map((item) => (
               <article className="data-row knowledge-row" key={item.id}>
                 <span className="row-leading violet"><BookOpen aria-hidden="true" size={18} /></span>
-                <div className="row-copy"><h3>{item.title}</h3><p>{item.space_id} · version {item.version}</p></div>
+                <div className="row-copy"><h3>{item.title}</h3><p>{spaceLabel(spaces, item.space_id)} · version {item.version}</p></div>
                 <div className="tag-list">{item.tags.slice(0, 3).map((value) => <span key={value}><Tag size={11} />{value}</span>)}</div>
                 <button aria-label={`Edit ${item.title}`} className="row-action-button" onClick={() => void openEditor(item)} type="button">Edit</button>
               </article>
             ))}
           </div>
-          {hasMore && items.length > 0 ? <button className="secondary-button pagination-button" disabled={loadingMore} onClick={() => void loadMore()} type="button">{loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more knowledge</button> : null}
+          {knowledgeTotalItems > 0 ? <PaginationControls loading={loading} loadingPage={knowledgeLoadingPage} onPageChange={(nextPage) => void goToKnowledgePage(nextPage)} page={knowledgePage} pageSize={knowledgePageSize} totalItems={knowledgeTotalItems} totalPages={knowledgeTotalPages} /> : null}
           {detailLoading ? <div className="console-loading access-loading"><LoaderCircle className="spin" size={18} /> Loading knowledge detail…</div> : null}
           {editing ? (
             <section className="knowledge-editor" aria-label={`Edit ${editing.title}`}>
@@ -622,7 +666,7 @@ export function KnowledgeConsole() {
             <input id="knowledge-tags" onChange={(event) => setTags(event.target.value)} placeholder="home, safety" value={tags} />
             <button className="primary-button" disabled={saving || spacesLoading || spaces.length === 0} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} Capture knowledge</button>
           </form>
-          {error || paginationError ? <p className="inline-error" role="alert">{error || message(paginationError)}</p> : null}
+          {error ? <p className="inline-error" role="alert">{error}</p> : null}
         </aside>
       </div>
     </ConsoleShell>
@@ -641,10 +685,10 @@ export function ExploreConsole() {
 
   useEffect(() => {
     let active = true;
-    contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } }))
+    loadAccessibleSpaces()
       .then((response) => {
         if (active) {
-          setSpaces(response.items);
+          setSpaces(response);
         }
       })
       .catch((loadError) => {
@@ -754,11 +798,11 @@ export function SourcesConsole() {
   const [pendingArchive, setPendingArchive] = useState<SourceSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const loadSourcePage = useCallback((cursor: string | null, signal: AbortSignal) => contractData(
+  const loadSourcePage = useCallback((page: number, signal: AbortSignal) => contractData(
     contractClient.GET("/api/v1/sources", {
       params: { query: {
-        limit: 25,
-        ...(cursor ? { cursor } : {}),
+        page,
+        page_size: 25,
         ...(appliedSearch ? { q: appliedSearch } : {}),
         ...(statusFilter ? { status: statusFilter } : {}),
       } },
@@ -767,26 +811,29 @@ export function SourcesConsole() {
   ), [appliedSearch, statusFilter]);
   const {
     error: paginationError,
-    hasMore,
     initialLoading,
     items: sources,
-    loadingMore,
-    loadMore,
+    page: sourcePage,
+    pageSize: sourcePageSize,
+    totalItems: sourceTotalItems,
+    totalPages: sourceTotalPages,
+    loading,
+    loadingPage: sourceLoadingPage,
+    goToPage: goToSourcePage,
     reload: reloadSources,
-  } = useCursorPagination<SourceSummary>({
-    keyOf: (source) => source.id,
+  } = usePagePagination<SourceSummary>({
     loadPage: loadSourcePage,
     queryKey: JSON.stringify([appliedSearch, statusFilter]),
   });
 
   useEffect(() => {
     let active = true;
-    contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })).then((spaceResponse) => {
+    loadAccessibleSpaces().then((spaceResponse) => {
       if (!active) {
         return;
       }
-      setSpaces(spaceResponse.items);
-      setSpaceId(spaceResponse.items[0]?.id || "");
+      setSpaces(spaceResponse);
+      setSpaceId(spaceResponse[0]?.id || "");
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
@@ -861,7 +908,7 @@ export function SourcesConsole() {
         <section className="console-panel">
           <div className="panel-heading">
             <div><span>Original material</span><h2>Source files</h2></div>
-            <span className="count-pill">{sources.length}{hasMore ? "+" : ""}</span>
+            <span className="count-pill">{sourceTotalItems}</span>
           </div>
           <form className="list-filter-bar source-filter-bar" onSubmit={(event) => {
             event.preventDefault();
@@ -872,19 +919,20 @@ export function SourcesConsole() {
             <button className="secondary-button" type="submit">Apply</button>
             {appliedSearch || statusFilter ? <button className="filter-clear-button" onClick={() => { setSearchText(""); setAppliedSearch(""); setStatusFilter(""); }} type="button">Clear</button> : null}
           </form>
-          {initialLoading ? <ListSkeleton /> : null}
-          {!initialLoading && sources.length === 0 ? <div className="console-empty"><FileText size={23} /><strong>{appliedSearch || statusFilter ? "No matching source files" : "No source files"}</strong><span>{appliedSearch || statusFilter ? "Try a broader search or clear the status filter." : "Upload a document without changing its meaning or filtering its contents."}</span></div> : null}
+          {initialLoading || (loading && sources.length === 0) ? <ListSkeleton /> : null}
+          {paginationError ? <ListUnavailable label="source files" onRetry={() => void reloadSources()} /> : null}
+          {!initialLoading && !loading && !paginationError && sources.length === 0 ? <div className="console-empty"><FileText size={23} /><strong>{appliedSearch || statusFilter ? "No matching source files" : "No source files"}</strong><span>{appliedSearch || statusFilter ? "Try a broader search or clear the status filter." : "Upload a document without changing its meaning or filtering its contents."}</span></div> : null}
           <div className="data-list">
             {sources.map((source) => (
               <article className="data-row source-row" key={source.id}>
                 <span className="row-leading cyan"><FileText aria-hidden="true" size={18} /></span>
-                <div className="row-copy"><h3>{source.display_name}</h3><p>{source.original_filename || "Unnamed file"} · {source.space_id}</p></div>
+                <div className="row-copy"><h3>{source.display_name}</h3><p>{source.original_filename || "Unnamed file"} · {spaceLabel(spaces, source.space_id)}</p></div>
                 <div className="row-stats"><strong>{source.size_bytes === null ? "—" : `${Math.max(1, Math.round(source.size_bytes / 1024))} KB`}</strong><span className={`status-pill status-${source.status}`}>{source.status}</span></div>
                 <button aria-label={`Archive ${source.display_name}`} className="archive-button compact" disabled={saving} onClick={() => setPendingArchive(source)} type="button"><Archive size={14} /> Archive</button>
               </article>
             ))}
           </div>
-          {hasMore ? <button className="secondary-button pagination-button" disabled={loadingMore} onClick={() => void loadMore()} type="button">{loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more sources</button> : null}
+          {sourceTotalItems > 0 ? <PaginationControls loading={loading} loadingPage={sourceLoadingPage} onPageChange={(nextPage) => void goToSourcePage(nextPage)} page={sourcePage} pageSize={sourcePageSize} totalItems={sourceTotalItems} totalPages={sourceTotalPages} /> : null}
           {pendingArchive ? <div aria-label={`Archive ${pendingArchive.display_name}`} className="confirmation-strip" role="alertdialog"><div><strong>Archive {pendingArchive.display_name}?</strong><span>The source leaves unified search immediately while its original bytes, revisions, and audit history remain preserved.</span></div><button className="secondary-button" onClick={() => setPendingArchive(null)} type="button">Keep source</button><button className="danger-button" disabled={saving} onClick={() => void archiveSource()} type="button">Confirm archive source</button></div> : null}
         </section>
         <aside className="console-panel action-panel upload-panel">
@@ -902,7 +950,7 @@ export function SourcesConsole() {
             <button className="primary-button" disabled={saving || spacesLoading || !file || spaces.length === 0} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <FileUp size={16} />} Queue source</button>
           </form>
           {queued ? <p className="inline-success"><ShieldCheck size={14} /> Queued for durable ingestion</p> : null}
-          {error || paginationError ? <p className="inline-error" role="alert">{error || message(paginationError)}</p> : null}
+          {error ? <p className="inline-error" role="alert">{error}</p> : null}
         </aside>
       </div>
     </ConsoleShell>
@@ -936,20 +984,20 @@ export function PeopleConsole() {
   const [error, setError] = useState<string | null>(null);
   const isAdmin = member.system_role === "super_admin";
 
-  const loadMemberPage = useCallback((cursor: string | null, signal: AbortSignal) => isAdmin
-    ? contractData(contractClient.GET("/api/v1/members", { params: { query: { limit: 25, ...(cursor ? { cursor } : {}), ...(appliedMemberSearch ? { q: appliedMemberSearch } : {}), ...(memberStatus ? { status: memberStatus } : {}), ...(memberRole ? { system_role: memberRole } : {}) } }, signal }))
-    : Promise.resolve({ items: [], next_cursor: null }), [appliedMemberSearch, isAdmin, memberRole, memberStatus]);
-  const memberPages = useCursorPagination<MemberSummary>({ keyOf: (person) => person.id, loadPage: loadMemberPage, queryKey: JSON.stringify([isAdmin, appliedMemberSearch, memberStatus, memberRole]) });
+  const loadMemberPage = useCallback((page: number, signal: AbortSignal) => isAdmin
+    ? contractData(contractClient.GET("/api/v1/members", { params: { query: { page, page_size: 25, ...(appliedMemberSearch ? { q: appliedMemberSearch } : {}), ...(memberStatus ? { status: memberStatus } : {}), ...(memberRole ? { system_role: memberRole } : {}) } }, signal }))
+    : Promise.resolve({ items: [], page: 1, page_size: 25, total_items: 0, total_pages: 0 }), [appliedMemberSearch, isAdmin, memberRole, memberStatus]);
+  const memberPages = usePagePagination<MemberSummary>({ loadPage: loadMemberPage, queryKey: JSON.stringify([isAdmin, appliedMemberSearch, memberStatus, memberRole]) });
   const members = memberPages.items;
-  const loadAdminSpacePage = useCallback((cursor: string | null, signal: AbortSignal) => isAdmin && ownershipRecoveryOpen
-    ? contractData(contractClient.GET("/api/v1/admin/spaces", { params: { query: { limit: 25, ...(cursor ? { cursor } : {}), ...(appliedRecoverySpaceSearch ? { q: appliedRecoverySpaceSearch } : {}) } }, signal }))
-    : Promise.resolve({ items: [], next_cursor: null }), [appliedRecoverySpaceSearch, isAdmin, ownershipRecoveryOpen]);
-  const adminSpacePages = useCursorPagination<AdminSpace>({ keyOf: (space) => space.id, loadPage: loadAdminSpacePage, queryKey: JSON.stringify([isAdmin, ownershipRecoveryOpen, appliedRecoverySpaceSearch]) });
+  const loadAdminSpacePage = useCallback((page: number, signal: AbortSignal) => isAdmin && ownershipRecoveryOpen
+    ? contractData(contractClient.GET("/api/v1/admin/spaces", { params: { query: { page, page_size: 25, ...(appliedRecoverySpaceSearch ? { q: appliedRecoverySpaceSearch } : {}) } }, signal }))
+    : Promise.resolve({ items: [], page: 1, page_size: 25, total_items: 0, total_pages: 0 }), [appliedRecoverySpaceSearch, isAdmin, ownershipRecoveryOpen]);
+  const adminSpacePages = usePagePagination<AdminSpace>({ loadPage: loadAdminSpacePage, queryKey: JSON.stringify([isAdmin, ownershipRecoveryOpen, appliedRecoverySpaceSearch]) });
   const adminSpaces = adminSpacePages.items;
-  const loadRecoveryOwnerPage = useCallback((cursor: string | null, signal: AbortSignal) => isAdmin && ownershipRecoveryOpen
-    ? contractData(contractClient.GET("/api/v1/members", { params: { query: { limit: 25, status: "active", ...(cursor ? { cursor } : {}), ...(appliedRecoveryOwnerSearch ? { q: appliedRecoveryOwnerSearch } : {}) } }, signal }))
-    : Promise.resolve({ items: [], next_cursor: null }), [appliedRecoveryOwnerSearch, isAdmin, ownershipRecoveryOpen]);
-  const recoveryOwnerPages = useCursorPagination<MemberSummary>({ keyOf: (person) => person.id, loadPage: loadRecoveryOwnerPage, queryKey: JSON.stringify([isAdmin, ownershipRecoveryOpen, appliedRecoveryOwnerSearch]) });
+  const loadRecoveryOwnerPage = useCallback((page: number, signal: AbortSignal) => isAdmin && ownershipRecoveryOpen
+    ? contractData(contractClient.GET("/api/v1/members", { params: { query: { page, page_size: 25, status: "active", ...(appliedRecoveryOwnerSearch ? { q: appliedRecoveryOwnerSearch } : {}) } }, signal }))
+    : Promise.resolve({ items: [], page: 1, page_size: 25, total_items: 0, total_pages: 0 }), [appliedRecoveryOwnerSearch, isAdmin, ownershipRecoveryOpen]);
+  const recoveryOwnerPages = usePagePagination<MemberSummary>({ loadPage: loadRecoveryOwnerPage, queryKey: JSON.stringify([isAdmin, ownershipRecoveryOpen, appliedRecoveryOwnerSearch]) });
   const recoveryOwners = recoveryOwnerPages.items;
 
   useEffect(() => {
@@ -971,11 +1019,11 @@ export function PeopleConsole() {
 
   useEffect(() => {
     let active = true;
-    contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })).then((spaceResponse) => {
+    loadAccessibleSpaces().then((spaceResponse) => {
       if (!active) {
         return;
       }
-      setSpaces(spaceResponse.items);
+      setSpaces(spaceResponse);
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
@@ -1114,9 +1162,10 @@ export function PeopleConsole() {
       ) : (
         <div className="console-grid console-grid-people">
           <section className="console-panel">
-            <div className="panel-heading"><div><span>Family directory</span><h2>Members</h2></div><span className="count-pill">{members.length}{memberPages.hasMore ? "+" : ""}</span></div>
+            <div className="panel-heading"><div><span>Family directory</span><h2>Members</h2></div><span className="count-pill">{memberPages.totalItems}</span></div>
             <form className="list-filter-bar member-filter-bar" onSubmit={(event) => { event.preventDefault(); setAppliedMemberSearch(memberSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={14} /><input aria-label="Search members" onChange={(event) => setMemberSearch(event.target.value)} placeholder="Name or username" type="search" value={memberSearch} /></label><label><select aria-label="Filter member status" onChange={(event) => setMemberStatus(event.target.value as typeof memberStatus)} value={memberStatus}><option value="">All statuses</option><option value="pending">Pending</option><option value="active">Active</option><option value="disabled">Disabled</option></select></label><label><select aria-label="Filter system role" onChange={(event) => setMemberRole(event.target.value as typeof memberRole)} value={memberRole}><option value="">All roles</option><option value="super_admin">Super admin</option><option value="member">Member</option></select></label><button className="secondary-button" type="submit">Apply</button></form>
-            {memberPages.initialLoading ? <ListSkeleton rows={6} /> : null}
+            {memberPages.initialLoading || (memberPages.loading && members.length === 0) ? <ListSkeleton rows={6} /> : null}
+            {memberPages.error ? <ListUnavailable label="members" onRetry={() => void memberPages.reload()} /> : null}
             <div className="data-list">
               {members.map((person) => (
                 <article className="data-row member-row" key={person.id}>
@@ -1127,7 +1176,7 @@ export function PeopleConsole() {
                 </article>
               ))}
             </div>
-            {memberPages.hasMore && members.length > 0 ? <button className="secondary-button pagination-button" disabled={memberPages.loadingMore} onClick={() => void memberPages.loadMore()} type="button">{memberPages.loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more members</button> : null}
+            {memberPages.totalItems > 0 ? <PaginationControls loading={memberPages.loading} loadingPage={memberPages.loadingPage} onPageChange={(nextPage) => void memberPages.goToPage(nextPage)} page={memberPages.page} pageSize={memberPages.pageSize} totalItems={memberPages.totalItems} totalPages={memberPages.totalPages} /> : null}
             {selectedMember ? (
               <section aria-label={`Manage ${selectedMember.display_name}`} className="member-admin-panel">
                 <div className="space-access-heading"><div><span>Account controls</span><h2>{selectedMember.display_name}</h2></div><button aria-label="Close member manager" className="icon-button" onClick={() => setSelectedMember(null)} type="button"><X size={16} /></button></div>
@@ -1181,25 +1230,26 @@ export function PeopleConsole() {
               {ownershipRecoveryOpen ? (
                 <div className="ownership-recovery-form">
                   <p>Use only when an owner cannot recover their account. Space names and ownership metadata are visible here; content remains inaccessible.</p>
-                  {adminSpacePages.initialLoading || recoveryOwnerPages.initialLoading ? <ListSkeleton rows={3} /> : null}
+                  {adminSpacePages.initialLoading || recoveryOwnerPages.initialLoading || (adminSpacePages.loading && adminSpaces.length === 0) || (recoveryOwnerPages.loading && recoveryOwners.length === 0) ? <ListSkeleton rows={3} /> : null}
+                  {adminSpacePages.error || recoveryOwnerPages.error ? <ListUnavailable label="ownership recovery data" onRetry={() => { void adminSpacePages.reload(); void recoveryOwnerPages.reload(); }} /> : null}
                   <form className="ownership-search-form" onSubmit={(event) => { event.preventDefault(); setAppliedRecoverySpaceSearch(recoverySpaceSearch.trim()); }} role="search">
                     <label htmlFor="recovery-space-search">Find space</label>
                     <div><input id="recovery-space-search" onChange={(event) => setRecoverySpaceSearch(event.target.value)} placeholder="Search space or owner" type="search" value={recoverySpaceSearch} /><button aria-label="Apply space search" className="secondary-button" type="submit"><Search size={14} /> Apply</button></div>
                   </form>
                   <label htmlFor="recovery-space">Recovery space</label>
-                  <select id="recovery-space" onChange={(event) => selectRecoverySpace(event.target.value)} value={recoverySpaceId}>
+                  <select disabled={Boolean(adminSpacePages.error)} id="recovery-space" onChange={(event) => selectRecoverySpace(event.target.value)} value={recoverySpaceId}>
                     {adminSpaces.map((space) => <option key={space.id} value={space.id}>{space.name} · {space.owner_display_name}</option>)}
                   </select>
-                  {adminSpacePages.hasMore ? <button className="secondary-button" disabled={adminSpacePages.loadingMore} onClick={() => void adminSpacePages.loadMore()} type="button">Load more spaces</button> : null}
+                  {adminSpacePages.totalItems > 0 ? <PaginationControls loading={adminSpacePages.loading} loadingPage={adminSpacePages.loadingPage} onPageChange={(nextPage) => void adminSpacePages.goToPage(nextPage)} page={adminSpacePages.page} pageSize={adminSpacePages.pageSize} totalItems={adminSpacePages.totalItems} totalPages={adminSpacePages.totalPages} /> : null}
                   <form className="ownership-search-form" onSubmit={(event) => { event.preventDefault(); setAppliedRecoveryOwnerSearch(recoveryOwnerSearch.trim()); }} role="search">
                     <label htmlFor="recovery-owner-search">Find new owner</label>
                     <div><input id="recovery-owner-search" onChange={(event) => setRecoveryOwnerSearch(event.target.value)} placeholder="Search active members" type="search" value={recoveryOwnerSearch} /><button aria-label="Apply owner search" className="secondary-button" type="submit"><Search size={14} /> Apply</button></div>
                   </form>
                   <label htmlFor="recovery-owner">New owner</label>
-                  <select id="recovery-owner" onChange={(event) => { setRecoveryTargetId(event.target.value); setReviewOwnershipRecovery(false); setOwnershipRecovered(false); }} value={recoveryTargetId}>
+                  <select disabled={Boolean(recoveryOwnerPages.error)} id="recovery-owner" onChange={(event) => { setRecoveryTargetId(event.target.value); setReviewOwnershipRecovery(false); setOwnershipRecovered(false); }} value={recoveryTargetId}>
                     {recoveryOwners.filter((candidate) => candidate.id !== adminSpaces.find((space) => space.id === recoverySpaceId)?.owner_member_id).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name} (@{candidate.username})</option>)}
                   </select>
-                  {recoveryOwnerPages.hasMore ? <button className="secondary-button" disabled={recoveryOwnerPages.loadingMore} onClick={() => void recoveryOwnerPages.loadMore()} type="button">Load more member choices</button> : null}
+                  {recoveryOwnerPages.totalItems > 0 ? <PaginationControls loading={recoveryOwnerPages.loading} loadingPage={recoveryOwnerPages.loadingPage} onPageChange={(nextPage) => void recoveryOwnerPages.goToPage(nextPage)} page={recoveryOwnerPages.page} pageSize={recoveryOwnerPages.pageSize} totalItems={recoveryOwnerPages.totalItems} totalPages={recoveryOwnerPages.totalPages} /> : null}
                   <label htmlFor="recovery-reason">Recovery reason</label>
                   <textarea id="recovery-reason" maxLength={500} minLength={5} onChange={(event) => { setRecoveryReason(event.target.value); setReviewOwnershipRecovery(false); setOwnershipRecovered(false); }} required value={recoveryReason} />
                   <p className="ownership-boundary"><ShieldCheck size={14} /> This repair is audited and does not grant the Super Admin access to space content.</p>
@@ -1214,7 +1264,7 @@ export function PeopleConsole() {
                 </div>
               ) : null}
             </div>
-            {error || memberPages.error || adminSpacePages.error || recoveryOwnerPages.error ? <p className="inline-error" role="alert">{error || message(memberPages.error || adminSpacePages.error || recoveryOwnerPages.error)}</p> : null}
+            {error ? <p className="inline-error" role="alert">{error}</p> : null}
           </aside>
         </div>
       )}
@@ -1244,24 +1294,24 @@ export function SettingsConsole() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadKeyPage = useCallback((cursor: string | null, signal: AbortSignal) => contractData(
+  const loadKeyPage = useCallback((page: number, signal: AbortSignal) => contractData(
     contractClient.GET("/api/v1/api-keys", {
-      params: { query: { limit: 25, ...(cursor ? { cursor } : {}), ...(appliedKeySearch ? { q: appliedKeySearch } : {}), ...(keyStatus ? { status: keyStatus } : {}) } },
+      params: { query: { page, page_size: 25, ...(appliedKeySearch ? { q: appliedKeySearch } : {}), ...(keyStatus ? { status: keyStatus } : {}) } },
       signal,
     }),
   ), [appliedKeySearch, keyStatus]);
-  const keyPages = useCursorPagination<APIKeySummary>({ keyOf: (key) => key.id, loadPage: loadKeyPage, queryKey: JSON.stringify([appliedKeySearch, keyStatus]) });
-  const loadSessionPage = useCallback((cursor: string | null, signal: AbortSignal) => contractData(
-    contractClient.GET("/api/v1/sessions", { params: { query: { limit: 25, ...(cursor ? { cursor } : {}), ...(sessionStatus ? { status: sessionStatus } : {}) } }, signal }),
+  const keyPages = usePagePagination<APIKeySummary>({ loadPage: loadKeyPage, queryKey: JSON.stringify([appliedKeySearch, keyStatus]) });
+  const loadSessionPage = useCallback((page: number, signal: AbortSignal) => contractData(
+    contractClient.GET("/api/v1/sessions", { params: { query: { page, page_size: 25, ...(sessionStatus ? { status: sessionStatus } : {}) } }, signal }),
   ), [sessionStatus]);
-  const sessionPages = useCursorPagination<SessionSummary>({ keyOf: (session) => session.id, loadPage: loadSessionPage, queryKey: sessionStatus });
-  const loadHistoryPage = useCallback((cursor: string | null, signal: AbortSignal) => {
+  const sessionPages = usePagePagination<SessionSummary>({ loadPage: loadSessionPage, queryKey: sessionStatus });
+  const loadHistoryPage = useCallback((page: number, signal: AbortSignal) => {
     if (member.system_role !== "super_admin") {
-      return Promise.resolve({ items: [], next_cursor: null });
+      return Promise.resolve({ items: [], page: 1, page_size: 20, total_items: 0, total_pages: 0 });
     }
-    return contractData(contractClient.GET("/api/v1/settings/history", { params: { query: { limit: 20, ...(cursor ? { cursor } : {}), ...(historyState ? { state: historyState } : {}) } }, signal }));
+    return contractData(contractClient.GET("/api/v1/settings/history", { params: { query: { page, page_size: 20, ...(historyState ? { state: historyState } : {}) } }, signal }));
   }, [historyState, member.system_role]);
-  const historyPages = useCursorPagination<RuntimeSettings>({ keyOf: (revision) => String(revision.revision), loadPage: loadHistoryPage, queryKey: `${member.system_role}:${historyState}` });
+  const historyPages = usePagePagination<RuntimeSettings>({ loadPage: loadHistoryPage, queryKey: `${member.system_role}:${historyState}` });
   const keys = keyPages.items;
   const sessions = sessionPages.items;
   const settingsHistory = historyPages.items;
@@ -1269,13 +1319,13 @@ export function SettingsConsole() {
   useEffect(() => {
     let active = true;
     Promise.all([
-      contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })),
+      loadAccessibleSpaces(),
       contractData(contractClient.GET("/api/v1/settings")),
     ]).then(([spaceResponse, runtimeResponse]) => {
       if (!active) {
         return;
       }
-      setSpaces(spaceResponse.items);
+      setSpaces(spaceResponse);
       setSettings(runtimeResponse);
       setRuntimeLimit(runtimeResponse.values.retrieval?.limit ?? 20);
     }).catch((loadError) => {
@@ -1471,23 +1521,25 @@ export function SettingsConsole() {
             <label><select aria-label="Filter API key status" onChange={(event) => setKeyStatus(event.target.value as typeof keyStatus)} value={keyStatus}><option value="">All statuses</option><option value="active">Active</option><option value="revoked">Revoked</option><option value="expired">Expired</option></select></label>
             <button className="secondary-button" type="submit">Apply</button>
           </form>
-          {keyPages.initialLoading ? <ListSkeleton compact rows={3} /> : null}
+          {keyPages.initialLoading || (keyPages.loading && keys.length === 0) ? <ListSkeleton compact rows={3} /> : null}
+          {keyPages.error ? <ListUnavailable label="API keys" onRetry={() => void keyPages.reload()} /> : null}
           <div className="data-list compact-list">
             {keys.map((key) => <article className="data-row" key={key.id}><span className="row-leading violet"><KeyRound size={17} /></span><div className="row-copy"><h3>{key.name}</h3><p>{key.public_id} · {key.scopes.join(", ")}</p></div><span className={`status-pill status-${key.status}`}>{key.status}</span>{key.status === "active" ? <button aria-label={`Revoke ${key.name}`} className="membership-remove-button" onClick={() => setPendingKeyRevocation(key)} type="button"><X size={15} /></button> : null}</article>)}
           </div>
-          {keyPages.hasMore ? <button className="secondary-button pagination-button" disabled={keyPages.loadingMore} onClick={() => void keyPages.loadMore()} type="button">{keyPages.loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more API keys</button> : null}
+          {keyPages.totalItems > 0 ? <PaginationControls loading={keyPages.loading} loadingPage={keyPages.loadingPage} onPageChange={(nextPage) => void keyPages.goToPage(nextPage)} page={keyPages.page} pageSize={keyPages.pageSize} totalItems={keyPages.totalItems} totalPages={keyPages.totalPages} /> : null}
           {pendingKeyRevocation ? <div className="confirmation-strip" role="alertdialog" aria-label={`Revoke ${pendingKeyRevocation.name}`}><div><strong>Revoke {pendingKeyRevocation.name}?</strong><span>Clients using this key will lose access immediately.</span></div><button className="secondary-button" onClick={() => setPendingKeyRevocation(null)} type="button">Keep key</button><button className="danger-button" disabled={saving} onClick={() => void revokeKey()} type="button">Confirm revoke API key</button></div> : null}
         </section>
 
         <section className="console-panel settings-section">
           <div className="panel-heading"><div><span>Website access</span><h2>Sessions</h2></div><MonitorSmartphone size={20} /></div>
           <div className="list-filter-bar single-filter-bar"><label><select aria-label="Filter session status" onChange={(event) => setSessionStatus(event.target.value as typeof sessionStatus)} value={sessionStatus}><option value="">All statuses</option><option value="active">Active</option><option value="expired">Expired</option><option value="revoked">Revoked</option></select></label></div>
-          {sessionPages.initialLoading ? <ListSkeleton compact rows={3} /> : null}
+          {sessionPages.initialLoading || (sessionPages.loading && sessions.length === 0) ? <ListSkeleton compact rows={3} /> : null}
+          {sessionPages.error ? <ListUnavailable label="sessions" onRetry={() => void sessionPages.reload()} /> : null}
           <div className="data-list compact-list">
             {sessions.map((session) => <article className="data-row" key={session.id}><span className="row-leading cyan"><MonitorSmartphone size={17} /></span><div className="row-copy"><h3>{session.current ? "This session" : "Website session"}</h3><p>Last active {new Date(session.last_activity_at).toLocaleString()}</p></div><span className={`status-pill status-${session.status}`}>{session.status}</span>{!session.current && session.status === "active" ? <button aria-label="Sign out website session" className="membership-remove-button" onClick={() => setPendingSessionRevocation(session)} type="button"><X size={15} /></button> : null}</article>)}
-            {!sessionPages.initialLoading && sessions.length === 0 ? <div className="console-empty small"><MonitorSmartphone size={20} /><strong>No session records returned</strong></div> : null}
+            {!sessionPages.initialLoading && !sessionPages.loading && !sessionPages.error && sessions.length === 0 ? <div className="console-empty small"><MonitorSmartphone size={20} /><strong>No session records returned</strong></div> : null}
           </div>
-          {sessionPages.hasMore ? <button className="secondary-button pagination-button" disabled={sessionPages.loadingMore} onClick={() => void sessionPages.loadMore()} type="button">{sessionPages.loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more sessions</button> : null}
+          {sessionPages.totalItems > 0 ? <PaginationControls loading={sessionPages.loading} loadingPage={sessionPages.loadingPage} onPageChange={(nextPage) => void sessionPages.goToPage(nextPage)} page={sessionPages.page} pageSize={sessionPages.pageSize} totalItems={sessionPages.totalItems} totalPages={sessionPages.totalPages} /> : null}
           {pendingSessionRevocation ? <div className="confirmation-strip" role="alertdialog" aria-label="Sign out website session"><div><strong>Sign out this device?</strong><span>The selected session and all of its credentials will be revoked.</span></div><button className="secondary-button" onClick={() => setPendingSessionRevocation(null)} type="button">Keep signed in</button><button className="danger-button" disabled={saving} onClick={() => void revokeSession()} type="button">Confirm sign out</button></div> : null}
         </section>
 
@@ -1504,9 +1556,10 @@ export function SettingsConsole() {
           ) : null}
           {runtimeDraft ? <div className="runtime-draft-review"><div><strong>Draft revision {runtimeDraft.revision} ready</strong><span>Validated against the typed safe-setting schema. Activation remains a separate audited step.</span></div><button className="primary-button" disabled={saving} onClick={() => void activateRuntimeDraft()} type="button">Activate settings</button></div> : null}
           {member.system_role === "super_admin" ? <div className="list-filter-bar single-filter-bar"><label><select aria-label="Filter settings history state" onChange={(event) => setHistoryState(event.target.value as typeof historyState)} value={historyState}><option value="">All history</option><option value="active">Active</option><option value="superseded">Superseded</option></select></label></div> : null}
-          {historyPages.initialLoading && member.system_role === "super_admin" ? <ListSkeleton compact rows={3} /> : null}
+          {(historyPages.initialLoading || (historyPages.loading && settingsHistory.length === 0)) && member.system_role === "super_admin" ? <ListSkeleton compact rows={3} /> : null}
+          {historyPages.error ? <ListUnavailable label="settings history" onRetry={() => void historyPages.reload()} /> : null}
           {settingsHistory.length > 0 ? <div className="data-list compact-list">{settingsHistory.map((revision) => <article className="data-row" key={revision.id || revision.revision}><span className="row-leading violet"><Settings2 size={16} /></span><div className="row-copy"><h3>Revision {revision.revision}</h3><p>Retrieval limit {revision.values.retrieval?.limit ?? "default"} · {revision.state}</p></div>{revision.state === "superseded" ? <button aria-label={`Restore revision ${revision.revision}`} className="row-action-button" disabled={saving} onClick={() => setPendingSettingsRestore(revision)} type="button">Restore</button> : <span className="status-pill status-active">active</span>}</article>)}</div> : null}
-          {historyPages.hasMore ? <button className="secondary-button pagination-button" disabled={historyPages.loadingMore} onClick={() => void historyPages.loadMore()} type="button">{historyPages.loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more settings history</button> : null}
+          {historyPages.totalItems > 0 ? <PaginationControls loading={historyPages.loading} loadingPage={historyPages.loadingPage} onPageChange={(nextPage) => void historyPages.goToPage(nextPage)} page={historyPages.page} pageSize={historyPages.pageSize} totalItems={historyPages.totalItems} totalPages={historyPages.totalPages} /> : null}
           {pendingSettingsRestore ? <div aria-label={`Restore revision ${pendingSettingsRestore.revision}`} className="confirmation-strip" role="alertdialog"><div><strong>Restore revision {pendingSettingsRestore.revision}?</strong><span>This creates a new active revision from the historical values. The current revision remains preserved for audit and future recovery.</span></div><button className="secondary-button" onClick={() => setPendingSettingsRestore(null)} type="button">Keep current</button><button className="danger-button" disabled={saving || runtimeReason.trim().length < 5} onClick={() => void restoreRuntimeSettings()} type="button">Confirm restore revision {pendingSettingsRestore.revision}</button></div> : null}
           <div className="runtime-values">
             {Object.entries((runtimeDraft?.values || settings?.values || {}) as Record<string, Record<string, unknown> | undefined>).map(([section, entries]) => (
@@ -1522,7 +1575,7 @@ export function SettingsConsole() {
           </div>
         </section>
       </div>
-      {error || keyPages.error || sessionPages.error || historyPages.error ? <p className="inline-error wide" role="alert">{error || message(keyPages.error || sessionPages.error || historyPages.error)}</p> : null}
+      {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
     </ConsoleShell>
   );
 }
@@ -1536,11 +1589,11 @@ export function IngestionConsole() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadJobPage = useCallback((cursor: string | null, signal: AbortSignal) => contractData(
+  const loadJobPage = useCallback((page: number, signal: AbortSignal) => contractData(
     contractClient.GET("/api/v1/ingestion-jobs", {
       params: { query: {
-        limit: 25,
-        ...(cursor ? { cursor } : {}),
+        page,
+        page_size: 25,
         ...(spaceFilter ? { space_id: spaceFilter } : {}),
         ...(stateFilter ? { state: stateFilter } : {}),
       } },
@@ -1549,23 +1602,26 @@ export function IngestionConsole() {
   ), [spaceFilter, stateFilter]);
   const {
     error: paginationError,
-    hasMore,
     initialLoading,
     items: jobs,
-    loadingMore,
-    loadMore,
+    page: jobPage,
+    pageSize: jobPageSize,
+    totalItems: jobTotalItems,
+    totalPages: jobTotalPages,
+    loading,
+    loadingPage: jobLoadingPage,
+    goToPage: goToJobPage,
     reload: reloadJobs,
-  } = useCursorPagination<IngestionJob>({
-    keyOf: (job) => job.id,
+  } = usePagePagination<IngestionJob>({
     loadPage: loadJobPage,
     queryKey: JSON.stringify([spaceFilter, stateFilter]),
   });
 
   useEffect(() => {
     let active = true;
-    contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })).then((response) => {
+    loadAccessibleSpaces().then((response) => {
       if (active) {
-        setSpaces(response.items);
+        setSpaces(response);
       }
     }).catch((loadError) => {
       if (active) {
@@ -1611,20 +1667,21 @@ export function IngestionConsole() {
       spaceCount={spaces.length}
       title="Ingestion"
     >
-      <div className="metric-strip"><article><span>Loaded jobs</span><strong>{jobs.length}{hasMore ? "+" : ""}</strong></article><article><span>In progress on this page</span><strong>{activeJobs}</strong></article><article><span>Refresh</span><button className="metric-refresh-button" onClick={reloadJobs} type="button">Refresh now</button></article></div>
+      <div className="metric-strip"><article><span>Total jobs</span><strong>{jobTotalItems}</strong></article><article><span>In progress on this page</span><strong>{activeJobs}</strong></article><article><span>Refresh</span><button className="metric-refresh-button" onClick={reloadJobs} type="button">Refresh now</button></article></div>
       <section className="console-panel">
         <div className="panel-heading"><div><span>Live durable state</span><h2>Ingestion jobs</h2></div><Layers3 size={20} /></div>
         <div className="list-filter-bar two-filter-bar">
           <label><span className="visually-hidden">Filter ingestion space</span><select aria-label="Filter ingestion space" onChange={(event) => setSpaceFilter(event.target.value)} value={spaceFilter}><option value="">All spaces</option>{spaces.map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}</select></label>
           <label><span className="visually-hidden">Filter ingestion state</span><select aria-label="Filter ingestion state" onChange={(event) => setStateFilter(event.target.value as typeof stateFilter)} value={stateFilter}><option value="">All states</option><option value="preparing">Preparing</option><option value="queued">Queued</option><option value="running">Running</option><option value="retry_wait">Retry wait</option><option value="succeeded">Succeeded</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option></select></label>
         </div>
-        {initialLoading ? <ListSkeleton /> : null}
-        {!initialLoading && jobs.length === 0 ? <div className="console-empty"><Layers3 size={23} /><strong>{spaceFilter || stateFilter ? "No matching ingestion jobs" : "No ingestion jobs"}</strong><span>{spaceFilter || stateFilter ? "Choose a different space or state." : "Uploaded sources will appear here as soon as preparation begins."}</span></div> : null}
+        {initialLoading || (loading && jobs.length === 0) ? <ListSkeleton /> : null}
+        {paginationError ? <ListUnavailable label="ingestion jobs" onRetry={() => void reloadJobs()} /> : null}
+        {!initialLoading && !loading && !paginationError && jobs.length === 0 ? <div className="console-empty"><Layers3 size={23} /><strong>{spaceFilter || stateFilter ? "No matching ingestion jobs" : "No ingestion jobs"}</strong><span>{spaceFilter || stateFilter ? "Choose a different space or state." : "Uploaded sources will appear here as soon as preparation begins."}</span></div> : null}
         <div className="job-list">
           {jobs.map((job) => (
             <article className="job-card" key={job.id}>
               <div className="job-topline"><div><span className={`state-dot state-${job.state}`} /><code>{job.id}</code></div><span className={`status-pill status-${job.state}`}>{job.state}</span></div>
-              <div className="job-context"><strong>{job.space_id}</strong><span>document {job.document_id}</span><span>attempt {job.attempt_count}/{job.max_attempts}</span></div>
+              <div className="job-context"><strong>{spaceLabel(spaces, job.space_id)}</strong><span>document {job.document_id}</span><span>attempt {job.attempt_count}/{job.max_attempts}</span></div>
               <div className="progress-row"><progress max={100} value={Math.max(0, Math.min(100, job.progress))} /><strong>{Math.round(job.progress)}%</strong></div>
               {job.last_error_code ? <p className="job-error">{job.last_error_code}</p> : null}
               {!['succeeded', 'failed', 'cancelled'].includes(job.state) ? <button aria-label={`Cancel job ${job.id}`} className="archive-button compact" disabled={saving} onClick={() => setPendingJobAction({ job, operation: "cancel" })} type="button">Cancel job</button> : null}
@@ -1632,10 +1689,10 @@ export function IngestionConsole() {
             </article>
           ))}
         </div>
-        {hasMore ? <button className="secondary-button pagination-button" disabled={loadingMore} onClick={() => void loadMore()} type="button">{loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more ingestion jobs</button> : null}
+        {jobTotalItems > 0 ? <PaginationControls loading={loading} loadingPage={jobLoadingPage} onPageChange={(nextPage) => void goToJobPage(nextPage)} page={jobPage} pageSize={jobPageSize} totalItems={jobTotalItems} totalPages={jobTotalPages} /> : null}
         {pendingJobAction ? <div aria-label={`${pendingJobAction.operation === "cancel" ? "Cancel" : "Retry"} job ${pendingJobAction.job.id}`} className="confirmation-strip" role="alertdialog"><div><strong>{pendingJobAction.operation === "cancel" ? "Cancel this ingestion job?" : "Retry this ingestion job?"}</strong><span>{pendingJobAction.operation === "cancel" ? "The worker will stop at a safe boundary; completed durable stages and audit history remain preserved." : "This starts a new durable attempt from the preserved original source and records the request in the audit trail."}</span></div><button className="secondary-button" onClick={() => setPendingJobAction(null)} type="button">Not now</button><button className={pendingJobAction.operation === "cancel" ? "danger-button" : "primary-button"} disabled={saving} onClick={() => void mutateJob()} type="button">Confirm {pendingJobAction.operation} job</button></div> : null}
       </section>
-      {error || paginationError ? <p className="inline-error wide" role="alert">{error || message(paginationError)}</p> : null}
+      {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
     </ConsoleShell>
   );
 }
@@ -1650,14 +1707,14 @@ export function ActivityConsole() {
   const [appliedFilters, setAppliedFilters] = useState({ action: "", outcome: "" as "" | "success" | "denied" | "failed", q: "", resourceType: "" });
   const [error, setError] = useState<string | null>(null);
   const isAdmin = member.system_role === "super_admin";
-  const loadAuditPage = useCallback((cursor: string | null, signal: AbortSignal) => {
+  const loadAuditPage = useCallback((page: number, signal: AbortSignal) => {
     if (!isAdmin) {
-      return Promise.resolve({ items: [], next_cursor: null });
+      return Promise.resolve({ items: [], page: 1, page_size: 25, total_items: 0, total_pages: 0 });
     }
     return contractData(contractClient.GET("/api/v1/audit-events", {
       params: { query: {
-        limit: 25,
-        ...(cursor ? { cursor } : {}),
+        page,
+        page_size: 25,
         ...(appliedFilters.q ? { q: appliedFilters.q } : {}),
         ...(appliedFilters.action ? { action: appliedFilters.action } : {}),
         ...(appliedFilters.outcome ? { outcome: appliedFilters.outcome } : {}),
@@ -1668,24 +1725,28 @@ export function ActivityConsole() {
   }, [appliedFilters, isAdmin]);
   const {
     error: paginationError,
-    hasMore,
     initialLoading,
     items: events,
-    loadingMore,
-    loadMore,
-  } = useCursorPagination<AuditEvent>({
-    keyOf: (event) => event.id,
+    page: auditPage,
+    pageSize: auditPageSize,
+    totalItems: auditTotalItems,
+    totalPages: auditTotalPages,
+    loading,
+    loadingPage: auditLoadingPage,
+    goToPage: goToAuditPage,
+    reload: reloadAuditEvents,
+  } = usePagePagination<AuditEvent>({
     loadPage: loadAuditPage,
     queryKey: JSON.stringify([isAdmin, appliedFilters]),
   });
 
   useEffect(() => {
     let active = true;
-    contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })).then((spaceResponse) => {
+    loadAccessibleSpaces().then((spaceResponse) => {
       if (!active) {
         return;
       }
-      setSpaces(spaceResponse.items);
+      setSpaces(spaceResponse);
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
@@ -1717,15 +1778,16 @@ export function ActivityConsole() {
             <label><input aria-label="Filter audit resource type" onChange={(event) => setResourceFilter(event.target.value)} placeholder="Resource type" value={resourceFilter} /></label>
             <button className="secondary-button" type="submit">Apply</button>
           </form>
-          {initialLoading ? <ListSkeleton /> : null}
+          {initialLoading || (loading && events.length === 0) ? <ListSkeleton /> : null}
+          {paginationError ? <ListUnavailable label="audit events" onRetry={() => void reloadAuditEvents()} /> : null}
           <div className="audit-list">
             {events.map((event) => <article className="audit-row" key={event.id}><span className={`audit-outcome outcome-${event.outcome}`} /><time>{new Date(event.occurred_at).toLocaleString()}</time><div><h3>{event.action}</h3><p>{event.resource_type}{event.resource_id ? ` · ${event.resource_id}` : ""}</p></div><code>{event.request_id}</code><span className="status-pill">{event.outcome}</span></article>)}
-            {!initialLoading && events.length === 0 ? <div className="console-empty"><Activity size={23} /><strong>No audit events returned</strong></div> : null}
+            {!initialLoading && !loading && !paginationError && events.length === 0 ? <div className="console-empty"><Activity size={23} /><strong>No audit events returned</strong></div> : null}
           </div>
-          {hasMore ? <button className="secondary-button pagination-button" disabled={loadingMore} onClick={() => void loadMore()} type="button">{loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more audit events</button> : null}
+          {auditTotalItems > 0 ? <PaginationControls loading={loading} loadingPage={auditLoadingPage} onPageChange={(nextPage) => void goToAuditPage(nextPage)} page={auditPage} pageSize={auditPageSize} totalItems={auditTotalItems} totalPages={auditTotalPages} /> : null}
         </section>
       )}
-      {error || paginationError ? <p className="inline-error wide" role="alert">{error || message(paginationError)}</p> : null}
+      {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
     </ConsoleShell>
   );
 }
@@ -1760,22 +1822,22 @@ export function AiActionsConsole() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadActionPage = useCallback((cursor: string | null, signal: AbortSignal) => contractData(
-    contractClient.GET("/api/v1/ai-actions", { params: { query: { limit: 25, ...(cursor ? { cursor } : {}) } }, signal }),
+  const loadActionPage = useCallback((page: number, signal: AbortSignal) => contractData(
+    contractClient.GET("/api/v1/ai-actions", { params: { query: { page, page_size: 25 } }, signal }),
   ), []);
-  const actionPages = useCursorPagination<PendingAIAction>({ keyOf: (action) => action.id, loadPage: loadActionPage, queryKey: "pending" });
+  const actionPages = usePagePagination<PendingAIAction>({ loadPage: loadActionPage, queryKey: "pending" });
   const pendingActions = actionPages.items;
 
   useEffect(() => {
     let active = true;
     Promise.all([
-      contractData(contractClient.GET("/api/v1/spaces", { params: { query: { limit: 100 } } })),
+      loadAccessibleSpaces(),
       contractData(contractClient.GET("/api/v1/ai-tools")),
     ]).then(([spaceResponse, toolResponse]) => {
       if (!active) {
         return;
       }
-      setSpaces(spaceResponse.items);
+      setSpaces(spaceResponse);
       setTools(toolResponse.items);
     }).catch((loadError) => {
       if (active) {
@@ -1818,10 +1880,11 @@ export function AiActionsConsole() {
       <div className="tool-grid">
         {tools.map((tool, index) => <article className="tool-card" key={tool.name}><div><span className={`tool-icon accent-${index % 4}`}><Code2 size={17} /></span><span className={`mode-pill mode-${tool.confirmation === "required" ? "confirm" : "read"}`}>{tool.confirmation === "required" ? "Confirm" : "Direct"}</span></div><code>{tool.name}</code><p>{tool.description}</p></article>)}
       </div>
-      {actionPages.initialLoading ? <section className="console-panel pending-ai-panel"><ListSkeleton compact rows={3} /></section> : null}
-      {!actionPages.initialLoading && pendingActions.length > 0 ? <section className="console-panel pending-ai-panel"><div className="panel-heading"><div><span>Human approval</span><h2>Pending confirmation</h2></div><span className="count-pill">{pendingActions.length}{actionPages.hasMore ? "+" : ""}</span></div><div className="data-list">{pendingActions.map((action) => <article className="data-row" key={action.id}><span className="row-leading violet"><Sparkles size={17} /></span><div className="row-copy"><h3>{action.tool_name}</h3><p>{action.target_ids.join(", ")} · revision {action.expected_revision ?? "—"}</p></div><button aria-label={`Review ${action.tool_name} for ${action.target_ids.join(", ")}`} className="row-action-button" onClick={() => setReviewing(action)} type="button">Review</button></article>)}</div>{actionPages.hasMore ? <button className="secondary-button pagination-button" disabled={actionPages.loadingMore} onClick={() => void actionPages.loadMore()} type="button">{actionPages.loadingMore ? <LoaderCircle className="spin" size={15} /> : null} Load more pending actions</button> : null}{reviewing ? <div aria-label={`Confirm ${reviewing.tool_name}`} className="confirmation-strip" role="alertdialog"><div><strong>Execute {reviewing.tool_name}?</strong><span>{aiActionImpact(reviewing.tool_name)}</span></div><button className="secondary-button" onClick={() => setReviewing(null)} type="button">Not now</button><button className="danger-button" disabled={saving} onClick={() => void confirmAction()} type="button">Confirm AI action</button></div> : null}</section> : null}
-      {!actionPages.initialLoading && pendingActions.length === 0 ? <section className="console-panel pending-ai-panel"><div className="console-empty small"><Sparkles size={20} /><strong>No actions need approval</strong></div></section> : null}
-      {error || actionPages.error ? <p className="inline-error wide" role="alert">{error || message(actionPages.error)}</p> : null}
+      {actionPages.initialLoading || (actionPages.loading && pendingActions.length === 0) ? <section className="console-panel pending-ai-panel"><ListSkeleton compact rows={3} /></section> : null}
+      {actionPages.error ? <section className="console-panel pending-ai-panel"><ListUnavailable label="pending actions" onRetry={() => void actionPages.reload()} /></section> : null}
+      {!actionPages.initialLoading && !actionPages.loading && !actionPages.error && pendingActions.length > 0 ? <section className="console-panel pending-ai-panel"><div className="panel-heading"><div><span>Human approval</span><h2>Pending confirmation</h2></div><span className="count-pill">{actionPages.totalItems}</span></div><div className="data-list">{pendingActions.map((action) => <article className="data-row" key={action.id}><span className="row-leading violet"><Sparkles size={17} /></span><div className="row-copy"><h3>{action.tool_name}</h3><p>{action.target_ids.join(", ")} · revision {action.expected_revision ?? "—"}</p></div><button aria-label={`Review ${action.tool_name} for ${action.target_ids.join(", ")}`} className="row-action-button" onClick={() => setReviewing(action)} type="button">Review</button></article>)}</div>{actionPages.totalItems > 0 ? <PaginationControls loading={actionPages.loading} loadingPage={actionPages.loadingPage} onPageChange={(nextPage) => void actionPages.goToPage(nextPage)} page={actionPages.page} pageSize={actionPages.pageSize} totalItems={actionPages.totalItems} totalPages={actionPages.totalPages} /> : null}{reviewing ? <div aria-label={`Confirm ${reviewing.tool_name}`} className="confirmation-strip" role="alertdialog"><div><strong>Execute {reviewing.tool_name}?</strong><span>{aiActionImpact(reviewing.tool_name)}</span></div><button className="secondary-button" onClick={() => setReviewing(null)} type="button">Not now</button><button className="danger-button" disabled={saving} onClick={() => void confirmAction()} type="button">Confirm AI action</button></div> : null}</section> : null}
+      {!actionPages.initialLoading && !actionPages.loading && !actionPages.error && pendingActions.length === 0 ? <section className="console-panel pending-ai-panel"><div className="console-empty small"><Sparkles size={20} /><strong>No actions need approval</strong></div></section> : null}
+      {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
     </ConsoleShell>
   );
 }

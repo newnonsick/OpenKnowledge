@@ -78,6 +78,12 @@ def test_environment_variable_overrides(monkeypatch):
     assert settings.gateway.storage_dir == "/var/data/gateway"
 
 
+def test_llm_fallback_model_ids_are_normalized():
+    settings = LLMSettings(fallback_model_ids=" recovery-a, recovery-b , recovery-a, ")
+
+    assert settings.fallback_model_ids == ["recovery-a", "recovery-b"]
+
+
 def test_decoupled_llm_and_embedding_settings():
     """Verify that LLM and Embedding settings are completely independent."""
     settings = Settings(

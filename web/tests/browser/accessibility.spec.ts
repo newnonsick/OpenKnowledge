@@ -29,8 +29,21 @@ const spacesFixture = {
     { created_at: "2026-08-21T12:00:00Z", id: "global", name: "Family Shared", personal: false, revision: 1, role: "editor" },
     { created_at: "2026-08-20T12:00:00Z", id: "travel", name: "Travel plans", personal: false, revision: 1, role: "owner" },
   ],
-  next_cursor: null,
+  page: 1,
+  page_size: 100,
+  total_items: 2,
+  total_pages: 1,
 } satisfies components["schemas"]["Page_SpaceSummary_"];
+
+function listPage<T>(items: T[], pageSize = 25) {
+  return {
+    items,
+    page: 1,
+    page_size: pageSize,
+    total_items: items.length,
+    total_pages: items.length ? 1 : 0,
+  };
+}
 
 const operationsFixture = {
   ingestion: { cancelled: 0, cancellation_requested: 0, failed: 0, queued: 1, retry_wait: 0, running: 1, succeeded: 8 },
@@ -63,6 +76,9 @@ async function mockGateway(page: Page, systemRole: "member" | "super_admin" = "m
     if (pathname === "/api/v1/auth/login") {
       return route.fulfill(json(loginFixture));
     }
+    if (pathname === "/api/v1/auth/mfa/totp/enroll") {
+      return route.fulfill(json({ factor_id: "factor-1", secret: "JBSWY3DPEHPK3PXP" }));
+    }
     if (pathname === "/api/v1/me") {
       return route.fulfill(json({ ...memberFixture, system_role: systemRole }));
     }
@@ -73,46 +89,46 @@ async function mockGateway(page: Page, systemRole: "member" | "super_admin" = "m
       return route.fulfill(json(operationsFixture));
     }
     if (pathname === "/api/v1/knowledge") {
-      return route.fulfill(json({ items: [{ content: "Passport renewal instructions and the emergency contact process for every family member.", created_at: "2026-08-20T12:00:00Z", id: "knowledge-1", revision: 2, source_id: "source-1", space_id: "global", tags: ["travel", "important"], title: "International travel document checklist", updated_at: "2026-08-21T12:00:00Z" }], next_cursor: null }));
+      return route.fulfill(json(listPage([{ content: "Passport renewal instructions and the emergency contact process for every family member.", created_at: "2026-08-20T12:00:00Z", id: "knowledge-1", revision: 2, source_id: "source-1", space_id: "global", tags: ["travel", "important"], title: "International travel document checklist", updated_at: "2026-08-21T12:00:00Z" }])));
     }
     if (pathname === "/api/v1/sources") {
-      return route.fulfill(json({ items: [{ display_name: "Family procedures and emergency contacts", id: "source-1", original_filename: "family-procedures-and-emergency-contacts.pdf", revision: 3, size_bytes: 524288, space_id: "global", status: "active", updated_at: "2026-08-20T12:00:00Z" }], next_cursor: null }));
+      return route.fulfill(json(listPage([{ display_name: "Family procedures and emergency contacts", id: "source-1", original_filename: "family-procedures-and-emergency-contacts.pdf", revision: 3, size_bytes: 524288, space_id: "global", status: "active", updated_at: "2026-08-20T12:00:00Z" }])));
     }
     if (pathname === "/api/v1/ingestion-jobs") {
-      return route.fulfill(json({ items: [{ attempt_count: 1, created_at: "2026-08-20T12:00:00Z", document_id: "source-1", id: "job-with-a-deliberately-long-identifier-123456789", max_attempts: 5, progress: 0, space_id: "global", state: "queued", updated_at: "2026-08-20T12:00:00Z" }], next_cursor: null }));
+      return route.fulfill(json(listPage([{ attempt_count: 1, created_at: "2026-08-20T12:00:00Z", document_id: "source-1", id: "job-with-a-deliberately-long-identifier-123456789", max_attempts: 5, progress: 0, space_id: "global", state: "queued", updated_at: "2026-08-20T12:00:00Z" }])));
     }
     if (pathname === "/api/v1/audit-events") {
-      return route.fulfill(json({ items: [{ action: "knowledge.create.with.a.deliberately.long.action.name", actor_kind: "member", actor_member_id: "member-1", id: "audit-1", occurred_at: "2026-08-20T12:00:00Z", outcome: "success", request_id: "request-123456789", resource_id: "knowledge-1", resource_type: "knowledge" }], next_cursor: null }));
+      return route.fulfill(json(listPage([{ action: "knowledge.create.with.a.deliberately.long.action.name", actor_kind: "member", actor_member_id: "member-1", id: "audit-1", occurred_at: "2026-08-20T12:00:00Z", outcome: "success", request_id: "request-123456789", resource_id: "knowledge-1", resource_type: "knowledge" }])));
     }
     if (pathname === "/api/v1/api-keys") {
-      return route.fulfill(json({ items: [{ created_at: "2026-08-20T12:00:00Z", id: "key-1", name: "Family automation laptop with a long descriptive name", public_id: "pk_live_12345678901234567890", scopes: ["knowledge:read", "knowledge:write"], status: "active" }], next_cursor: null }));
+      return route.fulfill(json(listPage([{ created_at: "2026-08-20T12:00:00Z", id: "key-1", name: "Family automation laptop with a long descriptive name", public_id: "pk_live_12345678901234567890", scopes: ["knowledge:read", "knowledge:write"], status: "active" }])));
     }
     if (pathname === "/api/v1/sessions") {
-      return route.fulfill(json({ items: [{ created_at: "2026-08-20T12:00:00Z", current: true, id: "session-current-123456789", last_activity_at: "2026-08-21T12:00:00Z", status: "active" }], next_cursor: null }));
+      return route.fulfill(json(listPage([{ created_at: "2026-08-20T12:00:00Z", current: true, id: "session-current-123456789", last_activity_at: "2026-08-21T12:00:00Z", status: "active" }])));
     }
     if (pathname === "/api/v1/settings/history") {
-      return route.fulfill(json({ items: [{ base_revision: 3, id: "revision-4", revision: 4, state: "active", values: { retrieval: { lexical_weight: 1, limit: 20, vector_weight: 1 } } }], next_cursor: null }));
+      return route.fulfill(json(listPage([{ base_revision: 3, id: "revision-4", revision: 4, state: "active", values: { retrieval: { lexical_weight: 1, limit: 20, vector_weight: 1 } } }])));
     }
     if (pathname === "/api/v1/settings") {
       return route.fulfill(json({ base_revision: 3, id: "revision-4", revision: 4, state: "active", values: { retrieval: { lexical_weight: 1, limit: 20, vector_weight: 1 } } }));
     }
     if (pathname === "/api/v1/ai-actions") {
-      return route.fulfill(json({ items: [{ created_at: "2026-08-20T12:00:00Z", expected_revision: 3, expires_at: "2026-08-20T12:10:00Z", id: "action-1", status: "pending", target_ids: ["private-family-archive-123456789"], tool_name: "spaces.archive.v1" }], next_cursor: null }));
+      return route.fulfill(json(listPage([{ created_at: "2026-08-20T12:00:00Z", expected_revision: 3, expires_at: "2026-08-20T12:10:00Z", id: "action-1", status: "pending", target_ids: ["private-family-archive-123456789"], tool_name: "spaces.archive.v1" }])));
     }
     if (pathname === "/api/v1/ai-tools") {
       return route.fulfill(json({ items: [{ description: "Archive a private family space after an explicit confirmation.", name: "spaces.archive.v1", risk: "high" }] }));
     }
     if (pathname === "/api/v1/members") {
-      return route.fulfill(json({ items: [{ display_name: "Nana Arun with a long family display name", id: "member-2", requires_password_change: false, status: "active", system_role: "member", username: "nana-with-a-long-username" }], next_cursor: null }));
+      return route.fulfill(json(listPage([{ display_name: "Nana Arun with a long family display name", id: "member-2", requires_password_change: false, status: "active", system_role: "member", username: "nana-with-a-long-username" }])));
     }
     if (pathname === "/api/v1/admin/spaces") {
-      return route.fulfill(json({ items: [{ created_at: "2026-08-20T12:00:00Z", id: "private", name: "Private records with a very long household name", owner_display_name: "Nana Arun", owner_member_id: "member-2", owner_username: "nana", revision: 4 }], next_cursor: null }));
+      return route.fulfill(json(listPage([{ created_at: "2026-08-20T12:00:00Z", id: "private", name: "Private records with a very long household name", owner_display_name: "Nana Arun", owner_member_id: "member-2", owner_username: "nana", revision: 4 }])));
     }
     if (/^\/api\/v1\/spaces\/[^/]+\/members$/.test(pathname)) {
-      return route.fulfill(json({ items: [{ display_name: "Mai Arun", member_id: "member-1", role: "owner", status: "active", username: "mai" }, { display_name: "Nana Arun", member_id: "member-2", role: "reader", status: "active", username: "nana" }], next_cursor: null }));
+      return route.fulfill(json(listPage([{ display_name: "Mai Arun", member_id: "member-1", role: "owner", status: "active", username: "mai" }, { display_name: "Nana Arun", member_id: "member-2", role: "reader", status: "active", username: "nana" }])));
     }
     if (/^\/api\/v1\/spaces\/[^/]+\/member-candidates$/.test(pathname)) {
-      return route.fulfill(json({ items: [], next_cursor: null }));
+      return route.fulfill(json(listPage([])));
     }
     return route.fulfill(json(notFoundFixture, 404));
   });
@@ -176,12 +192,30 @@ test("keeps dashboard navigation discoverable on a mobile viewport", async ({ pa
   await expectAccessible(page);
 });
 
+test("opens discovery with the advertised keyboard shortcut", async ({ page }) => {
+  await mockGateway(page);
+  await page.goto("/");
+
+  await expect(page.getByRole("link", { name: /command/i })).toBeVisible();
+
+  await page.keyboard.press("Control+k");
+
+  await expect(page).toHaveURL("/explore");
+  await expect(page.getByRole("heading", { name: "Explore" })).toBeVisible();
+});
+
 test("keeps the sign-in action in the first mobile viewport", async ({ page }) => {
   await page.setViewportSize({ height: 844, width: 390 });
   await page.goto("/login");
 
+  await expect(page.getByText("One trusted place")).toBeInViewport();
   await expect(page.getByRole("heading", { name: "Welcome back" })).toBeInViewport();
   await expect(page.getByRole("button", { name: "Sign in" })).toBeInViewport();
+  const [storyBox, formBox] = await Promise.all([
+    page.getByText("One trusted place").boundingBox(),
+    page.getByRole("heading", { name: "Welcome back" }).boundingBox(),
+  ]);
+  expect(storyBox?.y).toBeLessThan(formBox?.y ?? Number.POSITIVE_INFINITY);
 });
 
 test("preserves approved light and dark-ready dashboard visuals", async ({ page }) => {
@@ -239,7 +273,59 @@ test("uploads a real multipart source through the production interface", async (
   expect(uploadedBody).toContain("Browser multipart upload content.");
 });
 
+test("moves a management list with the direct numeric page control", async ({ page }) => {
+  await mockGateway(page, "super_admin");
+  await page.route("**/api/v1/knowledge*", (route) => {
+    const requestUrl = new URL(route.request().url());
+    const requestedPage = Number(requestUrl.searchParams.get("page") || "1");
+    expect(requestUrl.searchParams.get("page_size")).toBe("25");
+    return route.fulfill(json({
+      items: [{
+        content: "Page-specific knowledge content.",
+        created_at: "2026-08-20T12:00:00Z",
+        id: `knowledge-${requestedPage}`,
+        revision: 1,
+        source_id: null,
+        space_id: "global",
+        tags: [],
+        title: requestedPage === 2 ? "Second page knowledge" : "First page knowledge",
+        updated_at: "2026-08-20T12:00:00Z",
+      }],
+      page: requestedPage,
+      page_size: 25,
+      total_items: 50,
+      total_pages: 2,
+    }));
+  });
+  await page.goto("/knowledge");
+
+  await expect(page.getByText("First page knowledge")).toBeVisible();
+  await page.getByRole("spinbutton", { name: "Go to page" }).fill("2");
+  await page.getByRole("button", { name: "Go to page" }).click();
+
+  await expect(page.getByText("Second page knowledge")).toBeVisible();
+  await expect(page.getByText("Showing 26–50 of 50")).toBeVisible();
+});
+
+test("keeps the mobile knowledge error and retry state within the viewport", async ({ page }) => {
+  await mockGateway(page, "super_admin");
+  await page.route("**/api/v1/knowledge*", (route) => route.fulfill(json(notFoundFixture, 503)));
+  await page.setViewportSize({ height: 720, width: 320 });
+  await page.goto("/knowledge");
+
+  await expect(page.getByText("Unable to load knowledge")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry knowledge" })).toBeVisible();
+  await expect(page.getByText("Nothing captured yet")).toHaveCount(0);
+  const viewportState = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
+  expect(viewportState.scrollWidth).toBeLessThanOrEqual(viewportState.clientWidth);
+});
+
 const responsiveRoutes = ["/", "/spaces", "/explore", "/knowledge", "/sources", "/ingestion", "/people", "/settings", "/activity", "/ai-actions"];
+const responsivePublicRoutes = [
+  { heading: "Welcome back", route: "/login" },
+  { heading: "Make this account yours.", route: "/first-use/password" },
+  { heading: "Protect admin access.", route: "/first-use/mfa" },
+];
 const responsiveViewports = [
   { height: 720, width: 320 },
   { height: 844, width: 390 },
@@ -270,6 +356,23 @@ for (const viewport of responsiveViewports) {
   });
 }
 
+for (const viewport of responsiveViewports) {
+  test(`keeps every public entry flow within a ${viewport.width}px viewport`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await mockGateway(page);
+    for (const { heading, route } of responsivePublicRoutes) {
+      await page.goto(route);
+      await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+      await expect.poll(() => page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }))).toEqual({ clientWidth: viewport.width, scrollWidth: viewport.width });
+      const visibleOverflow = await page.evaluate(() => Array.from(document.querySelectorAll<HTMLElement>("main *")).filter((element) => {
+        const style = getComputedStyle(element);
+        return style.display !== "none" && style.visibility !== "hidden" && style.overflowX === "visible" && element.scrollWidth > element.clientWidth + 1;
+      }).map((element) => `${element.tagName.toLowerCase()}.${element.className}`));
+      expect(visibleOverflow, `${route} contains non-scrollable component overflow`).toEqual([]);
+    }
+  });
+}
+
 for (const viewport of [{ height: 844, width: 390 }, { height: 1000, width: 1440 }]) {
   test(`keeps every console accessible at ${viewport.width}px`, async ({ page }) => {
     await page.setViewportSize(viewport);
@@ -277,6 +380,18 @@ for (const viewport of [{ height: 844, width: 390 }, { height: 1000, width: 1440
     for (const route of responsiveRoutes) {
       await page.goto(route);
       await expect(page.locator("main")).toBeVisible();
+      await expectAccessible(page);
+    }
+  });
+}
+
+for (const viewport of [{ height: 844, width: 390 }, { height: 1000, width: 1440 }]) {
+  test(`keeps every public entry flow accessible at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await mockGateway(page);
+    for (const { heading, route } of responsivePublicRoutes) {
+      await page.goto(route);
+      await expect(page.getByRole("heading", { name: heading })).toBeVisible();
       await expectAccessible(page);
     }
   });

@@ -362,22 +362,23 @@ async def pagination_client(tmp_path):
             set_session_factory(None)
 
 
-async def test_space_members_support_cursor_search_and_role_filters(tmp_path) -> None:
+async def test_space_members_support_numeric_pages_search_and_role_filters(tmp_path) -> None:
     async with pagination_client(tmp_path) as client:
-        first = await client.get("/api/v1/spaces/private/members", params={"limit": 2})
+        first = await client.get("/api/v1/spaces/private/members", params={"page": 1, "page_size": 2})
 
         assert first.status_code == 200
         assert [item["username"] for item in first.json()["items"]] == ["alpha", "beta"]
-        assert first.json()["next_cursor"]
+        assert first.json()["total_items"] == 3
+        assert first.json()["total_pages"] == 2
 
         second = await client.get(
             "/api/v1/spaces/private/members",
-            params={"limit": 2, "cursor": first.json()["next_cursor"]},
+            params={"page": 2, "page_size": 2},
         )
 
         assert second.status_code == 200
         assert [item["username"] for item in second.json()["items"]] == ["owner"]
-        assert second.json()["next_cursor"] is None
+        assert second.json()["page"] == 2
 
         searched = await client.get("/api/v1/spaces/private/members", params={"q": "BETA"})
         readers = await client.get("/api/v1/spaces/private/members", params={"role": "reader"})
@@ -386,22 +387,23 @@ async def test_space_members_support_cursor_search_and_role_filters(tmp_path) ->
         assert [item["username"] for item in readers.json()["items"]] == ["alpha"]
 
 
-async def test_pending_ai_actions_support_stable_cursor_pages(tmp_path) -> None:
+async def test_pending_ai_actions_support_stable_numeric_pages(tmp_path) -> None:
     async with pagination_client(tmp_path) as client:
-        first = await client.get("/api/v1/ai-actions", params={"limit": 2})
+        first = await client.get("/api/v1/ai-actions", params={"page": 1, "page_size": 2})
 
         assert first.status_code == 200
         assert [item["target_ids"] for item in first.json()["items"]] == [["three"], ["two"]]
-        assert first.json()["next_cursor"]
+        assert first.json()["total_items"] == 3
+        assert first.json()["total_pages"] == 2
 
         second = await client.get(
             "/api/v1/ai-actions",
-            params={"limit": 2, "cursor": first.json()["next_cursor"]},
+            params={"page": 2, "page_size": 2},
         )
 
         assert second.status_code == 200
         assert [item["target_ids"] for item in second.json()["items"]] == [["one"]]
-        assert second.json()["next_cursor"] is None
+        assert second.json()["page"] == 2
 
 
 async def test_spaces_candidates_and_members_support_server_side_filters(tmp_path) -> None:
@@ -442,7 +444,7 @@ async def test_knowledge_sources_and_jobs_support_server_side_filters(tmp_path) 
         assert [item["state"] for item in jobs.json()["items"]] == ["failed"]
 
 
-async def test_knowledge_pages_show_recent_changes_first_with_stable_cursors(tmp_path) -> None:
+async def test_knowledge_pages_show_recent_changes_first_with_numeric_pages(tmp_path) -> None:
     async with pagination_client(tmp_path) as client:
         created = await client.post(
             "/api/v1/knowledge",
@@ -456,17 +458,19 @@ async def test_knowledge_pages_show_recent_changes_first_with_stable_cursors(tmp
         )
 
         assert created.status_code == 201
-        first = await client.get("/api/v1/knowledge", params={"limit": 1})
+        first = await client.get("/api/v1/knowledge", params={"page": 1, "page_size": 1})
         assert first.status_code == 200
         assert [item["id"] for item in first.json()["items"]] == [created.json()["id"]]
-        assert first.json()["next_cursor"]
+        assert first.json()["total_items"] == 3
+        assert first.json()["total_pages"] == 3
 
         second = await client.get(
             "/api/v1/knowledge",
-            params={"limit": 1, "cursor": first.json()["next_cursor"]},
+            params={"page": 2, "page_size": 1},
         )
         assert second.status_code == 200
         assert second.json()["items"][0]["id"] != created.json()["id"]
+        assert second.json()["page"] == 2
 
 
 async def test_security_audit_and_settings_lists_support_server_side_filters(tmp_path) -> None:
@@ -491,3 +495,58 @@ async def test_security_audit_and_settings_lists_support_server_side_filters(tmp
         assert [item["status"] for item in sessions.json()["items"]] == ["expired"]
         assert [item["action"] for item in audits.json()["items"]] == ["settings.activated"]
         assert [item["revision"] for item in settings.json()["items"]] == [2]
+
+
+async def test_management_lists_expose_numeric_pages_totals_and_direct_jumps(tmp_path) -> None:
+    async with pagination_client(tmp_path) as client:
+        first = await client.get(
+            "/api/v1/spaces/private/members",
+            params={"page": 1, "page_size": 2},
+        )
+        second = await client.get(
+            "/api/v1/spaces/private/members",
+            params={"page": 2, "page_size": 2},
+        )
+        beyond = await client.get(
+            "/api/v1/spaces/private/members",
+            params={"page": 9, "page_size": 2},
+        )
+        empty = await client.get(
+            "/api/v1/spaces/private/members",
+            params={"page": 9, "page_size": 2, "q": "no matching member"},
+        )
+
+        assert first.status_code == 200
+        assert first.json()["page"] == 1
+        assert first.json()["page_size"] == 2
+        assert first.json()["total_items"] == 3
+        assert first.json()["total_pages"] == 2
+        assert [item["username"] for item in first.json()["items"]] == ["alpha", "beta"]
+        assert [item["username"] for item in second.json()["items"]] == ["owner"]
+        assert second.json()["page"] == 2
+        assert beyond.status_code == 200
+        assert beyond.json()["page"] == 2
+        assert beyond.json()["total_items"] == 3
+        assert beyond.json()["total_pages"] == 2
+        assert [item["username"] for item in beyond.json()["items"]] == ["owner"]
+        assert empty.status_code == 200
+        assert empty.json()["page"] == 1
+        assert empty.json()["total_items"] == 0
+        assert empty.json()["total_pages"] == 0
+        assert empty.json()["items"] == []
+
+
+async def test_management_pages_validate_parameters_and_keep_filter_totals(tmp_path) -> None:
+    async with pagination_client(tmp_path) as client:
+        invalid_page = await client.get("/api/v1/spaces", params={"page": 0})
+        invalid_size = await client.get("/api/v1/spaces", params={"page_size": 101})
+        filtered = await client.get(
+            "/api/v1/knowledge",
+            params={"page": 1, "page_size": 1, "q": "quarterly", "tag": "finance"},
+        )
+
+        assert invalid_page.status_code == 422
+        assert invalid_size.status_code == 422
+        assert filtered.status_code == 200
+        assert filtered.json()["total_items"] == 1
+        assert filtered.json()["total_pages"] == 1

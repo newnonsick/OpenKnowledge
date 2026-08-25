@@ -22,7 +22,7 @@ Around this core the gateway provides a complete management plane: member accoun
 - Spaces and authorization. Knowledge is scoped per space with owner, editor, and reader roles, a global scope readable everywhere, and row-level security enforced in the database.
 - Durable ingestion. Uploads return immediately with an ingestion job; a leased background worker parses, chunks, embeds, and activates documents with retries and idempotency keys.
 - Identity. Argon2 password hashing, TOTP enrollment with recovery codes, per-account and per-IP login throttling, session families with refresh rotation and reuse detection.
-- Management API. A cursor-paginated `/api/v1` surface covers members, sessions, API keys, spaces, knowledge, sources, ingestion jobs, audit events, runtime settings, and confirmed AI management actions.
+- Management API. A server-side, numeric-page `/api/v1` surface covers members, sessions, API keys, spaces, knowledge, sources, ingestion jobs, audit events, runtime settings, and confirmed AI management actions.
 - Operational safety. Production configuration validation refuses wildcard CORS, debug logging, legacy static keys, or missing encryption material at startup; readiness fails closed when the schema is incompatible.
 - Observability. Structured JSON logs with trace correlation, a Prometheus `/metrics` endpoint, and an alert rule catalog under `deploy/prometheus/`.
 - Recovery tooling. Encrypted coordinated backups with checksums and a storage manifest, plus verified restore drills and monthly restore rehearsals driven from CI.

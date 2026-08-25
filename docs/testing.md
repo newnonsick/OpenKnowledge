@@ -77,7 +77,7 @@ npm run test:browser       # Playwright chromium suite including accessibility c
 npm run build              # production build
 ```
 
-The browser suite runs on Windows in CI and includes accessibility assertions. Vitest runs in jsdom.
+The browser suite runs on Windows in CI and includes accessibility assertions. Vitest runs in jsdom. Pagination component and management-console tests cover numeric page buttons, direct page navigation, server-side filter resets, total counts, and replacement of the visible page slice.
 
 ## Generated client contract
 

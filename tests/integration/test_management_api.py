@@ -166,7 +166,7 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 assert me.status_code == 200
                 assert me.json()["id"] == str(member_id)
 
-                spaces = await member_client.get("/api/v1/spaces?limit=20")
+                spaces = await member_client.get("/api/v1/spaces", params={"page": 1, "page_size": 20})
                 assert spaces.status_code == 200
                 assert [(item["id"], item["role"]) for item in spaces.json()["items"]] == [
                     ("global", "editor"),
@@ -279,20 +279,26 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                     files={"file": ("label.txt", b"Blue valve", "text/plain")},
                 )
                 assert second_upload.status_code == 202
-                sources = await member_client.get("/api/v1/sources?space_id=global&limit=1")
+                sources = await member_client.get(
+                    "/api/v1/sources",
+                    params={"space_id": "global", "page": 1, "page_size": 1},
+                )
                 assert sources.status_code == 200
-                assert sources.json()["next_cursor"]
                 next_sources = await member_client.get(
-                    f"/api/v1/sources?space_id=global&limit=1&cursor={sources.json()['next_cursor']}"
+                    "/api/v1/sources",
+                    params={"space_id": "global", "page": 2, "page_size": 1},
                 )
                 assert {sources.json()["items"][0]["id"], next_sources.json()["items"][0]["id"]} == {
                     upload.json()["document_id"], second_upload.json()["document_id"]
                 }
-                jobs = await member_client.get("/api/v1/ingestion-jobs?space_id=global&limit=1")
+                jobs = await member_client.get(
+                    "/api/v1/ingestion-jobs",
+                    params={"space_id": "global", "page": 1, "page_size": 1},
+                )
                 assert jobs.status_code == 200
-                assert jobs.json()["next_cursor"]
                 next_jobs = await member_client.get(
-                    f"/api/v1/ingestion-jobs?space_id=global&limit=1&cursor={jobs.json()['next_cursor']}"
+                    "/api/v1/ingestion-jobs",
+                    params={"space_id": "global", "page": 2, "page_size": 1},
                 )
                 assert {jobs.json()["items"][0]["id"], next_jobs.json()["items"][0]["id"]} == {
                     upload.json()["job_id"], second_upload.json()["job_id"]
@@ -353,10 +359,13 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                     headers={**member_headers, "Idempotency-Key": "revoke-other-session"},
                 )
                 assert replayed_session_revoke.status_code == 204
-                sessions_page = await member_client.get("/api/v1/sessions?limit=1")
-                assert sessions_page.json()["next_cursor"]
+                sessions_page = await member_client.get(
+                    "/api/v1/sessions",
+                    params={"page": 1, "page_size": 1},
+                )
                 sessions_next = await member_client.get(
-                    f"/api/v1/sessions?limit=1&cursor={sessions_page.json()['next_cursor']}"
+                    "/api/v1/sessions",
+                    params={"page": 2, "page_size": 1},
                 )
                 assert sessions_page.json()["items"][0]["id"] != sessions_next.json()["items"][0]["id"]
 
@@ -385,12 +394,12 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 temporary_password = created_member.json()["temporary_password"]
                 assert temporary_password
                 assert created_member.headers["Cache-Control"] == "no-store"
-                member_list = await admin_client.get("/api/v1/members?limit=50")
+                member_list = await admin_client.get("/api/v1/members", params={"page": 1, "page_size": 50})
                 assert member_list.status_code == 200
                 assert "temporary_password" not in str(member_list.json())
                 assert any(item["username"] == "new-member" for item in member_list.json()["items"])
                 created_member_id = created_member.json()["id"]
-                admin_spaces = await admin_client.get("/api/v1/admin/spaces?limit=100")
+                admin_spaces = await admin_client.get("/api/v1/admin/spaces", params={"page": 1, "page_size": 100})
                 assert admin_spaces.status_code == 200
                 repair_space = next(
                     item for item in admin_spaces.json()["items"] if item["id"] == "repair-space"
@@ -499,19 +508,25 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                     },
                 )
                 assert second_settings_activation.status_code == 200
-                settings_history = await admin_client.get("/api/v1/settings/history?limit=1")
+                settings_history = await admin_client.get(
+                    "/api/v1/settings/history",
+                    params={"page": 1, "page_size": 1},
+                )
                 assert settings_history.status_code == 200
                 assert [item["revision"] for item in settings_history.json()["items"]] == [2]
-                assert settings_history.json()["next_cursor"]
                 settings_history_next = await admin_client.get(
-                    f"/api/v1/settings/history?limit=1&cursor={settings_history.json()['next_cursor']}"
+                    "/api/v1/settings/history",
+                    params={"page": 2, "page_size": 1},
                 )
                 assert [item["revision"] for item in settings_history_next.json()["items"]] == [1]
-                audit_page = await admin_client.get("/api/v1/audit-events?limit=1")
+                audit_page = await admin_client.get(
+                    "/api/v1/audit-events",
+                    params={"page": 1, "page_size": 1},
+                )
                 assert audit_page.status_code == 200
-                assert audit_page.json()["next_cursor"]
                 audit_next = await admin_client.get(
-                    f"/api/v1/audit-events?limit=1&cursor={audit_page.json()['next_cursor']}"
+                    "/api/v1/audit-events",
+                    params={"page": 2, "page_size": 1},
                 )
                 assert audit_page.json()["items"][0]["id"] != audit_next.json()["items"][0]["id"]
                 settings_rollback = await admin_client.post(

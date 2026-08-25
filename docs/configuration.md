@@ -61,6 +61,7 @@ Any OpenAI-compatible chat completion endpoint.
 |---|---|---|
 | `LLM_URL` | `http://localhost:8888` | Base URL of the endpoint. |
 | `LLM_MODEL_ID` | `default` | Backend model identifier. |
+| `LLM_FALLBACK_MODEL_IDS` | unset | Comma-separated fallback model IDs used only after the configured default exhausts transient-error retries. |
 | `LLM_API_KEY` | `EMPTY` | Backend API key when the endpoint requires one. |
 | `CONTEXT_WINDOW` | `8192` | Context window reported through the model registry. |
 | `LLM_TIMEOUT_SECONDS` | `120.0` | HTTP timeout for inference. |
