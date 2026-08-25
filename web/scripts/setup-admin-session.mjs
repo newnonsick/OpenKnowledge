@@ -64,6 +64,10 @@ console.log("step3 ok: console at", page.url());
 
 await context.storageState({ path: "../reports/admin-session.json" });
 writeFileSync("../reports/admin-totp-secret.txt", secret.trim(), "utf8");
+writeFileSync(
+  new URL("./credentials.local.json", import.meta.url),
+  JSON.stringify({ username: "admin", password: NEW_PASSWORD, totp_secret: secret.trim() }, null, 2),
+);
 writeFileSync("../reports/admin-recovery-codes.json", JSON.stringify(recoveryCodes, null, 2), "utf8");
 await page.screenshot({ path: "../reports/shots/after-login-console.png", fullPage: true });
 await browser.close();

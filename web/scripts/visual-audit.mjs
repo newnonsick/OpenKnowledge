@@ -18,6 +18,7 @@ const PAGES = [
   { path: "/people", name: "people" },
   { path: "/activity", name: "activity" },
   { path: "/settings", name: "settings" },
+  { path: "/first-use/password", name: "first-use-password" },
   { path: "/login", name: "login" },
 ];
 
