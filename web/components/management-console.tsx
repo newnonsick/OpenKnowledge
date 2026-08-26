@@ -56,6 +56,13 @@ type IngestionListResponse = components["schemas"]["Page_IngestionJob_"];
 type AuditEvent = components["schemas"]["AuditEvent"];
 type AuditListResponse = components["schemas"]["Page_AuditEvent_"];
 
+const dateTimeFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", hour: "2-digit", minute: "2-digit", month: "short" });
+
+function formatDateTime(value: string) {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : dateTimeFormat.format(parsed);
+}
+
 function memberView(member: ReturnType<typeof useCurrentMember>) {
   return {
     displayName: member.display_name,
@@ -65,7 +72,13 @@ function memberView(member: ReturnType<typeof useCurrentMember>) {
 }
 
 function message(error: unknown) {
-  return error instanceof ApiError ? error.message : "The request could not be completed.";
+  if (error instanceof ApiError) {
+    if (error.code === "recent_authentication_required") {
+      return "Verify your identity, then run that action again.";
+    }
+    return error.message;
+  }
+  return "The request could not be completed.";
 }
 
 function spaceLabel(spaces: Space[], spaceId: string) {
@@ -313,34 +326,16 @@ export function SpacesConsole() {
       description="Create focused spaces for private projects while unified discovery searches everything you can access."
       eyebrow="Knowledge boundaries"
       member={memberView(member)}
-      spaceCount={spacePages.totalItems}
+      spaceCount={spacePages.initialLoading ? null : spacePages.totalItems}
       title="Spaces"
     >
       <div className="console-grid console-grid-spaces">
         <section className="console-panel">
           <div className="panel-heading">
             <div><span>Accessible now</span><h2>Your spaces</h2></div>
-            <span className="count-pill">{spacePages.totalItems}</span>
+            <span className="count-pill">{spacePages.initialLoading ? "…" : spacePages.totalItems}</span>
           </div>
           <form className="list-filter-bar space-filter-bar" onSubmit={(event) => { event.preventDefault(); setAppliedSpaceSearch(spaceSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={15} /><input aria-label="Search spaces" onChange={(event) => setSpaceSearch(event.target.value)} placeholder="Search name or ID" type="search" value={spaceSearch} /></label><button className="secondary-button" type="submit">Apply</button>{appliedSpaceSearch ? <button className="filter-clear-button" onClick={() => { setSpaceSearch(""); setAppliedSpaceSearch(""); }} type="button">Clear</button> : null}</form>
-          {spacePages.initialLoading || (spacePages.loading && spaces.length === 0) ? <ListSkeleton /> : null}
-          {spacePages.error ? <ListUnavailable label="spaces" onRetry={() => void spacePages.reload()} /> : null}
-          {!spacePages.initialLoading && !spacePages.loading && !spacePages.error && spaces.length === 0 ? <div className="console-empty"><FolderKanban size={23} /><strong>{appliedSpaceSearch ? "No matching spaces" : "No spaces yet"}</strong><span>{appliedSpaceSearch ? "Try a broader name or clear the search." : "Create one for a project or keep using shared knowledge."}</span></div> : null}
-          <div className="space-card-grid">
-            {spaces.map((space, index) => (
-              <article className="space-card" key={space.id}>
-                <div className={`space-card-mark accent-${index % 4}`}><FolderKanban aria-hidden="true" size={17} /></div>
-                <div><h3>{space.name}</h3><p title={space.id}>{space.id}</p></div>
-                <span className={`role-pill role-${space.role}`}>{space.role}</span>
-                <div className="space-card-footer">
-                  <span className="space-card-meta"><ShieldCheck aria-hidden="true" size={13} /> {space.role === "owner" ? "You manage this space" : "Shared with you"}</span>
-                  {space.role === "owner" ? <button aria-label={`Manage access for ${space.name}`} className="space-manage-button" onClick={() => void loadAccess(space)} type="button"><UsersRound size={13} /> Manage access</button> : null}
-                </div>
-              </article>
-            ))}
-          </div>
-          {spacePages.totalItems > 0 ? <PaginationControls loading={spacePages.loading} loadingPage={spacePages.loadingPage} onPageChange={(nextPage) => void spacePages.goToPage(nextPage)} page={spacePages.page} pageSize={spacePages.pageSize} totalItems={spacePages.totalItems} totalPages={spacePages.totalPages} /> : null}
-          {accessLoading ? <div className="console-loading access-loading"><LoaderCircle className="spin" size={18} /> Loading space access…</div> : null}
           {selectedSpace && !accessLoading ? (
             <section className="space-access-panel" aria-label={`${selectedSpace.name} access`} ref={accessPanelRef}>
               <div className="space-access-heading">
@@ -394,6 +389,24 @@ export function SpacesConsole() {
               {confirmSpaceArchive ? <div className="confirmation-strip" role="alertdialog" aria-label={`Archive ${selectedSpace.name}`}><div><strong>Archive {selectedSpace.name}?</strong><span>Its knowledge will leave unified search immediately, while history remains preserved.</span></div><button className="secondary-button" onClick={() => setConfirmSpaceArchive(false)} type="button">Keep space</button><button className="danger-button" disabled={saving} onClick={() => void archiveSelectedSpace()} type="button">Confirm archive space</button></div> : null}
             </section>
           ) : null}
+          {accessLoading ? <div className="console-loading access-loading"><LoaderCircle className="spin" size={18} /> Loading space access…</div> : null}
+          {spacePages.initialLoading || (spacePages.loading && spaces.length === 0) ? <ListSkeleton /> : null}
+          {spacePages.error ? <ListUnavailable label="spaces" onRetry={() => void spacePages.reload()} /> : null}
+          {!spacePages.initialLoading && !spacePages.loading && !spacePages.error && spaces.length === 0 ? <div className="console-empty"><FolderKanban size={23} /><strong>{appliedSpaceSearch ? "No matching spaces" : "No spaces yet"}</strong><span>{appliedSpaceSearch ? "Try a broader name or clear the search." : "Create one for a project or keep using shared knowledge."}</span></div> : null}
+          <div className="space-card-grid">
+            {spaces.map((space, index) => (
+              <article className={`space-card${selectedSpace?.id === space.id ? " is-selected" : ""}`} key={space.id}>
+                <div className={`space-card-mark accent-${index % 4}`}><FolderKanban aria-hidden="true" size={17} /></div>
+                <div><h3>{space.name}</h3><p title={space.id}>{space.id}</p></div>
+                <span className={`role-pill role-${space.role}`}>{space.role}</span>
+                <div className="space-card-footer">
+                  <span className="space-card-meta"><ShieldCheck aria-hidden="true" size={13} /> {space.role === "owner" ? "You manage this space" : "Shared with you"}</span>
+                  {space.role === "owner" ? <button aria-label={`Manage access for ${space.name}`} className="space-manage-button" onClick={() => void loadAccess(space)} type="button"><UsersRound size={13} /> Manage access</button> : null}
+                </div>
+              </article>
+            ))}
+          </div>
+          {spacePages.totalItems > 0 ? <PaginationControls loading={spacePages.loading} loadingPage={spacePages.loadingPage} onPageChange={(nextPage) => void spacePages.goToPage(nextPage)} page={spacePages.page} pageSize={spacePages.pageSize} totalItems={spacePages.totalItems} totalPages={spacePages.totalPages} /> : null}
         </section>
         <aside className="console-panel action-panel">
           <span className="action-panel-icon"><Plus aria-hidden="true" size={20} /></span>
@@ -435,6 +448,7 @@ export function KnowledgeConsole() {
   const [editContent, setEditContent] = useState("");
   const [editTags, setEditTags] = useState("");
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [savedRevision, setSavedRevision] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const editorRef = useRef<HTMLElement>(null);
   const editedIdRef = useRef<string | null>(null);
@@ -553,6 +567,7 @@ export function KnowledgeConsole() {
       setEditContent(detail.content);
       setEditTags(detail.tags.join(", "));
       setConfirmArchive(false);
+      setSavedRevision(null);
     } catch (loadError) {
       setError(message(loadError));
     } finally {
@@ -582,6 +597,7 @@ export function KnowledgeConsole() {
       setEditTitle(updated.title);
       setEditContent(updated.content);
       setEditTags(updated.tags.join(", "));
+      setSavedRevision(updated.version);
       reloadItems();
     } catch (updateError) {
       setError(message(updateError));
@@ -619,14 +635,14 @@ export function KnowledgeConsole() {
       description="Capture durable notes with immutable revisions, clear provenance, and permission-aware retrieval."
       eyebrow="Canonical knowledge"
       member={memberView(member)}
-      spaceCount={spaces.length}
+      spaceCount={spacesLoading ? null : spaces.length}
       title="Knowledge"
     >
       <div className="console-grid console-grid-knowledge">
         <section className="console-panel">
           <div className="panel-heading">
             <div><span>Living library</span><h2>{spaceFilter ? "Filtered knowledge" : "Knowledge items"}</h2></div>
-            <span className="count-pill" aria-label={`${knowledgeTotalItems} knowledge items`}>{knowledgeTotalItems}</span>
+            <span className="count-pill" aria-label={`${knowledgeTotalItems} knowledge items`}>{initialLoading ? "…" : knowledgeTotalItems}</span>
           </div>
           {spaceFilter ? <div className="filter-strip"><Search size={13} /> Showing one space only<button onClick={() => router.replace("/knowledge")} type="button">Show all spaces</button></div> : null}
           <form className="list-filter-bar" onSubmit={(event) => {
@@ -674,6 +690,7 @@ export function KnowledgeConsole() {
                 <button aria-label="Close knowledge editor" className="icon-button" onClick={() => setEditing(null)} type="button"><X size={16} /></button>
               </div>
               <p className="revision-state">Version {editing.version} is active</p>
+              {savedRevision ? <p className="inline-success" role="status"><ShieldCheck size={14} /> Revision {savedRevision} saved and searchable.</p> : null}
               <form className="console-form" onSubmit={saveRevision}>
                 <label htmlFor="edit-knowledge-title">Edit title</label>
                 <input id="edit-knowledge-title" maxLength={500} onChange={(event) => setEditTitle(event.target.value)} required value={editTitle} />
@@ -731,6 +748,7 @@ export function ExploreConsole() {
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const autoQueryRef = useRef<string | null>(searchParams.get("q"));
 
   useEffect(() => {
     let active = true;
@@ -755,9 +773,9 @@ export function ExploreConsole() {
     };
   }, []);
 
-  const search = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!query.trim() || searching) {
+  const runSearch = useCallback(async (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || searching) {
       return;
     }
     setSearching(true);
@@ -766,30 +784,38 @@ export function ExploreConsole() {
       const response = await contractData(contractClient.POST("/api/v1/retrieval/search", {
         body: {
           limit: 20,
-          query: query.trim(),
+          query: trimmed,
           semantic_policy: "prefer",
         },
       }));
       setResult(response);
-      router.replace(`/explore?q=${encodeURIComponent(query.trim())}`, { scroll: false });
+      router.replace(`/explore?q=${encodeURIComponent(trimmed)}`, { scroll: false });
     } catch (searchError) {
       setError(message(searchError));
     } finally {
       setSearching(false);
     }
-  };
+  }, [router, searching]);
+
+  useEffect(() => {
+    const pending = autoQueryRef.current;
+    if (pending) {
+      autoQueryRef.current = null;
+      void runSearch(pending);
+    }
+  }, [runSearch]);
 
   return (
     <ConsoleShell
       description="Search once across every space you can access. Results remain permission-aware even with a large collection of spaces."
       eyebrow="Unified discovery"
       member={memberView(member)}
-      spaceCount={spaces.length}
+      spaceCount={loading ? null : spaces.length}
       title="Explore"
     >
       <section className="explore-hero console-panel">
         <div className="search-scope"><ShieldCheck size={15} /> All accessible spaces are in scope</div>
-        <form className="console-search" onSubmit={search} role="search">
+        <form className="console-search" onSubmit={(event) => { event.preventDefault(); void runSearch(query); }} role="search">
           <Search aria-hidden="true" size={21} />
           <input aria-label="Search query" autoFocus onChange={(event) => setQuery(event.target.value)} placeholder="Ask for a detail, process, place, or decision…" type="search" value={query} />
           <button aria-label="Search knowledge" disabled={searching} type="submit">{searching ? <LoaderCircle className="spin" size={17} /> : <ArrowUpRight size={17} />}</button>
@@ -957,14 +983,14 @@ export function SourcesConsole() {
       description="Upload original files into versioned object storage and track every revision through the durable ingestion pipeline."
       eyebrow="Source library"
       member={memberView(member)}
-      spaceCount={spaces.length}
+      spaceCount={spacesLoading ? null : spaces.length}
       title="Sources"
     >
       <div className="console-grid console-grid-sources">
         <section className="console-panel">
           <div className="panel-heading">
             <div><span>Original material</span><h2>Source files</h2></div>
-            <span className="count-pill">{sourceTotalItems}</span>
+            <span className="count-pill">{initialLoading ? "…" : sourceTotalItems}</span>
           </div>
           <form className="list-filter-bar source-filter-bar" onSubmit={(event) => {
             event.preventDefault();
@@ -1016,6 +1042,7 @@ export function SourcesConsole() {
 export function PeopleConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
+  const [spacesReady, setSpacesReady] = useState(false);
   const [memberSearch, setMemberSearch] = useState("");
   const [appliedMemberSearch, setAppliedMemberSearch] = useState("");
   const [memberStatus, setMemberStatus] = useState<"" | "pending" | "active" | "disabled">("");
@@ -1080,9 +1107,11 @@ export function PeopleConsole() {
         return;
       }
       setSpaces(spaceResponse);
+      setSpacesReady(true);
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
+        setSpacesReady(true);
       }
     });
     return () => {
@@ -1210,7 +1239,7 @@ export function PeopleConsole() {
       description="Super admins create family accounts. Space owners grant access separately so identity and knowledge boundaries stay explicit."
       eyebrow="Identity & access"
       member={memberView(member)}
-      spaceCount={spaces.length}
+      spaceCount={spacesReady ? spaces.length : null}
       title="People & access"
     >
       {!isAdmin ? (
@@ -1218,7 +1247,7 @@ export function PeopleConsole() {
       ) : (
         <div className="console-grid console-grid-people">
           <section className="console-panel">
-            <div className="panel-heading"><div><span>Family directory</span><h2>Members</h2></div><span className="count-pill">{memberPages.totalItems}</span></div>
+            <div className="panel-heading"><div><span>Family directory</span><h2>Members</h2></div><span className="count-pill">{memberPages.initialLoading ? "…" : memberPages.totalItems}</span></div>
             <form className="list-filter-bar member-filter-bar" onSubmit={(event) => { event.preventDefault(); setAppliedMemberSearch(memberSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={14} /><input aria-label="Search members" onChange={(event) => setMemberSearch(event.target.value)} placeholder="Name or username" type="search" value={memberSearch} /></label><label><select aria-label="Filter member status" onChange={(event) => setMemberStatus(event.target.value as typeof memberStatus)} value={memberStatus}><option value="">All statuses</option><option value="pending">Pending</option><option value="active">Active</option><option value="disabled">Disabled</option></select></label><label><select aria-label="Filter system role" onChange={(event) => setMemberRole(event.target.value as typeof memberRole)} value={memberRole}><option value="">All roles</option><option value="super_admin">Super admin</option><option value="member">Member</option></select></label><button className="secondary-button" type="submit">Apply</button></form>
             {memberPages.initialLoading || (memberPages.loading && members.length === 0) ? <ListSkeleton rows={6} /> : null}
             {memberPages.error ? <ListUnavailable label="members" onRetry={() => void memberPages.reload()} /> : null}
@@ -1548,10 +1577,9 @@ export function SettingsConsole() {
       description="Manage personal API credentials, active website sessions, and the safe runtime configuration boundary."
       eyebrow="Account control"
       member={memberView(member)}
-      spaceCount={spaces.length}
+      spaceCount={loading ? null : spaces.length}
       title="Settings"
     >
-      {loading ? <ListSkeleton compact /> : null}
       <div className="settings-layout">
         <section className="console-panel settings-section">
           <div className="panel-heading"><div><span>Personal credentials</span><h2>API keys</h2></div><KeyRound size={20} /></div>
@@ -1592,7 +1620,7 @@ export function SettingsConsole() {
           {sessionPages.initialLoading || (sessionPages.loading && sessions.length === 0) ? <ListSkeleton compact rows={3} /> : null}
           {sessionPages.error ? <ListUnavailable label="sessions" onRetry={() => void sessionPages.reload()} /> : null}
           <div className="data-list compact-list">
-            {sessions.map((session) => <article className="data-row" key={session.id}><span className="row-leading cyan"><MonitorSmartphone size={17} /></span><div className="row-copy"><h3>{session.current ? "This session" : "Website session"}</h3><p>Last active {new Date(session.last_activity_at).toLocaleString()}</p></div><span className={`status-pill status-${session.status}`}>{session.status}</span>{!session.current && session.status === "active" ? <button aria-label="Sign out website session" className="membership-remove-button" onClick={() => setPendingSessionRevocation(session)} type="button"><X size={15} /></button> : null}</article>)}
+            {sessions.map((session) => <article className="data-row" key={session.id}><span className="row-leading cyan"><MonitorSmartphone size={17} /></span><div className="row-copy"><h3>{session.current ? "This session" : "Website session"}</h3><p>Last active {formatDateTime(session.last_activity_at)}</p></div><span className={`status-pill status-${session.status}`}>{session.status}</span>{!session.current && session.status === "active" ? <button aria-label="Sign out website session" className="membership-remove-button" onClick={() => setPendingSessionRevocation(session)} type="button"><X size={15} /></button> : null}</article>)}
             {!sessionPages.initialLoading && !sessionPages.loading && !sessionPages.error && sessions.length === 0 ? <div className="console-empty small"><MonitorSmartphone size={20} /><strong>No session records returned</strong></div> : null}
           </div>
           {sessionPages.totalItems > 0 ? <PaginationControls loading={sessionPages.loading} loadingPage={sessionPages.loadingPage} onPageChange={(nextPage) => void sessionPages.goToPage(nextPage)} page={sessionPages.page} pageSize={sessionPages.pageSize} totalItems={sessionPages.totalItems} totalPages={sessionPages.totalPages} /> : null}
@@ -1601,6 +1629,7 @@ export function SettingsConsole() {
 
         <section className="console-panel settings-section runtime-section">
           <div className="panel-heading"><div><span>Production boundary</span><h2>Safe runtime settings</h2></div><Settings2 size={20} /></div>
+          {loading ? <ListSkeleton compact rows={3} /> : <>
           <div className="runtime-summary"><div><span>Active revision</span><strong>{settings?.revision ?? 0}</strong></div><div><span>State</span><strong>{settings?.state || "active"}</strong></div><div><span>Change mode</span><strong>{member.system_role === "super_admin" ? "Draft + activate" : "Read only"}</strong></div></div>
           {settings ? <p className="runtime-active-state">Revision {settings.revision} is active</p> : null}
           {member.system_role === "super_admin" && settings ? (
@@ -1629,6 +1658,7 @@ export function SettingsConsole() {
               </details>
             ))}
           </div>
+          </>}
         </section>
       </div>
       {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
@@ -1639,6 +1669,7 @@ export function SettingsConsole() {
 export function IngestionConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
+  const [spacesReady, setSpacesReady] = useState(false);
   const [spaceFilter, setSpaceFilter] = useState("");
   const [stateFilter, setStateFilter] = useState<"" | "preparing" | "queued" | "running" | "retry_wait" | "succeeded" | "failed" | "cancelled">("");
   const [pendingJobAction, setPendingJobAction] = useState<{ job: IngestionJob; operation: "cancel" | "retry" } | null>(null);
@@ -1678,10 +1709,12 @@ export function IngestionConsole() {
     loadAccessibleSpaces().then((response) => {
       if (active) {
         setSpaces(response);
+        setSpacesReady(true);
       }
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
+        setSpacesReady(true);
       }
     });
     return () => {
@@ -1720,10 +1753,10 @@ export function IngestionConsole() {
       description="Follow the durable pipeline from queued source through parsing, activation, retry, or a clear terminal state."
       eyebrow="Operational pipeline"
       member={memberView(member)}
-      spaceCount={spaces.length}
+      spaceCount={spacesReady ? spaces.length : null}
       title="Ingestion"
     >
-      <div className="metric-strip metric-strip-compact"><article><span>Total jobs</span><strong>{jobTotalItems}</strong></article><article><span>In progress on this page</span><strong>{activeJobs}</strong></article></div>
+      <div className="metric-strip metric-strip-compact"><article><span>Total jobs</span><strong>{initialLoading ? "…" : jobTotalItems}</strong></article><article><span>Active on this page</span><strong>{initialLoading || loading ? "…" : activeJobs}</strong></article></div>
       <section className="console-panel">
         <div className="panel-heading"><div><span>Live durable state</span><h2>Ingestion jobs</h2></div><button className="metric-refresh-button metric-refresh-inline" onClick={reloadJobs} type="button"><Layers3 size={14} /> Refresh now</button></div>
         <div className="list-filter-bar two-filter-bar">
@@ -1756,6 +1789,7 @@ export function IngestionConsole() {
 export function ActivityConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
+  const [spacesReady, setSpacesReady] = useState(false);
   const [filterQuery, setFilterQuery] = useState("");
   const [actionFilter, setActionFilter] = useState("");
   const [outcomeFilter, setOutcomeFilter] = useState<"" | "success" | "denied" | "failed">("");
@@ -1803,9 +1837,11 @@ export function ActivityConsole() {
         return;
       }
       setSpaces(spaceResponse);
+      setSpacesReady(true);
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
+        setSpacesReady(true);
       }
     });
     return () => {
@@ -1818,7 +1854,7 @@ export function ActivityConsole() {
       description="Review security-sensitive mutations with actor, resource, outcome, timestamp, and request correlation."
       eyebrow="Immutable evidence"
       member={memberView(member)}
-      spaceCount={spaces.length}
+      spaceCount={spacesReady ? spaces.length : null}
       title="Activity"
     >
       {!isAdmin ? <section className="console-panel permission-panel"><LockKeyhole size={25} /><div><h2>Audit access is restricted</h2><p>Only super admins can review family-wide audit events. Space membership remains visible to each space owner.</p></div></section> : (
@@ -1837,7 +1873,7 @@ export function ActivityConsole() {
           {initialLoading || (loading && events.length === 0) ? <ListSkeleton /> : null}
           {paginationError ? <ListUnavailable label="audit events" onRetry={() => void reloadAuditEvents()} /> : null}
           <div className="audit-list">
-            {events.map((event) => <article className="audit-row" key={event.id}><span className={`audit-outcome outcome-${event.outcome}`} /><time>{new Date(event.occurred_at).toLocaleString()}</time><div><h3>{event.action}</h3><p>{event.resource_type}{event.resource_id ? ` · ${event.resource_id}` : ""}</p></div><code>{event.request_id}</code><span className="status-pill">{event.outcome}</span></article>)}
+            {events.map((event) => <article className="audit-row" key={event.id}><span className={`audit-outcome outcome-${event.outcome}`} /><time dateTime={event.occurred_at}>{formatDateTime(event.occurred_at)}</time><div><h3>{event.action}</h3><p>{event.resource_type}{event.resource_id ? ` · ${event.resource_id}` : ""}</p></div><code>{event.request_id}</code><span className="status-pill">{event.outcome}</span></article>)}
             {!initialLoading && !loading && !paginationError && events.length === 0 ? <div className="console-empty"><Activity size={23} /><strong>No audit events returned</strong></div> : null}
           </div>
           {auditTotalItems > 0 ? <PaginationControls loading={loading} loadingPage={auditLoadingPage} onPageChange={(nextPage) => void goToAuditPage(nextPage)} page={auditPage} pageSize={auditPageSize} totalItems={auditTotalItems} totalPages={auditTotalPages} /> : null}
@@ -1873,6 +1909,7 @@ function aiActionImpact(toolName: string) {
 export function AiActionsConsole() {
   const member = useCurrentMember();
   const [spaces, setSpaces] = useState<Space[]>([]);
+  const [spacesReady, setSpacesReady] = useState(false);
   const [tools, setTools] = useState<AIManagementTool[]>([]);
   const [reviewing, setReviewing] = useState<PendingAIAction | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1894,10 +1931,12 @@ export function AiActionsConsole() {
         return;
       }
       setSpaces(spaceResponse);
+      setSpacesReady(true);
       setTools(toolResponse.items);
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
+        setSpacesReady(true);
       }
     });
     return () => {
@@ -1929,7 +1968,7 @@ export function AiActionsConsole() {
       description="A typed management surface for trusted assistants. Identity, scope, idempotency, audit, and confirmations remain server-enforced."
       eyebrow="Tool contracts"
       member={memberView(member)}
-      spaceCount={spaces.length}
+      spaceCount={spacesReady ? spaces.length : null}
       title="AI actions"
     >
       <section className="tool-principle"><Sparkles size={22} /><div><strong>Plain requests in, deliberate operations out</strong><p>Read actions can run directly. High-impact writes require a short-lived confirmation before execution.</p></div></section>

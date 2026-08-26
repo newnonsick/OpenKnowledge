@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import { connection } from "next/server";
 import localFont from "next/font/local";
 import type { ReactNode } from "react";
@@ -33,10 +34,11 @@ const themeBootstrap = `(function(){try{var stored=localStorage.getItem("aigw-th
 
 export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   await connection();
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html lang="en" className={`${uiFont.variable} ${displayFont.variable}`}>
       <body>
-        <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} nonce={nonce} />
         {children}
       </body>
     </html>

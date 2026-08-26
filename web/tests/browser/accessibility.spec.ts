@@ -293,18 +293,18 @@ test("moves a management list with the direct numeric page control", async ({ pa
       }],
       page: requestedPage,
       page_size: 25,
-      total_items: 50,
-      total_pages: 2,
+      total_items: 500,
+      total_pages: 20,
     }));
   });
   await page.goto("/knowledge");
 
   await expect(page.getByText("First page knowledge")).toBeVisible();
-  await page.getByRole("spinbutton", { name: "Go to page" }).fill("2");
+  await page.getByRole("textbox", { name: "Go to page" }).fill("2");
   await page.getByRole("button", { name: "Go to page" }).click();
 
   await expect(page.getByText("Second page knowledge")).toBeVisible();
-  await expect(page.getByText("Showing 26–50 of 50")).toBeVisible();
+  await expect(page.getByText("26–50 of 500")).toBeVisible();
 });
 
 test("keeps the mobile knowledge error and retry state within the viewport", async ({ page }) => {

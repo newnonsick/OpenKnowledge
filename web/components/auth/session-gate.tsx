@@ -148,7 +148,9 @@ export function SessionGate({ children }: { children: ReactNode }) {
       });
       setStepUpOpen(false);
     } catch (error) {
-      setStepUpError(error instanceof ApiError ? error.message : "Identity verification failed.");
+      setStepUpError(error instanceof ApiError && error.code === "recent_authentication_required"
+        ? "Verify your identity, then run that action again."
+        : error instanceof ApiError ? error.message : "Identity verification failed.");
     } finally {
       setStepUpSubmitting(false);
     }
@@ -171,7 +173,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
         <div className="step-up-backdrop">
           <section aria-label="Verify your identity" aria-modal="true" className="step-up-dialog" role="dialog">
             <div className="step-up-heading"><span><KeyRound aria-hidden="true" size={18} /></span><div><small>Security check</small><h2>Verify your identity</h2></div><button aria-label="Close identity verification" onClick={() => setStepUpOpen(false)} type="button"><X aria-hidden="true" size={18} /></button></div>
-            <p>Your previous action was not replayed. Verify now, then start that action again.</p>
+            <p>For extra security, this action needs a fresh identity check. Nothing was saved yet — verify below, then run the action again.</p>
             <form onSubmit={submitStepUp}>
               <label className="field-label" htmlFor="step-up-password">Current password</label>
               <input autoComplete="current-password" className="text-field" id="step-up-password" name="password" required type="password" />

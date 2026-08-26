@@ -5,6 +5,10 @@ import { DashboardController } from "@/components/dashboard-controller";
 
 const get = vi.hoisted(() => vi.fn());
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn() }),
+}));
+
 vi.mock("@/components/auth/session-gate", () => ({
   useCurrentMember: () => ({ display_name: "Mai Arun", system_role: "member" }),
 }));

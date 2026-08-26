@@ -48,7 +48,7 @@ type ConsoleShellProps = {
   description: string;
   eyebrow: string;
   member: { displayName: string; role: string; systemRole: "member" | "super_admin" };
-  spaceCount: number;
+  spaceCount: number | null;
   title: string;
 };
 
@@ -115,7 +115,7 @@ export function ConsoleShell({ actions, children, description, eyebrow, member, 
           <span className="family-avatar">K</span>
           <span className="family-copy">
             <strong>Family knowledge</strong>
-            <small>{spaceCount} accessible {spaceCount === 1 ? "space" : "spaces"}</small>
+            <small>{spaceCount === null ? "Loading spaces…" : `${spaceCount} accessible ${spaceCount === 1 ? "space" : "spaces"}`}</small>
           </span>
         </div>
 

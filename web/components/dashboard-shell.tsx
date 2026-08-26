@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   Activity,
@@ -8,6 +9,7 @@ import {
   BookOpen,
   Boxes,
   ChevronDown,
+  CircleAlert,
   CircleUserRound,
   Clock3,
   Command,
@@ -17,10 +19,12 @@ import {
   Grid2X2,
   KeyRound,
   Layers3,
+  LogOut,
   Menu,
   Plus,
   Search,
   Settings2,
+  ShieldCheck,
   Sparkles,
   Upload,
   UsersRound,
@@ -28,6 +32,8 @@ import {
   X,
 } from "lucide-react";
 
+import { contractClient, contractData } from "@/lib/api-client";
+import { resetCachedMember } from "@/components/auth/session-gate";
 import { useDrawerFocus } from "@/lib/focus-management";
 import { ThemeToggle } from "@/components/theme-toggle";
 
@@ -126,8 +132,10 @@ export function DashboardShell({
   spacesLoaded = true,
 }: DashboardShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [shortcutHint, setShortcutHint] = useState("⌘ K");
   const commandLinkRef = useRef<HTMLAnchorElement>(null);
+  const router = useRouter();
   const { closeRef, drawerRef, triggerRef } = useDrawerFocus(menuOpen, setMenuOpen);
   const visibleAdministration = member.systemRole === "super_admin"
     ? administration
@@ -135,6 +143,19 @@ export function DashboardShell({
   const initials = member.displayName.split(/\s+/).map((value) => value[0]).join("").slice(0, 2).toUpperCase();
   const queued = operations ? operations.ingestion.queued + operations.ingestion.retry_wait : 0;
   const pulseUnavailable = !loading && !ready;
+
+  const signOut = async () => {
+    if (signingOut) {
+      return;
+    }
+    setSigningOut(true);
+    try {
+      await contractData(contractClient.POST("/api/v1/auth/logout", { body: {} }));
+    } finally {
+      resetCachedMember();
+      router.replace("/login");
+    }
+  };
 
   useEffect(() => {
     const platform = typeof navigator === "undefined" ? "" : navigator.platform.toLowerCase();
@@ -194,6 +215,7 @@ export function DashboardShell({
             <ChevronDown aria-hidden="true" size={15} />
           </Link>
           <ThemeToggle />
+          <button aria-label="Sign out" className="account-link" disabled={signingOut} onClick={signOut} type="button"><LogOut aria-hidden="true" size={15} /><span>{signingOut ? "Signing out…" : "Sign out"}</span></button>
         </div>
       </aside>
 
@@ -270,10 +292,10 @@ export function DashboardShell({
             </article>
           </section>
 
-          <section className="attention-strip">
-            <div className="attention-icon"><Clock3 aria-hidden="true" size={19} /></div>
+          <section className={`attention-strip${loading ? "" : ready ? " is-ok" : " is-warning"}`}>
+            <div className="attention-icon">{loading ? <Clock3 aria-hidden="true" size={19} /> : ready ? <ShieldCheck aria-hidden="true" size={19} /> : <CircleAlert aria-hidden="true" size={19} />}</div>
             <div><strong>{loading ? "Checking system status" : ready ? "Permission-aware search is active" : "The gateway is not ready"}</strong><p>{loading ? "Loading access and operational status." : ready ? "Every search is limited to spaces this account can access." : "Check database readiness and schema compatibility before continuing."}</p></div>
-            {loading ? <span className="attention-loading">Checking…</span> : <Link href={ready ? "/spaces" : "/activity"}>{ready ? "Review access" : "View activity"}</Link>}
+            {loading ? <span className="attention-loading">Checking…</span> : <Link href={ready ? "/spaces" : "/activity"}>{ready ? "Manage spaces" : "View activity"}</Link>}
           </section>
         </div>
       </main>
