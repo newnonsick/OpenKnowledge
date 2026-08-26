@@ -28,7 +28,13 @@ const browser = await launch();
 const findings = [];
 
 for (const viewport of VIEWPORTS) {
-  const { context, page } = await loginContext(browser, { width: viewport.width, height: viewport.height });
+  let context, page;
+  try {
+    ({ context, page } = await loginContext(browser, { width: viewport.width, height: viewport.height }));
+  } catch (loginError) {
+    findings.push({ viewport: viewport.name, page: "login", issue: "login failed: " + String(loginError).slice(0, 160) });
+    continue;
+  }
   const consoleErrors = [];
   page.on("console", (msg) => {
     if (msg.type() === "error" && !msg.text().includes("Applying inline style violates")) {

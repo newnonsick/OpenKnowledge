@@ -108,13 +108,31 @@ describe("management console", () => {
   });
 
   it("creates a private space and refreshes the accessible list", async () => {
-    vi.mocked(apiRequest)
-      .mockResolvedValueOnce({ items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] })
-      .mockResolvedValueOnce({ id: "travel", name: "Travel plans", role: "owner", revision: 1 })
-      .mockResolvedValueOnce({ items: [
-        { id: "global", name: "Family Shared", role: "editor", revision: 1 },
-        { id: "travel", name: "Travel plans", role: "owner", revision: 1 },
-      ] });
+    let created = false;
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (options?.method === "POST" && path === "/api/v1/spaces") {
+        created = true;
+        return { id: "travel", name: "Travel plans", role: "owner", revision: 1 } as never;
+      }
+      if (path === "/api/v1/spaces?limit=1") {
+        return { items: [], page: 1, page_size: 1, total_items: created ? 2 : 1, total_pages: 2 } as never;
+      }
+      if (path === "/api/v1/spaces?limit=25") {
+        return {
+          items: created
+            ? [
+                { id: "global", name: "Family Shared", role: "editor", revision: 1 },
+                { id: "travel", name: "Travel plans", role: "owner", revision: 1 },
+              ]
+            : [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }],
+          page: 1,
+          page_size: 25,
+          total_items: created ? 2 : 1,
+          total_pages: 1,
+        } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
     render(<SpacesConsole />);
 
     expect(await screen.findByText("Family Shared")).toBeInTheDocument();

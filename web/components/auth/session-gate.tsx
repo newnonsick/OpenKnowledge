@@ -131,6 +131,54 @@ export function SessionGate({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("aigw-step-up-required", requireStepUp);
   }, []);
 
+  const stepUpDialogRef = useRef<HTMLDivElement>(null);
+  const stepUpReturnRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!stepUpOpen) {
+      if (stepUpReturnRef.current?.isConnected) {
+        const target = stepUpReturnRef.current;
+        queueMicrotask(() => target.focus());
+      }
+      stepUpReturnRef.current = null;
+      return;
+    }
+    stepUpReturnRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusTimer = window.setTimeout(() => {
+      const first = stepUpDialogRef.current?.querySelector<HTMLElement>("input, button");
+      first?.focus();
+    }, 60);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setStepUpOpen(false);
+        return;
+      }
+      if (event.key !== "Tab" || !stepUpDialogRef.current) {
+        return;
+      }
+      const focusable = Array.from(stepUpDialogRef.current.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])")).filter((element) => !element.hidden);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [stepUpOpen]);
+
   async function submitStepUp(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const fields = new FormData(event.currentTarget);
@@ -171,7 +219,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
       {children}
       {stepUpOpen ? (
         <div className="step-up-backdrop">
-          <section aria-label="Verify your identity" aria-modal="true" className="step-up-dialog" role="dialog">
+          <section aria-label="Verify your identity" aria-modal="true" className="step-up-dialog" ref={stepUpDialogRef} role="dialog">
             <div className="step-up-heading"><span><KeyRound aria-hidden="true" size={18} /></span><div><small>Security check</small><h2>Verify your identity</h2></div><button aria-label="Close identity verification" onClick={() => setStepUpOpen(false)} type="button"><X aria-hidden="true" size={18} /></button></div>
             <p>For extra security, this action needs a fresh identity check. Nothing was saved yet — verify below, then run the action again.</p>
             <form onSubmit={submitStepUp}>

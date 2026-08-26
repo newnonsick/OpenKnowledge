@@ -1,14 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   ArrowRight,
   BookOpen,
   Boxes,
-  ChevronDown,
   CircleAlert,
   CircleUserRound,
   Clock3,
@@ -17,9 +15,7 @@ import {
   FolderKanban,
   Gauge,
   Grid2X2,
-  KeyRound,
   Layers3,
-  LogOut,
   Menu,
   Plus,
   Search,
@@ -29,28 +25,35 @@ import {
   Upload,
   UsersRound,
   WandSparkles,
-  X,
 } from "lucide-react";
 
-import { contractClient, contractData } from "@/lib/api-client";
-import { resetCachedMember } from "@/components/auth/session-gate";
+import { AppSidebar, SidebarMember, SidebarNavigation } from "@/components/app-sidebar";
 import { useDrawerFocus } from "@/lib/focus-management";
-import { ThemeToggle } from "@/components/theme-toggle";
 
-const navigation = [
-  { label: "For you", icon: Grid2X2, active: true, href: "/" },
-  { label: "Explore", icon: Search, href: "/explore" },
-  { label: "Spaces", icon: FolderKanban, href: "/spaces" },
-  { label: "Knowledge", icon: BookOpen, href: "/knowledge" },
-  { label: "Sources", icon: FileStack, href: "/sources" },
-  { label: "Ingestion", icon: Layers3, href: "/ingestion" },
-  { label: "AI actions", icon: WandSparkles, href: "/ai-actions" },
+const navigation: SidebarNavigation[] = [
+  {
+    items: [
+      { label: "For you", icon: Grid2X2, href: "/" },
+      { label: "Explore", icon: Search, href: "/explore" },
+      { label: "Spaces", icon: FolderKanban, href: "/spaces" },
+      { label: "Knowledge", icon: BookOpen, href: "/knowledge" },
+      { label: "Sources", icon: FileStack, href: "/sources" },
+      { label: "Ingestion", icon: Layers3, href: "/ingestion" },
+      { label: "AI actions", icon: WandSparkles, href: "/ai-actions" },
+    ],
+    label: "Workspace",
+  },
 ];
 
-const administration = [
-  { label: "People & access", icon: UsersRound, href: "/people" },
-  { label: "Activity", icon: Activity, href: "/activity" },
-  { label: "Settings", icon: Settings2, href: "/settings" },
+const administration: SidebarNavigation[] = [
+  {
+    items: [
+      { label: "People & access", icon: UsersRound, href: "/people" },
+      { label: "Activity", icon: Activity, href: "/activity" },
+      { label: "Settings", icon: Settings2, href: "/settings" },
+    ],
+    label: "Manage",
+  },
 ];
 
 export type DashboardSpace = {
@@ -80,7 +83,7 @@ export type DashboardOperations = {
 
 type DashboardShellProps = {
   loading?: boolean;
-  member: { displayName: string; role: string; systemRole: "member" | "super_admin" };
+  member: SidebarMember;
   operations: DashboardOperations | null;
   ready: boolean;
   spaceCount?: number;
@@ -100,26 +103,10 @@ function formatBytes(value: number): string {
   if (value < 1024 * 1024) {
     return `${(value / 1024).toFixed(1)} KB`;
   }
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function NavigationGroup({ label, items }: { label: string; items: typeof navigation }) {
-  return (
-    <div className="navigation-group">
-      <p className="navigation-label">{label}</p>
-      <div className="navigation-items">
-        {items.map((item) => {
-          const Icon = item.icon;
-          return (
-            <Link className={`navigation-item${item.active ? " is-active" : ""}`} href={item.href} key={item.label}>
-              <Icon aria-hidden="true" size={18} strokeWidth={1.8} />
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
-      </div>
-    </div>
-  );
+  if (value < 1024 * 1024 * 1024) {
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 export function DashboardShell({
@@ -132,30 +119,14 @@ export function DashboardShell({
   spacesLoaded = true,
 }: DashboardShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [signingOut, setSigningOut] = useState(false);
   const [shortcutHint, setShortcutHint] = useState("⌘ K");
   const commandLinkRef = useRef<HTMLAnchorElement>(null);
-  const router = useRouter();
   const { closeRef, drawerRef, triggerRef } = useDrawerFocus(menuOpen, setMenuOpen);
   const visibleAdministration = member.systemRole === "super_admin"
     ? administration
-    : administration.filter((item) => item.href === "/settings");
-  const initials = member.displayName.split(/\s+/).map((value) => value[0]).join("").slice(0, 2).toUpperCase();
+    : administration.map((group) => ({ ...group, items: group.items.filter((item) => item.href === "/settings") })).filter((group) => group.items.length > 0);
   const queued = operations ? operations.ingestion.queued + operations.ingestion.retry_wait : 0;
   const pulseUnavailable = !loading && !ready;
-
-  const signOut = async () => {
-    if (signingOut) {
-      return;
-    }
-    setSigningOut(true);
-    try {
-      await contractData(contractClient.POST("/api/v1/auth/logout", { body: {} }));
-    } finally {
-      resetCachedMember();
-      router.replace("/login");
-    }
-  };
 
   useEffect(() => {
     const platform = typeof navigator === "undefined" ? "" : navigator.platform.toLowerCase();
@@ -188,41 +159,26 @@ export function DashboardShell({
 
   return (
     <div className={`app-frame${menuOpen ? " menu-open" : ""}`}>
-      <aside className="sidebar console-sidebar dashboard-sidebar" id="dashboard-navigation" ref={drawerRef}>
-        <div className="brand-lockup">
-          <span className="brand-mark"><Boxes aria-hidden="true" size={17} /></span>
-          <span>Kinbase</span>
-          <button aria-label="Close navigation" className="mobile-menu-button close" onClick={() => setMenuOpen(false)} ref={closeRef} type="button"><X aria-hidden="true" size={18} /></button>
-        </div>
-
-        <div className="family-switcher console-family-card">
-          <span className="family-avatar">K</span>
-          <span className="family-copy">
-            <strong>Family knowledge</strong>
-            <small>{loading ? "Loading spaces…" : `${spaceCount} accessible ${spaceCount === 1 ? "space" : "spaces"}`}</small>
-          </span>
-        </div>
-
-        <nav aria-label="Primary navigation" className="primary-navigation">
-          <NavigationGroup items={navigation} label="Workspace" />
-          <NavigationGroup items={visibleAdministration} label="Manage" />
-        </nav>
-
-        <div className="sidebar-footer">
-          <Link className="profile-card" href="/settings">
-            <span className="profile-avatar">{initials || "M"}</span>
-            <span><strong>{member.displayName}</strong><small>{member.role}</small></span>
-            <ChevronDown aria-hidden="true" size={15} />
-          </Link>
-          <ThemeToggle />
-          <button aria-label="Sign out" className="account-link" disabled={signingOut} onClick={signOut} type="button"><LogOut aria-hidden="true" size={15} /><span>{signingOut ? "Signing out…" : "Sign out"}</span></button>
-        </div>
-      </aside>
+      <AppSidebar
+        closeRef={closeRef}
+        drawerId="dashboard-navigation"
+        drawerRef={drawerRef}
+        manageGroups={visibleAdministration}
+        member={member}
+        menuOpen={menuOpen}
+        onMenuClose={() => setMenuOpen(false)}
+        spaceCount={loading ? null : spaceCount}
+        workspaceGroups={navigation}
+      />
 
       <main aria-busy={loading} className="main-canvas">
         <header className="console-mobile-bar">
           <button aria-controls="dashboard-navigation" aria-expanded={menuOpen} aria-label="Open navigation" className="mobile-menu-button" onClick={() => setMenuOpen(true)} ref={triggerRef} type="button"><Menu aria-hidden="true" size={19} /></button>
           <span><Boxes aria-hidden="true" size={17} /> Kinbase</span>
+          <div className="mobile-top-actions">
+            <Link aria-label="Search knowledge" className="icon-button" href="/explore"><Search aria-hidden="true" size={19} /></Link>
+            <Link aria-label="Open profile" className="icon-button" href="/settings"><CircleUserRound aria-hidden="true" size={20} /></Link>
+          </div>
         </header>
         <header className="topbar">
           <div className="scope-indicator"><span className="scope-dot" />Searching all accessible spaces</div>

@@ -300,8 +300,9 @@ test("moves a management list with the direct numeric page control", async ({ pa
   await page.goto("/knowledge");
 
   await expect(page.getByText("First page knowledge")).toBeVisible();
-  await page.getByRole("textbox", { name: "Go to page" }).fill("2");
-  await page.getByRole("button", { name: "Go to page" }).click();
+  const jumpInput = page.getByRole("textbox", { name: "Jump to page of 20" });
+  await jumpInput.fill("2");
+  await jumpInput.press("Enter");
 
   await expect(page.getByText("Second page knowledge")).toBeVisible();
   await expect(page.getByText("26–50 of 500")).toBeVisible();

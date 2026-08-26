@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DashboardShell } from "@/components/dashboard-shell";
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useRouter: () => ({ replace: vi.fn() }),
 }));
 
@@ -47,8 +48,12 @@ describe("DashboardShell", () => {
     expect(screen.getByRole("link", { name: /capture knowledge/i })).toHaveAttribute("href", "/knowledge");
     expect(screen.getByRole("link", { name: /create space/i })).toHaveAttribute("href", "/spaces");
     expect(screen.getByRole("link", { name: /test retrieval/i })).toHaveAttribute("href", "/explore");
-    expect(screen.getByRole("link", { name: /search/i })).toHaveAttribute("href", "/explore");
-    expect(screen.getByRole("link", { name: "Open profile" })).toHaveAttribute("href", "/settings");
+    for (const searchLink of screen.getAllByRole("link", { name: /search/i })) {
+      expect(searchLink).toHaveAttribute("href", "/explore");
+    }
+    for (const profileLink of screen.getAllByRole("link", { name: "Open profile" })) {
+      expect(profileLink).toHaveAttribute("href", "/settings");
+    }
   });
 
   it("shows administration destinations to a super admin", () => {

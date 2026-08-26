@@ -13,7 +13,7 @@ type PaginationControlsProps = {
   onPageChange: (page: number) => void;
 };
 
-const directJumpMinPages = 8;
+const jumpMinPages = 8;
 
 function pageButtons(page: number, totalPages: number): Array<number | "ellipsis-start" | "ellipsis-end"> {
   if (totalPages <= 5) {
@@ -43,8 +43,15 @@ export function PaginationControls({
     setDirectPage(String(page));
   }, [page]);
 
+  if (totalItems === 0 || totalPages <= 1) {
+    return null;
+  }
+
+  const firstItem = (page - 1) * pageSize + 1;
+  const lastItem = Math.min(page * pageSize, totalItems);
+
   const goToDirectPage = () => {
-    if (loading || totalPages === 0) {
+    if (loading) {
       return;
     }
     const parsed = Number.parseInt(directPage, 10);
@@ -52,15 +59,12 @@ export function PaginationControls({
       setDirectPage(String(page));
       return;
     }
-    onPageChange(Math.min(Math.max(parsed, 1), totalPages));
+    const target = Math.min(Math.max(parsed, 1), totalPages);
+    setDirectPage(String(target));
+    if (target !== page) {
+      onPageChange(target);
+    }
   };
-
-  if (totalItems === 0) {
-    return null;
-  }
-
-  const firstItem = (page - 1) * pageSize + 1;
-  const lastItem = Math.min(page * pageSize, totalItems);
 
   return (
     <nav aria-busy={loading || undefined} aria-label="Pagination" className="pagination-controls">
@@ -99,38 +103,34 @@ export function PaginationControls({
         >
           <ChevronRight aria-hidden="true" size={15} />
         </button>
-        {totalPages >= directJumpMinPages ? (
-          <div className="pagination-direct">
-            <label className="pagination-direct-label">
-              <span>Page</span>
-              <input
-                aria-label="Go to page"
-                className="pagination-direct-input"
-                disabled={loading}
-                inputMode="numeric"
-                min={1}
-                max={totalPages}
-                onChange={(event) => setDirectPage(event.target.value.replace(/\D/g, ""))}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    goToDirectPage();
-                  }
-                }}
-                type="text"
-                value={directPage}
-              />
-              <span>of {totalPages}</span>
-            </label>
-            <button
-              aria-label="Go to page"
-              className="pagination-button"
+        {totalPages >= jumpMinPages ? (
+          <label className="pagination-jump-label">
+            <span className="visually-hidden">Jump to page, 1 to {totalPages}</span>
+            <span aria-hidden="true" className="pagination-jump-word">Page</span>
+            <input
+              aria-label={`Jump to page of ${totalPages}`}
+              className="pagination-jump-input"
               disabled={loading}
-              onClick={goToDirectPage}
-              type="button"
-            >
-              Go
-            </button>
-          </div>
+              inputMode="numeric"
+              max={totalPages}
+              min={1}
+              onBlur={(event) => {
+                if (event.target.value !== String(page)) {
+                  goToDirectPage();
+                }
+              }}
+              onChange={(event) => setDirectPage(event.target.value.replace(/\D/g, ""))}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  goToDirectPage();
+                }
+              }}
+              type="text"
+              value={directPage}
+            />
+            <span aria-hidden="true" className="pagination-jump-total">of {totalPages}</span>
+          </label>
         ) : null}
       </div>
     </nav>

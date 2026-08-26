@@ -44,6 +44,8 @@ export async function loginContext(browser, viewport) {
   const context = await browser.newContext({ viewport });
   const page = await context.newPage();
   await page.goto("http://127.0.0.1:3000/login", { waitUntil: "domcontentloaded" });
+  await page.waitForSelector("button[type=\"submit\"]", { state: "visible" });
+  await page.waitForTimeout(600);
   await page.getByRole("textbox", { name: "Username" }).fill(creds.username);
   await page.getByRole("textbox", { name: "Password" }).fill(creds.password);
   await page.getByRole("textbox", { name: "Password" }).press("Enter");

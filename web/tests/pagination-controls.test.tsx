@@ -27,9 +27,9 @@ describe("PaginationControls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Page 3" }));
     expect(onPageChange).toHaveBeenCalledWith(3);
 
-    const directInput = screen.getByRole("textbox", { name: "Go to page" });
+    const directInput = screen.getByRole("textbox", { name: "Jump to page of 12" });
     fireEvent.change(directInput, { target: { value: "1" } });
-    fireEvent.click(screen.getByRole("button", { name: "Go to page" }));
+    fireEvent.keyDown(directInput, { key: "Enter" });
     expect(onPageChange).toHaveBeenCalledWith(1);
   });
 
@@ -46,11 +46,10 @@ describe("PaginationControls", () => {
     );
 
     expect(screen.getByText("26–50 of 75")).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "Go to page" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Go to page" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /Jump to page/ })).not.toBeInTheDocument();
   });
 
-  it("renders disabled steps for a single page and nothing for empty results", () => {
+  it("renders nothing for a single page or empty results", () => {
     const onPageChange = vi.fn();
     const { rerender } = render(
       <PaginationControls
@@ -63,8 +62,7 @@ describe("PaginationControls", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
+    expect(screen.queryByRole("navigation", { name: "Pagination" })).not.toBeInTheDocument();
 
     rerender(
       <PaginationControls
@@ -92,8 +90,7 @@ describe("PaginationControls", () => {
       />,
     );
 
-    expect(screen.getByRole("textbox", { name: "Go to page" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Go to page" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Jump to page of 12" })).toBeDisabled();
   });
 
   it("announces the current loading state to assistive technology", () => {

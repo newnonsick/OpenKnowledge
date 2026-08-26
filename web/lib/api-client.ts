@@ -63,6 +63,16 @@ function traceparent(): string {
   return `00-${traceId}-${spanId}-01`;
 }
 
+const requestTimeoutMs = 20_000;
+
+function boundedSignal(signal?: AbortSignal): AbortSignal | undefined {
+  const timeoutSignal = typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(requestTimeoutMs) : undefined;
+  if (signal && timeoutSignal && typeof AbortSignal.any === "function") {
+    return AbortSignal.any([signal, timeoutSignal]);
+  }
+  return signal ?? timeoutSignal;
+}
+
 function tracedHeaders(value?: HeadersInit): Headers {
   const headers = new Headers(value);
   if (!headers.has("traceparent")) {
@@ -125,7 +135,7 @@ async function rawRequest<T>(path: string, options: ApiRequestOptions = {}): Pro
     credentials: "include",
     headers,
     method,
-    signal: options.signal,
+    signal: boundedSignal(options.signal),
   });
   return decodeResponse<T>(response);
 }
@@ -217,7 +227,7 @@ export async function apiMultipart<T>(
       credentials: "include",
       headers,
       method: "POST",
-      signal: options.signal,
+      signal: boundedSignal(options.signal),
     }).then(decodeResponse<T>);
   };
   try {
@@ -249,6 +259,7 @@ function prepareContractRequest(request: Request): Request {
     cache: "no-store",
     credentials: "include",
     headers,
+    signal: boundedSignal(request.signal),
   });
 }
 
