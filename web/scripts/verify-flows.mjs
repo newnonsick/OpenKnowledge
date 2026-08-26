@@ -31,6 +31,7 @@ check("login shows error for wrong password", Boolean(wrongError && wrongError.i
 await page.screenshot({ path: `${shots}/01-login-error.png` });
 
 await page.waitForTimeout(2500);
+await page.getByRole("textbox", { name: "Username" }).fill(credentials().username);
 await page.getByRole("textbox", { name: "Password" }).fill(credentials().password);
 await page.getByRole("button", { name: "Sign in", exact: true }).click();
 await page.getByRole("textbox", { name: "Authentication code" }).fill(totp(), { timeout: 20000 });
