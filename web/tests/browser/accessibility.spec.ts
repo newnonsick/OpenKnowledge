@@ -196,7 +196,7 @@ test("opens discovery with the advertised keyboard shortcut", async ({ page }) =
   await mockGateway(page);
   await page.goto("/");
 
-  await expect(page.getByRole("link", { name: /command/i })).toBeVisible();
+  await expect(page.getByRole("link", { name: /search/i })).toBeVisible();
 
   await page.keyboard.press("Control+k");
 

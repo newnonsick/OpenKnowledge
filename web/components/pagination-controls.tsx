@@ -13,14 +13,14 @@ type PaginationControlsProps = {
 };
 
 function pageButtons(page: number, totalPages: number): Array<number | "ellipsis-start" | "ellipsis-end"> {
-  if (totalPages <= 7) {
+  if (totalPages <= 5) {
     return Array.from({ length: totalPages }, (_, index) => index + 1);
   }
-  if (page <= 4) {
-    return [1, 2, 3, 4, 5, "ellipsis-end", totalPages];
+  if (page <= 3) {
+    return [1, 2, 3, 4, "ellipsis-end", totalPages];
   }
-  if (page >= totalPages - 3) {
-    return [1, "ellipsis-start", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+  if (page >= totalPages - 2) {
+    return [1, "ellipsis-start", totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
   }
   return [1, "ellipsis-start", page - 1, page, page + 1, "ellipsis-end", totalPages];
 }
@@ -70,9 +70,9 @@ export function PaginationControls({
           onClick={() => onPageChange(page - 1)}
           type="button"
         >
-          Previous
+          Prev
         </button>
-        <div aria-label="Page numbers" className="pagination-pages">
+        <div aria-label="Page numbers" className="pagination-pages" role="group">
           {pageButtons(page, totalPages).map((buttonPage) => typeof buttonPage === "number" ? (
             <button
               aria-current={buttonPage === page ? "page" : undefined}
@@ -98,13 +98,14 @@ export function PaginationControls({
         </button>
         <div className="pagination-direct">
           <label className="pagination-direct-label">
-            Go to page
+            Page
             <input
               aria-label="Go to page"
               className="pagination-direct-input"
               disabled={loading}
               inputMode="numeric"
               min={1}
+              max={totalPages}
               onChange={(event) => setDirectPage(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
@@ -114,10 +115,11 @@ export function PaginationControls({
               type="number"
               value={directPage}
             />
+            of {totalPages}
           </label>
           <button
             aria-label="Go to page"
-            className="pagination-button pagination-direct-button"
+            className="pagination-button"
             disabled={loading}
             onClick={goToDirectPage}
             type="button"

@@ -23,6 +23,7 @@ import {
 
 import { contractClient, contractData } from "@/lib/api-client";
 import { resetCachedMember } from "@/components/auth/session-gate";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { useAlertDialogFocus, useDrawerFocus } from "@/lib/focus-management";
 
 const workspaceNavigation = [
@@ -105,9 +106,8 @@ export function ConsoleShell({ actions, children, description, eyebrow, member, 
     <div className={`app-frame console-frame${menuOpen ? " menu-open" : ""}`}>
       <aside className="sidebar console-sidebar" id="console-navigation" ref={drawerRef}>
         <div className="brand-lockup">
-          <span className="brand-mark"><Boxes aria-hidden="true" size={18} /></span>
+          <span className="brand-mark"><Boxes aria-hidden="true" size={17} /></span>
           <span>Kinbase</span>
-          <span className="brand-edition">HOME</span>
           <button aria-label="Close navigation" className="mobile-menu-button close" onClick={() => setMenuOpen(false)} ref={closeRef} type="button"><X aria-hidden="true" size={18} /></button>
         </div>
 
@@ -130,6 +130,7 @@ export function ConsoleShell({ actions, children, description, eyebrow, member, 
             <span><strong>{member.displayName}</strong><small>{member.role}</small></span>
           </div>
           <Link className="account-link" href="/settings"><KeyRound aria-hidden="true" size={15} /><span>API keys</span></Link>
+          <ThemeToggle />
           <button aria-label="Sign out" className="account-link" disabled={signingOut} onClick={signOut} type="button"><LogOut aria-hidden="true" size={15} /><span>{signingOut ? "Signing out…" : "Sign out"}</span></button>
         </div>
       </aside>

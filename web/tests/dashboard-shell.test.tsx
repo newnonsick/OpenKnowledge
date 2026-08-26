@@ -43,7 +43,7 @@ describe("DashboardShell", () => {
     expect(screen.getByRole("link", { name: /capture knowledge/i })).toHaveAttribute("href", "/knowledge");
     expect(screen.getByRole("link", { name: /create space/i })).toHaveAttribute("href", "/spaces");
     expect(screen.getByRole("link", { name: /test retrieval/i })).toHaveAttribute("href", "/explore");
-    expect(screen.getByRole("link", { name: /command/i })).toHaveAttribute("href", "/explore");
+    expect(screen.getByRole("link", { name: /search/i })).toHaveAttribute("href", "/explore");
     expect(screen.getByRole("link", { name: "Open profile" })).toHaveAttribute("href", "/settings");
   });
 

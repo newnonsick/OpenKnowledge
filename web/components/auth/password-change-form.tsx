@@ -83,7 +83,7 @@ export function PasswordChangeForm() {
 
       <div className="password-rules">
         {passwordRuleStates(password, confirmation).map((rule) => (
-          <span data-valid={rule.valid} key={rule.label}><i><Check aria-hidden="true" size={12} /></i>{rule.label}</span>
+          <span data-valid={password.length > 0 && rule.valid} key={rule.label}><i><Check aria-hidden="true" size={11} /></i>{rule.label}</span>
         ))}
       </div>
 

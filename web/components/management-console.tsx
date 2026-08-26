@@ -1,11 +1,12 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Activity, Archive, ArrowUpRight, BookOpen, CircleAlert, Code2, Copy, FileText, FileUp, FolderKanban, KeyRound, Layers3, LoaderCircle, LockKeyhole, MonitorSmartphone, Plus, Save, Search, Settings2, ShieldCheck, Sparkles, Tag, UserMinus, UserPlus, UsersRound, X } from "lucide-react";
-import { useSearchParams } from "next/navigation";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { Activity, Archive, ArrowUpRight, BookOpen, CircleAlert, Code2, FileText, FileUp, FolderKanban, KeyRound, Layers3, LoaderCircle, LockKeyhole, MonitorSmartphone, Plus, Save, Search, Settings2, ShieldCheck, Sparkles, Tag, UserMinus, UserPlus, UsersRound, X } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { useCurrentMember } from "@/components/auth/session-gate";
 import { ConsoleShell } from "@/components/console-shell";
+import { CopyButton } from "@/components/copy-button";
 import { PaginationControls } from "@/components/pagination-controls";
 import { ApiError, apiMultipart, contractClient, contractData, idempotencyKey } from "@/lib/api-client";
 import type { components } from "@/lib/generated/openapi";
@@ -114,6 +115,8 @@ export function SpacesConsole() {
   const [confirmSpaceArchive, setConfirmSpaceArchive] = useState(false);
   const [createdSpaceName, setCreatedSpaceName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const accessPanelRef = useRef<HTMLElement>(null);
+  const scrolledSpaceRef = useRef<string | null>(null);
 
   const loadSpacePage = useCallback((page: number, signal: AbortSignal) => contractData(contractClient.GET("/api/v1/spaces", { params: { query: { page, page_size: 25, ...(appliedSpaceSearch ? { q: appliedSpaceSearch } : {}) } }, signal })), [appliedSpaceSearch]);
   const spacePages = usePagePagination<Space>({ loadPage: loadSpacePage, queryKey: appliedSpaceSearch });
@@ -130,6 +133,22 @@ export function SpacesConsole() {
   const memberCandidates = candidatePages.items;
   const selectedCandidateId = memberCandidates.some((candidate) => candidate.member_id === candidateId) ? candidateId : memberCandidates[0]?.member_id || "";
   const accessLoading = selectedSpace !== null && (memberPages.initialLoading || candidatePages.initialLoading || (memberPages.loading && spaceMembers.length === 0) || (candidatePages.loading && memberCandidates.length === 0));
+
+  useEffect(() => {
+    if (!selectedSpace) {
+      scrolledSpaceRef.current = null;
+      return;
+    }
+    if (scrolledSpaceRef.current === selectedSpace.id || accessLoading) {
+      return;
+    }
+    const node = accessPanelRef.current;
+    if (!node) {
+      return;
+    }
+    scrolledSpaceRef.current = selectedSpace.id;
+    node.scrollIntoView({ block: "nearest" });
+  }, [selectedSpace, accessLoading]);
 
   useEffect(() => {
     setCandidateId((current) => memberCandidates.some((candidate) => candidate.member_id === current) ? current : memberCandidates[0]?.member_id || "");
@@ -173,7 +192,11 @@ export function SpacesConsole() {
       await contractData(contractClient.POST("/api/v1/spaces", { body: { name: value }, params: { header: { "Idempotency-Key": idempotencyKey() } } }));
       setCreatedSpaceName(value);
       setName("");
-      spacePages.reload();
+      if (appliedSpaceSearch) {
+        setSpaceSearch("");
+        setAppliedSpaceSearch("");
+      }
+      await spacePages.goToPage(1);
     } catch (createError) {
       setError(message(createError));
     } finally {
@@ -290,7 +313,7 @@ export function SpacesConsole() {
       description="Create focused spaces for private projects while unified discovery searches everything you can access."
       eyebrow="Knowledge boundaries"
       member={memberView(member)}
-      spaceCount={spaces.length}
+      spaceCount={spacePages.totalItems}
       title="Spaces"
     >
       <div className="console-grid console-grid-spaces">
@@ -306,12 +329,12 @@ export function SpacesConsole() {
           <div className="space-card-grid">
             {spaces.map((space, index) => (
               <article className="space-card" key={space.id}>
-                <div className={`space-card-mark accent-${index % 4}`}><FolderKanban aria-hidden="true" size={19} /></div>
-                <div><h3>{space.name}</h3><p>{space.id}</p></div>
+                <div className={`space-card-mark accent-${index % 4}`}><FolderKanban aria-hidden="true" size={17} /></div>
+                <div><h3>{space.name}</h3><p title={space.id}>{space.id}</p></div>
                 <span className={`role-pill role-${space.role}`}>{space.role}</span>
                 <div className="space-card-footer">
-                  <p className="space-card-note"><ShieldCheck aria-hidden="true" size={14} /> Search access follows this membership</p>
-                  {space.role === "owner" ? <button aria-label={`Manage access for ${space.name}`} className="space-manage-button" onClick={() => void loadAccess(space)} type="button"><UsersRound size={14} /> Manage access</button> : null}
+                  <span className="space-card-meta"><ShieldCheck aria-hidden="true" size={13} /> {space.role === "owner" ? "You manage this space" : "Shared with you"}</span>
+                  {space.role === "owner" ? <button aria-label={`Manage access for ${space.name}`} className="space-manage-button" onClick={() => void loadAccess(space)} type="button"><UsersRound size={13} /> Manage access</button> : null}
                 </div>
               </article>
             ))}
@@ -319,7 +342,7 @@ export function SpacesConsole() {
           {spacePages.totalItems > 0 ? <PaginationControls loading={spacePages.loading} loadingPage={spacePages.loadingPage} onPageChange={(nextPage) => void spacePages.goToPage(nextPage)} page={spacePages.page} pageSize={spacePages.pageSize} totalItems={spacePages.totalItems} totalPages={spacePages.totalPages} /> : null}
           {accessLoading ? <div className="console-loading access-loading"><LoaderCircle className="spin" size={18} /> Loading space access…</div> : null}
           {selectedSpace && !accessLoading ? (
-            <section className="space-access-panel" aria-label={`${selectedSpace.name} access`}>
+            <section className="space-access-panel" aria-label={`${selectedSpace.name} access`} ref={accessPanelRef}>
               <div className="space-access-heading">
                 <div><span>Owner controls</span><h2>{selectedSpace.name} access</h2></div>
                 <div className="space-access-actions">
@@ -382,7 +405,7 @@ export function SpacesConsole() {
             <input id="space-name" maxLength={120} onChange={(event) => { setCreatedSpaceName(null); setName(event.target.value); }} placeholder="e.g. Japan trip" required value={name} />
             <button className="primary-button" disabled={saving} type="submit">{saving ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} Create space</button>
           </form>
-          {createdSpaceName ? <p className="inline-success" role="status"><ShieldCheck size={14} /> {createdSpaceName} is ready. It may be listed on a later page.</p> : null}
+          {createdSpaceName ? <p className="inline-success" role="status"><ShieldCheck size={14} /> {createdSpaceName} is ready and listed in your spaces.</p> : null}
           {error ? <p className="inline-error" role="alert">{error}</p> : null}
         </aside>
       </div>
@@ -392,6 +415,7 @@ export function SpacesConsole() {
 
 export function KnowledgeConsole() {
   const member = useCurrentMember();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [spaces, setSpaces] = useState<Space[]>([]);
   const spaceFilter = searchParams.get("space");
@@ -412,6 +436,24 @@ export function KnowledgeConsole() {
   const [editTags, setEditTags] = useState("");
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const editorRef = useRef<HTMLElement>(null);
+  const editedIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!editing) {
+      editedIdRef.current = null;
+      return;
+    }
+    if (editedIdRef.current === editing.id) {
+      return;
+    }
+    const node = editorRef.current;
+    if (!node) {
+      return;
+    }
+    editedIdRef.current = editing.id;
+    node.scrollIntoView({ block: "nearest" });
+  }, [editing]);
 
   const loadKnowledgePage = useCallback((page: number, signal: AbortSignal) => contractData(
     contractClient.GET("/api/v1/knowledge", {
@@ -487,6 +529,12 @@ export function KnowledgeConsole() {
       setTitle("");
       setContent("");
       setTags("");
+      if (appliedSearch || appliedTag) {
+        setSearchText("");
+        setTagText("");
+        setAppliedSearch("");
+        setAppliedTag("");
+      }
       await goToKnowledgePage(1);
     } catch (createError) {
       setError(message(createError));
@@ -580,7 +628,7 @@ export function KnowledgeConsole() {
             <div><span>Living library</span><h2>{spaceFilter ? "Filtered knowledge" : "Knowledge items"}</h2></div>
             <span className="count-pill" aria-label={`${knowledgeTotalItems} knowledge items`}>{knowledgeTotalItems}</span>
           </div>
-          {spaceFilter ? <div className="filter-strip"><Search size={13} /> Showing one space only<button onClick={() => { window.location.replace("/knowledge"); }} type="button">Show all spaces</button></div> : null}
+          {spaceFilter ? <div className="filter-strip"><Search size={13} /> Showing one space only<button onClick={() => router.replace("/knowledge")} type="button">Show all spaces</button></div> : null}
           <form className="list-filter-bar" onSubmit={(event) => {
             event.preventDefault();
             setAppliedSearch(searchText.trim());
@@ -620,7 +668,7 @@ export function KnowledgeConsole() {
           {knowledgeTotalItems > 0 ? <PaginationControls loading={loading} loadingPage={knowledgeLoadingPage} onPageChange={(nextPage) => void goToKnowledgePage(nextPage)} page={knowledgePage} pageSize={knowledgePageSize} totalItems={knowledgeTotalItems} totalPages={knowledgeTotalPages} /> : null}
           {detailLoading ? <div className="console-loading access-loading"><LoaderCircle className="spin" size={18} /> Loading knowledge detail…</div> : null}
           {editing ? (
-            <section className="knowledge-editor" aria-label={`Edit ${editing.title}`}>
+            <section className="knowledge-editor" aria-label={`Edit ${editing.title}`} ref={editorRef}>
               <div className="space-access-heading">
                 <div><span>Immutable revision</span><h2>Edit knowledge</h2></div>
                 <button aria-label="Close knowledge editor" className="icon-button" onClick={() => setEditing(null)} type="button"><X size={16} /></button>
@@ -675,6 +723,7 @@ export function KnowledgeConsole() {
 
 export function ExploreConsole() {
   const member = useCurrentMember();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [query, setQuery] = useState(searchParams.get("q") || "");
@@ -722,9 +771,7 @@ export function ExploreConsole() {
         },
       }));
       setResult(response);
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("q", query.trim());
-      window.history.replaceState(null, "", `/explore?${params.toString()}`);
+      router.replace(`/explore?q=${encodeURIComponent(query.trim())}`, { scroll: false });
     } catch (searchError) {
       setError(message(searchError));
     } finally {
@@ -750,7 +797,16 @@ export function ExploreConsole() {
         <p>Kinbase fans the query out only to authorized spaces, merges the candidates, and returns a single ranked result set.</p>
       </section>
       {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
-      {result ? (
+      <p className="visually-hidden" role="status">{searching ? "Searching…" : result ? `${result.hits.length} matches found` : ""}</p>
+      {searching ? (
+        <section aria-busy="true" className="search-results-section">
+          <div className="results-toolbar">
+            <div><p className="console-eyebrow">Ranked results</p><h2>Searching…</h2></div>
+          </div>
+          <ListSkeleton rows={4} />
+        </section>
+      ) : null}
+      {!searching && result ? (
         <section className="search-results-section">
           <div className="results-toolbar">
             <div><p className="console-eyebrow">Ranked results</p><h2>{result.hits.length} matches</h2></div>
@@ -762,23 +818,23 @@ export function ExploreConsole() {
               <article className="result-card" key={`${hit.source_type}-${hit.canonical_id}`}>
                 <div className="result-rank">{String(hit.rank).padStart(2, "0")}</div>
                 <div className="result-copy">
-                  <div className="result-meta"><span>{hit.space_id}</span><span>{hit.source_type.replaceAll("_", " ")}</span>{hit.version ? <span>v{hit.version}</span> : null}</div>
+                  <div className="result-meta"><span data-chip="space">{spaceLabel(spaces, hit.space_id)}</span><span>{hit.source_type.replaceAll("_", " ")}</span>{hit.version ? <span>v{hit.version}</span> : null}</div>
                   <h3>{hit.title}</h3>
                   <p>{hit.content_excerpt}</p>
-                  {hit.citation_uri ? <code>{hit.citation_uri}</code> : null}
                 </div>
                 <span className="score-pill">{Math.round(hit.rank_score * 100)}%</span>
               </article>
             ))}
           </div>
         </section>
-      ) : (
+      ) : null}
+      {!searching && !result ? (
         <section className="explore-prompt-grid">
           <article><span>01</span><h3>Search once</h3><p>No need to guess which space contains the answer.</p></article>
           <article><span>02</span><h3>Respect access</h3><p>Spaces outside your membership never enter the candidate set.</p></article>
           <article><span>03</span><h3>Stay useful</h3><p>Lexical retrieval continues safely when embedding is offline.</p></article>
         </section>
-      )}
+      ) : null}
     </ConsoleShell>
   );
 }
@@ -1192,7 +1248,7 @@ export function PeopleConsole() {
                 {pendingMemberAction === "reset" ? <div aria-label={`Reset ${selectedMember.display_name} password`} className="confirmation-strip" role="alertdialog"><div><strong>Reset this password?</strong><span>This signs out every session, revokes active API keys, and creates a one-time password.</span></div><button className="secondary-button" onClick={() => setPendingMemberAction(null)} type="button">Keep password</button><button className="danger-button" disabled={saving} onClick={() => void resetSelectedMemberPassword()} type="button">Confirm password reset</button></div> : null}
                 {pendingMemberAction === "disable" ? <div aria-label={`Disable ${selectedMember.display_name}`} className="confirmation-strip" role="alertdialog"><div><strong>Disable this member?</strong><span>This immediately revokes sessions and API keys. Space history remains preserved.</span></div><button className="secondary-button" onClick={() => setPendingMemberAction(null)} type="button">Keep active</button><button className="danger-button" disabled={saving} onClick={() => void updateSelectedMember("disabled")} type="button">Confirm disable member</button></div> : null}
                 {pendingMemberAction === "enable" ? <div aria-label={`Enable ${selectedMember.display_name}`} className="confirmation-strip" role="alertdialog"><div><strong>Enable this member?</strong><span>The member can authenticate again, but revoked sessions and keys remain revoked.</span></div><button className="secondary-button" onClick={() => setPendingMemberAction(null)} type="button">Keep disabled</button><button className="primary-button" disabled={saving} onClick={() => void updateSelectedMember("active")} type="button">Confirm enable member</button></div> : null}
-                {resetPassword ? <div className="member-reset-secret"><p>This temporary password is shown only once.</p><div className="secret-value"><code>{resetPassword.temporary_password}</code><button aria-label="Copy reset password" onClick={() => navigator.clipboard?.writeText(resetPassword.temporary_password)} type="button"><Copy size={16} /></button></div></div> : null}
+                {resetPassword ? <div className="member-reset-secret"><p>This temporary password is shown only once.</p><div className="secret-value"><code>{resetPassword.temporary_password}</code><CopyButton label="Copy reset password" value={resetPassword.temporary_password} /></div></div> : null}
               </section>
             ) : null}
           </section>
@@ -1203,7 +1259,7 @@ export function PeopleConsole() {
                 <p className="console-eyebrow">Member created</p>
                 <h2>Share securely</h2>
                 <p>This temporary password is shown only once. The member must replace it at first sign-in.</p>
-                <div className="secret-value"><code>{created.temporary_password}</code><button aria-label="Copy temporary password" onClick={() => navigator.clipboard?.writeText(created.temporary_password)} type="button"><Copy size={16} /></button></div>
+                <div className="secret-value"><code>{created.temporary_password}</code><CopyButton label="Copy temporary password" value={created.temporary_password} /></div>
                 <dl><div><dt>Username</dt><dd>{created.username}</dd></div><div><dt>Member</dt><dd>{created.display_name}</dd></div></dl>
                 <button className="secondary-button" onClick={() => setCreated(null)} type="button"><UserPlus size={15} /> Create another member</button>
               </div>
@@ -1500,7 +1556,7 @@ export function SettingsConsole() {
         <section className="console-panel settings-section">
           <div className="panel-heading"><div><span>Personal credentials</span><h2>API keys</h2></div><KeyRound size={20} /></div>
           <p className="section-intro">Every member owns separate keys. Start with the narrowest scope and create another key for a different device or automation.</p>
-          {createdKey ? <div className="secret-banner"><div><strong>Copy this key now</strong><span>It cannot be displayed again after you leave this result.</span></div><code>{createdKey.secret}</code><button aria-label="Copy API key" onClick={() => navigator.clipboard?.writeText(createdKey.secret)} type="button"><Copy size={16} /></button></div> : null}
+          {createdKey ? <div className="secret-banner"><div><strong>Copy this key now</strong><span>It cannot be displayed again after you leave this result.</span></div><code>{createdKey.secret}</code><CopyButton label="Copy API key" value={createdKey.secret} /></div> : null}
           <form className="inline-create-form api-key-create-form" onSubmit={createKey}>
             <div><label htmlFor="api-key-name">Key name</label><input id="api-key-name" maxLength={120} onChange={(event) => setKeyName(event.target.value)} placeholder="e.g. Laptop" required value={keyName} /></div>
             <fieldset className="api-key-scopes">
@@ -1667,9 +1723,9 @@ export function IngestionConsole() {
       spaceCount={spaces.length}
       title="Ingestion"
     >
-      <div className="metric-strip"><article><span>Total jobs</span><strong>{jobTotalItems}</strong></article><article><span>In progress on this page</span><strong>{activeJobs}</strong></article><article><span>Refresh</span><button className="metric-refresh-button" onClick={reloadJobs} type="button">Refresh now</button></article></div>
+      <div className="metric-strip metric-strip-compact"><article><span>Total jobs</span><strong>{jobTotalItems}</strong></article><article><span>In progress on this page</span><strong>{activeJobs}</strong></article></div>
       <section className="console-panel">
-        <div className="panel-heading"><div><span>Live durable state</span><h2>Ingestion jobs</h2></div><Layers3 size={20} /></div>
+        <div className="panel-heading"><div><span>Live durable state</span><h2>Ingestion jobs</h2></div><button className="metric-refresh-button metric-refresh-inline" onClick={reloadJobs} type="button"><Layers3 size={14} /> Refresh now</button></div>
         <div className="list-filter-bar two-filter-bar">
           <label><span className="visually-hidden">Filter ingestion space</span><select aria-label="Filter ingestion space" onChange={(event) => setSpaceFilter(event.target.value)} value={spaceFilter}><option value="">All spaces</option>{spaces.map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}</select></label>
           <label><span className="visually-hidden">Filter ingestion state</span><select aria-label="Filter ingestion state" onChange={(event) => setStateFilter(event.target.value as typeof stateFilter)} value={stateFilter}><option value="">All states</option><option value="preparing">Preparing</option><option value="queued">Queued</option><option value="running">Running</option><option value="retry_wait">Retry wait</option><option value="succeeded">Succeeded</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option></select></label>

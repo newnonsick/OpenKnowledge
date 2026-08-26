@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 
 import { useDrawerFocus } from "@/lib/focus-management";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const navigation = [
   { label: "For you", icon: Grid2X2, active: true, href: "/" },
@@ -125,6 +126,7 @@ export function DashboardShell({
   spacesLoaded = true,
 }: DashboardShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [shortcutHint, setShortcutHint] = useState("⌘ K");
   const commandLinkRef = useRef<HTMLAnchorElement>(null);
   const { closeRef, drawerRef, triggerRef } = useDrawerFocus(menuOpen, setMenuOpen);
   const visibleAdministration = member.systemRole === "super_admin"
@@ -133,6 +135,11 @@ export function DashboardShell({
   const initials = member.displayName.split(/\s+/).map((value) => value[0]).join("").slice(0, 2).toUpperCase();
   const queued = operations ? operations.ingestion.queued + operations.ingestion.retry_wait : 0;
   const pulseUnavailable = !loading && !ready;
+
+  useEffect(() => {
+    const platform = typeof navigator === "undefined" ? "" : navigator.platform.toLowerCase();
+    setShortcutHint(platform.includes("mac") ? "⌘ K" : "Ctrl K");
+  }, []);
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -162,9 +169,8 @@ export function DashboardShell({
     <div className={`app-frame${menuOpen ? " menu-open" : ""}`}>
       <aside className="sidebar console-sidebar dashboard-sidebar" id="dashboard-navigation" ref={drawerRef}>
         <div className="brand-lockup">
-          <span className="brand-mark"><Boxes aria-hidden="true" size={18} /></span>
+          <span className="brand-mark"><Boxes aria-hidden="true" size={17} /></span>
           <span>Kinbase</span>
-          <span className="brand-edition">HOME</span>
           <button aria-label="Close navigation" className="mobile-menu-button close" onClick={() => setMenuOpen(false)} ref={closeRef} type="button"><X aria-hidden="true" size={18} /></button>
         </div>
 
@@ -182,16 +188,12 @@ export function DashboardShell({
         </nav>
 
         <div className="sidebar-footer">
-          <div className="storage-meter">
-            <div className="storage-heading"><span>Access</span><span>Scoped</span></div>
-            <div className="storage-track"><span className="access-track" /></div>
-            <p>{loading ? "Loading access…" : `${spaceCount} spaces available to this account`}</p>
-          </div>
           <Link className="profile-card" href="/settings">
             <span className="profile-avatar">{initials || "M"}</span>
             <span><strong>{member.displayName}</strong><small>{member.role}</small></span>
             <ChevronDown aria-hidden="true" size={15} />
           </Link>
+          <ThemeToggle />
         </div>
       </aside>
 
@@ -203,7 +205,7 @@ export function DashboardShell({
         <header className="topbar">
           <div className="scope-indicator"><span className="scope-dot" />Searching all accessible spaces</div>
           <div className="topbar-actions">
-            <Link className="command-button" href="/explore" ref={commandLinkRef}><Command aria-hidden="true" size={15} /> Command <kbd>⌘ K</kbd></Link>
+            <Link className="command-button" href="/explore" ref={commandLinkRef}><Command aria-hidden="true" size={15} /> Search <kbd>{shortcutHint}</kbd></Link>
             <Link aria-label="Open profile" className="icon-button" href="/settings"><CircleUserRound aria-hidden="true" size={20} /></Link>
           </div>
         </header>
