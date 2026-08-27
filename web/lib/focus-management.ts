@@ -116,3 +116,67 @@ export function useAlertDialogFocus(rootRef: RefObject<HTMLElement | null>): voi
     };
   }, [rootRef]);
 }
+
+export function useModalFocus(open: boolean, onClose: () => void) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const returnRef = useRef<HTMLElement | null>(null);
+  const closeRef = useRef(onClose);
+
+  useLayoutEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      if (returnRef.current?.isConnected) {
+        const target = returnRef.current;
+        queueMicrotask(() => target.focus());
+      }
+      returnRef.current = null;
+      return;
+    }
+
+    returnRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const background = Array.from(document.body.children).filter((element) => !element.hasAttribute("data-modal-root")) as HTMLElement[];
+    const priorOverflow = document.body.style.overflow;
+    background.forEach((element) => {
+      element.inert = true;
+    });
+    document.body.style.overflow = "hidden";
+
+    queueMicrotask(() => {
+      const dialog = dialogRef.current;
+      if (!dialog) {
+        return;
+      }
+      const initial = focusableElements(dialog)[0];
+      if (initial) {
+        initial.focus();
+      } else {
+        dialog.focus();
+      }
+    });
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      if (dialogRef.current) {
+        containFocus(event, dialogRef.current);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      background.forEach((element) => {
+        element.inert = false;
+      });
+      document.body.style.overflow = priorOverflow;
+    };
+  }, [open]);
+
+  return dialogRef;
+}
