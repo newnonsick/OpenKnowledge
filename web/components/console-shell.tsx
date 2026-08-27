@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode, useRef, useState } from "react";
+import { ReactNode, useState } from "react";
 import {
   Activity,
   BookOpen,
@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 
 import { AppSidebar, SidebarMember, SidebarNavigation } from "@/components/app-sidebar";
-import { useAlertDialogFocus, useDrawerFocus } from "@/lib/focus-management";
+import { useDrawerFocus } from "@/lib/focus-management";
 
 const workspaceNavigation: SidebarNavigation[] = [
   {
@@ -57,9 +57,7 @@ type ConsoleShellProps = {
 
 export function ConsoleShell({ actions, children, description, eyebrow, member, spaceCount, title }: ConsoleShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const contentRef = useRef<HTMLDivElement>(null);
   const { closeRef, drawerRef, triggerRef } = useDrawerFocus(menuOpen, setMenuOpen);
-  useAlertDialogFocus(contentRef);
   const visibleManageNavigation = member.systemRole === "super_admin"
     ? manageNavigation
     : manageNavigation.map((group) => ({ ...group, items: group.items.filter((item) => item.href === "/settings") })).filter((group) => group.items.length > 0);
@@ -83,7 +81,7 @@ export function ConsoleShell({ actions, children, description, eyebrow, member, 
           <button aria-controls="console-navigation" aria-expanded={menuOpen} aria-label="Open navigation" className="mobile-menu-button" onClick={() => setMenuOpen(true)} ref={triggerRef} type="button"><Menu aria-hidden="true" size={19} /></button>
           <span><Boxes aria-hidden="true" size={17} /> Kinbase</span>
         </header>
-        <div className="console-content" ref={contentRef}>
+        <div className="console-content">
           <header className="console-page-header">
             <div>
               <p className="console-eyebrow">{eyebrow}</p>

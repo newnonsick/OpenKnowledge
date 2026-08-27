@@ -76,4 +76,22 @@ describe("ConfirmationDialog", () => {
     expect(screen.getByRole("button", { name: "Archiving…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Keep item" })).toBeDisabled();
   });
+
+  it("can disable confirmation without blocking cancellation", () => {
+    render(
+      <ConfirmationDialog
+        cancelLabel="Keep current"
+        confirmDisabled
+        confirmLabel="Restore revision"
+        description="A reason is required."
+        onCancel={vi.fn()}
+        onConfirm={vi.fn()}
+        open
+        title="Restore settings"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Restore revision" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Keep current" })).toBeEnabled();
+  });
 });

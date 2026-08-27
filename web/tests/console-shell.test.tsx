@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { ConsoleShell } from "@/components/console-shell";
 import { contractClient } from "@/lib/api-client";
 
@@ -12,12 +13,7 @@ function DialogHarness() {
   return (
     <div>
       <button onClick={() => setOpen(true)} type="button">Review change</button>
-      {open ? (
-        <div aria-label="Confirm change" role="alertdialog">
-          <button onClick={() => setOpen(false)} type="button">Not now</button>
-          <button type="button">Confirm</button>
-        </div>
-      ) : null}
+      <ConfirmationDialog cancelLabel="Not now" confirmLabel="Confirm" description="Confirm the requested change." onCancel={() => setOpen(false)} onConfirm={vi.fn()} open={open} title="Confirm change" />
     </div>
   );
 }

@@ -634,17 +634,6 @@ html[data-theme="dark"] .space-manage-button:hover { color: var(--accent); }
 html[data-theme="dark"] .ownership-transfer-button:hover { color: var(--accent); }
 .membership-remove-button:hover { border-color: var(--coral); color: var(--coral); background: var(--coral-soft); }
 
-.confirmation-strip {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px;
-  margin-top: 12px; padding: 13px 14px; border: 1px solid color-mix(in srgb, var(--coral) 30%, transparent);
-  border-radius: var(--radius-md); background: var(--coral-soft); animation: reveal 0.18s ease-out;
-}
-.confirmation-strip > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.confirmation-strip strong { font-size: 13px; }
-.confirmation-strip span { color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
-.confirmation-strip .secondary-button, .confirmation-strip .danger-button { min-height: 34px; }
-.confirmation-strip .primary-button { min-height: 34px; margin: 0; }
-
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 16px;
   overflow-y: auto; background: rgba(16, 21, 19, 0.5); backdrop-filter: blur(8px);
@@ -672,7 +661,6 @@ html[data-theme="dark"] .ownership-transfer-button:hover { color: var(--accent);
 
 .data-list { display: grid; grid-template-columns: minmax(0, 1fr); }
 .source-row-group { display: grid; }
-.source-row-group .confirmation-strip { margin: 2px 8px 12px; }
 .data-row { min-height: 60px; display: flex; align-items: center; gap: 12px; padding: 10px 8px; border-top: 1px solid var(--line); border-radius: 10px; transition: background 0.12s ease-out; }
 .data-row:hover { background: var(--surface-soft); }
 .data-row:hover + .data-row { border-top-color: transparent; }
@@ -983,7 +971,6 @@ html[data-theme="dark"] .secret-banner code { color: var(--accent); }
 
 .job-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; }
 .job-card-group { display: grid; gap: 8px; min-width: 0; }
-.job-card-group .confirmation-strip { margin: 0 2px; }
 .job-card { min-width: 0; padding: 15px 17px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); transition: border-color 0.15s ease-out; }
 .job-card:hover { border-color: var(--line-strong); }
 .job-topline, .job-topline > div, .job-context, .progress-row { display: flex; align-items: center; }
@@ -1111,10 +1098,6 @@ html[data-theme="dark"] .auth-form-icon { color: var(--accent); }
 .totp-reveal { display: flex; align-items: center; gap: 7px; margin: 15px 0 0; padding: 0; border: 0; background: transparent; color: var(--accent-strong); font-size: 12.5px; font-weight: 600; cursor: pointer; }
 html[data-theme="dark"] .totp-reveal { color: var(--accent); }
 .auth-factor-actions { display: flex; flex-wrap: wrap; gap: 8px 18px; }
-.step-up-backdrop {
-  position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 24px;
-  background: rgba(16, 21, 19, 0.45); backdrop-filter: blur(10px);
-}
 .step-up-dialog {
   width: min(420px, 100%); padding: 24px; border: 1px solid var(--line); border-radius: var(--radius-lg);
   background: var(--surface); box-shadow: var(--shadow-pop); animation: reveal 0.18s ease-out;
@@ -1317,8 +1300,7 @@ html[data-theme="dark"] .auth-story { background: radial-gradient(circle at 85% 
   .console-page-header { align-items: flex-start; flex-direction: column; gap: 14px; }
   .console-page-header h1 { font-size: 27px; }
   .space-card-grid, .explore-prompt-grid, .tool-grid, .runtime-summary, .metric-strip { grid-template-columns: 1fr; }
-  .membership-add-form, .confirmation-strip, .member-admin-form, .runtime-settings-form { grid-template-columns: 1fr; }
-  .confirmation-strip .secondary-button, .confirmation-strip .danger-button, .confirmation-strip .primary-button { width: 100%; }
+  .membership-add-form, .member-admin-form, .runtime-settings-form { grid-template-columns: 1fr; }
   .membership-row { flex-wrap: wrap; padding: 10px 0; }
   .membership-row .row-copy { min-width: calc(100% - 90px); }
   .membership-row select { flex: 1; }

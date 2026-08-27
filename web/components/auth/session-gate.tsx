@@ -1,9 +1,10 @@
 "use client";
 
-import { createContext, FormEvent, ReactNode, useContext, useEffect, useRef, useState } from "react";
+import { createContext, FormEvent, ReactNode, useContext, useEffect, useId, useRef, useState } from "react";
 import { Boxes, KeyRound, LoaderCircle, ShieldCheck, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 
+import { ModalDialog } from "@/components/confirmation-dialog";
 import { ApiError, apiRequest, contractClient, contractData, noteMeaningfulActivity, refreshSession } from "@/lib/api-client";
 import type { components } from "@/lib/generated/openapi";
 
@@ -131,53 +132,8 @@ export function SessionGate({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("aigw-step-up-required", requireStepUp);
   }, []);
 
-  const stepUpDialogRef = useRef<HTMLDivElement>(null);
-  const stepUpReturnRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (!stepUpOpen) {
-      if (stepUpReturnRef.current?.isConnected) {
-        const target = stepUpReturnRef.current;
-        queueMicrotask(() => target.focus());
-      }
-      stepUpReturnRef.current = null;
-      return;
-    }
-    stepUpReturnRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusTimer = window.setTimeout(() => {
-      const first = stepUpDialogRef.current?.querySelector<HTMLElement>("input, button");
-      first?.focus();
-    }, 60);
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setStepUpOpen(false);
-        return;
-      }
-      if (event.key !== "Tab" || !stepUpDialogRef.current) {
-        return;
-      }
-      const focusable = Array.from(stepUpDialogRef.current.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])")).filter((element) => !element.hidden);
-      if (focusable.length === 0) {
-        event.preventDefault();
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.clearTimeout(focusTimer);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [stepUpOpen]);
+  const stepUpTitleId = useId();
+  const stepUpDescriptionId = useId();
 
   async function submitStepUp(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -217,11 +173,9 @@ export function SessionGate({ children }: { children: ReactNode }) {
   return (
     <SessionContext.Provider value={member}>
       {children}
-      {stepUpOpen ? (
-        <div className="step-up-backdrop">
-          <section aria-label="Verify your identity" aria-modal="true" className="step-up-dialog" ref={stepUpDialogRef} role="dialog">
-            <div className="step-up-heading"><span><KeyRound aria-hidden="true" size={18} /></span><div><small>Security check</small><h2>Verify your identity</h2></div><button aria-label="Close identity verification" onClick={() => setStepUpOpen(false)} type="button"><X aria-hidden="true" size={18} /></button></div>
-            <p>For extra security, this action needs a fresh identity check. Nothing was saved yet — verify below, then run the action again.</p>
+      <ModalDialog ariaDescribedBy={stepUpDescriptionId} ariaLabelledBy={stepUpTitleId} className="step-up-dialog" onClose={() => { if (!stepUpSubmitting) setStepUpOpen(false); }} open={stepUpOpen}>
+            <div className="step-up-heading"><span><KeyRound aria-hidden="true" size={18} /></span><div><small>Security check</small><h2 id={stepUpTitleId}>Verify your identity</h2></div><button aria-label="Close identity verification" disabled={stepUpSubmitting} onClick={() => setStepUpOpen(false)} type="button"><X aria-hidden="true" size={18} /></button></div>
+            <p id={stepUpDescriptionId}>For extra security, this action needs a fresh identity check. Nothing was saved yet — verify below, then run the action again.</p>
             <form onSubmit={submitStepUp}>
               <label className="field-label" htmlFor="step-up-password">Current password</label>
               <input autoComplete="current-password" className="text-field" id="step-up-password" name="password" required type="password" />
@@ -238,9 +192,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
               {stepUpError ? <div className="auth-error" role="alert">{stepUpError}</div> : null}
               <div className="step-up-actions"><button className="secondary-button" onClick={() => setStepUpOpen(false)} type="button">Cancel</button><button className="primary-button" disabled={stepUpSubmitting} type="submit">{stepUpSubmitting ? "Verifying…" : "Verify identity"}</button></div>
             </form>
-          </section>
-        </div>
-      ) : null}
+      </ModalDialog>
     </SessionContext.Provider>
   );
 }

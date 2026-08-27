@@ -70,6 +70,7 @@ type ConfirmationDialogProps = {
   busy?: boolean;
   busyLabel?: string;
   cancelLabel: string;
+  confirmDisabled?: boolean;
   confirmLabel: string;
   description: string;
   onCancel: () => void;
@@ -83,6 +84,7 @@ export function ConfirmationDialog({
   busy = false,
   busyLabel,
   cancelLabel,
+  confirmDisabled = false,
   confirmLabel,
   description,
   onCancel,
@@ -118,7 +120,7 @@ export function ConfirmationDialog({
       <p className="modal-copy" id={descriptionId}>{description}</p>
       <div className="modal-actions">
         <button className="secondary-button" disabled={busy} onClick={onCancel} type="button">{cancelLabel}</button>
-        <button className={actionClass} disabled={busy} onClick={onConfirm} type="button">
+        <button className={actionClass} disabled={busy || confirmDisabled} onClick={onConfirm} type="button">
           {busy ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : null}
           {busy ? busyLabel || `${confirmLabel}…` : confirmLabel}
         </button>

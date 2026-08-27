@@ -237,6 +237,7 @@ describe("management console", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Remove Nana" }));
+    expect(screen.getByRole("alertdialog", { name: "Remove Nana from Travel plans" })).toHaveAttribute("aria-modal", "true");
     fireEvent.click(screen.getByRole("button", { name: "Confirm removal" }));
 
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/spaces/travel/members/member-2", {
@@ -269,6 +270,7 @@ describe("management console", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Manage access for Travel plans" }));
     fireEvent.click(await screen.findByRole("button", { name: "Transfer ownership to Nana" }));
+    expect(screen.getByRole("alertdialog", { name: "Transfer ownership to Nana" })).toHaveAttribute("aria-modal", "true");
     fireEvent.click(screen.getByRole("button", { name: "Confirm ownership transfer" }));
 
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/spaces/travel/ownership", {
@@ -300,6 +302,7 @@ describe("management console", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Manage access for Travel plans" }));
     fireEvent.click(await screen.findByRole("button", { name: "Archive Travel plans" }));
+    expect(screen.getByRole("alertdialog", { name: "Archive Travel plans" })).toHaveAttribute("aria-modal", "true");
     expect(screen.getByText(/leave unified search immediately/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm archive space" }));
 
@@ -466,6 +469,7 @@ describe("management console", () => {
     expect(await screen.findByText("Version 2 is active")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Archive Water valve" }));
+    expect(screen.getByRole("alertdialog", { name: "Archive Water valve" })).toHaveAttribute("aria-modal", "true");
     fireEvent.click(screen.getByRole("button", { name: "Confirm archive" }));
 
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/knowledge/note-1?expected_version=2", {
@@ -550,6 +554,7 @@ describe("management console", () => {
     render(<SourcesConsole />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Archive Procedures" }));
+    expect(screen.getByRole("alertdialog", { name: "Archive Procedures" })).toHaveAttribute("aria-modal", "true");
     expect(screen.getByText(/leaves unified search immediately/i)).toBeInTheDocument();
     expect(apiRequest).not.toHaveBeenCalledWith(expect.stringContaining("source-1?expected_revision"), expect.anything());
     fireEvent.click(screen.getByRole("button", { name: "Confirm archive source" }));
@@ -630,11 +635,13 @@ describe("management console", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Manage Nana" }));
     fireEvent.click(screen.getByRole("button", { name: "Reset Nana password" }));
+    expect(screen.getByRole("alertdialog", { name: "Reset Nana password" })).toHaveAttribute("aria-modal", "true");
     expect(screen.getByText(/signs out every session/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm password reset" }));
     expect(await screen.findByText("Reset-Only-Once!42")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Disable Nana" }));
+    expect(screen.getByRole("alertdialog", { name: "Disable Nana" })).toHaveAttribute("aria-modal", "true");
     expect(screen.getByText(/immediately revokes sessions and api keys/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm disable member" }));
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/members/member-1", {
@@ -672,6 +679,7 @@ describe("management console", () => {
     fireEvent.change(screen.getByLabelText("New owner"), { target: { value: "member-2" } });
     fireEvent.change(screen.getByLabelText("Recovery reason"), { target: { value: "Restore after account recovery" } });
     fireEvent.click(screen.getByRole("button", { name: "Review ownership repair" }));
+    expect(screen.getByRole("alertdialog", { name: "Confirm emergency ownership transfer" })).toHaveAttribute("aria-modal", "true");
     fireEvent.click(screen.getByRole("button", { name: "Confirm emergency transfer" }));
 
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/admin/spaces/private/ownership", {
@@ -782,11 +790,13 @@ describe("management console", () => {
     render(<SettingsConsole />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Revoke Laptop" }));
+    expect(screen.getByRole("alertdialog", { name: "Revoke Laptop" })).toHaveAttribute("aria-modal", "true");
     fireEvent.click(screen.getByRole("button", { name: "Confirm revoke API key" }));
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/api-keys/key-1", { idempotent: true, method: "DELETE" }));
     await waitFor(() => expect(screen.queryByText("pk_live_1 · knowledge:read")).not.toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: "Sign out website session" }));
+    expect(screen.getByRole("alertdialog", { name: "Sign out website session" })).toHaveAttribute("aria-modal", "true");
     fireEvent.click(screen.getByRole("button", { name: "Confirm sign out" }));
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/sessions/session-other", { idempotent: true, method: "DELETE" }));
     expect(screen.getByText("This session")).toBeInTheDocument();
@@ -874,6 +884,7 @@ describe("management console", () => {
 
     fireEvent.change(await screen.findByLabelText("Change reason"), { target: { value: "Restore the proven focused profile" } });
     fireEvent.click(await screen.findByRole("button", { name: "Restore revision 1" }));
+    expect(screen.getByRole("alertdialog", { name: "Restore revision 1" })).toHaveAttribute("aria-modal", "true");
     expect(screen.getByText(/creates a new active revision/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm restore revision 1" }));
 
@@ -924,11 +935,13 @@ describe("management console", () => {
     render(<IngestionConsole />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Cancel job job-1" }));
+    expect(screen.getByRole("alertdialog", { name: "Cancel job job-1" })).toHaveAttribute("aria-modal", "true");
     expect(screen.getByText(/worker will stop at a safe boundary/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm cancel job" }));
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/ingestion-jobs/job-1/cancel", { idempotent: true, method: "POST" }));
 
     fireEvent.click(await screen.findByRole("button", { name: "Retry job job-1" }));
+    expect(screen.getByRole("alertdialog", { name: "Retry job job-1" })).toHaveAttribute("aria-modal", "true");
     expect(screen.getByText(/starts a new durable attempt/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm retry job" }));
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/ingestion-jobs/job-1/retry", { idempotent: true, method: "POST" }));
@@ -974,6 +987,7 @@ describe("management console", () => {
     expect((await screen.findAllByText("spaces.archive.v1")).length).toBe(2);
     expect(screen.queryByText(/chat/i)).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Review spaces.archive.v1 for private" }));
+    expect(screen.getByRole("alertdialog", { name: "Confirm spaces.archive.v1" })).toHaveAttribute("aria-modal", "true");
     expect(screen.getByText(/permanently removes it from unified search/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm AI action" }));
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/ai-actions/action-1/confirm", { idempotent: true, method: "POST" }));

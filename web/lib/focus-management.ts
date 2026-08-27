@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef } from "react";
-import type { Dispatch, RefObject, SetStateAction } from "react";
+import { useLayoutEffect, useRef } from "react";
+import type { Dispatch, SetStateAction } from "react";
 
 const focusableSelector = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
 
@@ -67,54 +67,6 @@ export function useDrawerFocus(open: boolean, setOpen: Dispatch<SetStateAction<b
   }, [open, setOpen]);
 
   return { closeRef, drawerRef, triggerRef };
-}
-
-export function useAlertDialogFocus(rootRef: RefObject<HTMLElement | null>): void {
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) {
-      return;
-    }
-    let activeDialog: HTMLElement | null = null;
-    let returnTarget: HTMLElement | null = null;
-    const update = () => {
-      const next = root.querySelector<HTMLElement>("[role='alertdialog']");
-      if (next === activeDialog) {
-        return;
-      }
-      if (next) {
-        returnTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-        activeDialog = next;
-        queueMicrotask(() => focusableElements(next)[0]?.focus());
-        return;
-      }
-      if (activeDialog && returnTarget?.isConnected) {
-        const target = returnTarget;
-        queueMicrotask(() => target.focus());
-      }
-      activeDialog = null;
-      returnTarget = null;
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!activeDialog) {
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        focusableElements(activeDialog)[0]?.click();
-        return;
-      }
-      containFocus(event, activeDialog);
-    };
-    const observer = new MutationObserver(update);
-    observer.observe(root, { childList: true, subtree: true });
-    document.addEventListener("keydown", handleKeyDown);
-    update();
-    return () => {
-      observer.disconnect();
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [rootRef]);
 }
 
 export function useModalFocus(open: boolean, onClose: () => void) {
