@@ -321,6 +321,56 @@ test("keeps the mobile knowledge error and retry state within the viewport", asy
   expect(viewportState.scrollWidth).toBeLessThanOrEqual(viewportState.clientWidth);
 });
 
+for (const width of [390, 768]) {
+  test(`puts primary management actions before long lists at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ height: 844, width });
+    await mockGateway(page, "super_admin");
+    for (const route of ["spaces", "knowledge", "sources", "people"]) {
+      await page.goto(`/${route}`);
+      const grid = page.locator(`.console-grid-${route}`);
+      await expect(grid).toBeVisible();
+      const [actionBox, listBox] = await Promise.all([
+        grid.locator(":scope > .action-panel").boundingBox(),
+        grid.locator(":scope > section:not(.action-panel)").first().boundingBox(),
+      ]);
+      expect(actionBox?.y, `${route} action panel should come first`).toBeLessThan(listBox?.y ?? Number.POSITIVE_INFINITY);
+    }
+  });
+}
+
+test("preserves list-first management columns on desktop", async ({ page }) => {
+  await mockGateway(page, "super_admin");
+  for (const route of ["spaces", "knowledge", "sources", "people"]) {
+    await page.goto(`/${route}`);
+    const grid = page.locator(`.console-grid-${route}`);
+    const [actionBox, listBox] = await Promise.all([
+      grid.locator(":scope > .action-panel").boundingBox(),
+      grid.locator(":scope > section:not(.action-panel)").first().boundingBox(),
+    ]);
+    expect(listBox?.x, `${route} list should remain the first desktop column`).toBeLessThan(actionBox?.x ?? Number.POSITIVE_INFINITY);
+  }
+});
+
+test("hydrates a stored dark theme without a React mismatch", async ({ page }) => {
+  const hydrationErrors: string[] = [];
+  page.on("console", (entry) => {
+    if (entry.type() === "error" && /hydration|server rendered html/i.test(entry.text())) {
+      hydrationErrors.push(entry.text());
+    }
+  });
+  page.on("pageerror", (error) => {
+    if (/hydration|server rendered html/i.test(error.message)) {
+      hydrationErrors.push(error.message);
+    }
+  });
+  await page.addInitScript(() => localStorage.setItem("aigw-theme", "dark"));
+  await page.goto("/login");
+
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
+  await expect.poll(() => hydrationErrors).toEqual([]);
+});
+
 const responsiveRoutes = ["/", "/spaces", "/explore", "/knowledge", "/sources", "/ingestion", "/people", "/settings", "/activity", "/ai-actions"];
 const responsivePublicRoutes = [
   { heading: "Welcome back", route: "/login" },

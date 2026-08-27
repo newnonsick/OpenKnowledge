@@ -436,7 +436,7 @@ export function SpacesConsole() {
               {!appliedSpaceSearch ? <button className="secondary-button empty-action" onClick={() => createNameRef.current?.focus()} type="button"><Plus size={15} /> Create a space</button> : null}
             </div>
           ) : null}
-          <div className="space-card-grid">
+          <div aria-busy={spacePages.loading} className={`space-card-grid${spacePages.loading && spaces.length > 0 ? " is-page-loading" : ""}`}>
             {spaces.map((space, index) => (
               <article className={`space-card${selectedSpace?.id === space.id ? " is-selected" : ""}`} key={space.id}>
                 <div className={`space-card-mark accent-${index % 4}`}><FolderKanban aria-hidden="true" size={17} /></div>
@@ -444,7 +444,7 @@ export function SpacesConsole() {
                 <span className={`role-pill role-${space.role}`}>{space.role}</span>
                 <div className="space-card-footer">
                   <span className="space-card-meta"><ShieldCheck aria-hidden="true" size={13} /> {space.role === "owner" ? "You manage this space" : "Request access changes from the owner"}</span>
-                  {space.role === "owner" ? <button aria-label={`Manage access for ${space.name}`} className="space-manage-button" onClick={() => void loadAccess(space)} type="button"><UsersRound size={13} /> Manage access</button> : null}
+                  {space.role === "owner" ? <button aria-label={`Manage access for ${space.name}`} className="space-manage-button" disabled={spacePages.loading} onClick={() => void loadAccess(space)} type="button"><UsersRound size={13} /> Manage access</button> : null}
                 </div>
               </article>
             ))}
@@ -742,13 +742,13 @@ export function KnowledgeConsole() {
               {!appliedSearch && !appliedTag ? <button className="secondary-button empty-action" onClick={() => titleRef.current?.focus()} type="button"><Plus size={15} /> Start capturing</button> : null}
             </div>
           ) : null}
-          <div className="data-list">
+          <div aria-busy={loading} className={`data-list${loading && items.length > 0 ? " is-page-loading" : ""}`}>
             {items.map((item) => (
               <article className="data-row knowledge-row" key={item.id}>
                 <span className="row-leading violet"><BookOpen aria-hidden="true" size={18} /></span>
                 <div className="row-copy"><h3>{item.title}</h3><p>{spaceLabel(spaces, item.space_id)} · version {item.version}</p></div>
                 <div className="tag-list">{item.tags.slice(0, 3).map((value) => <span key={value}><Tag size={11} />{value}</span>)}</div>
-                <button aria-label={`Edit ${item.title}`} className="row-action-button" onClick={() => void openEditor(item)} type="button">Edit</button>
+                <button aria-label={`Edit ${item.title}`} className="row-action-button" disabled={loading} onClick={() => void openEditor(item)} type="button">Edit</button>
               </article>
             ))}
           </div>
@@ -1093,14 +1093,14 @@ export function SourcesConsole() {
           {paginationError ? <ListUnavailable label="source files" onRetry={() => void reloadSources()} /> : null}
           {!initialLoading && !loading && !paginationError && sources.length === 0 ? <div className="console-empty"><FileText size={23} /><strong>{appliedSearch || statusFilter ? "No matching source files" : "No source files"}</strong><span>{appliedSearch || statusFilter ? "Try a broader search or clear the status filter." : "Upload a document without changing its meaning or filtering its contents."}</span></div> : null}
           {archiveError ? <div className="console-unavailable" role="alert"><CircleAlert aria-hidden="true" size={22} /><div><strong>Unable to archive this source</strong><span>{archiveError}</span></div><button className="secondary-button" onClick={() => setArchiveError(null)} type="button">Dismiss</button></div> : null}
-          <div className="data-list">
+          <div aria-busy={loading} className={`data-list${loading && sources.length > 0 ? " is-page-loading" : ""}`}>
             {sources.map((source) => (
               <div className="source-row-group" key={source.id}>
                 <article className="data-row source-row">
                   <span className="row-leading cyan"><FileText aria-hidden="true" size={18} /></span>
                   <div className="row-copy"><h3>{source.display_name}</h3><p>{source.original_filename || "Unnamed file"} · {spaceLabel(spaces, source.space_id)}</p></div>
                   <div className="row-stats"><strong>{source.size_bytes === null ? "—" : `${Math.max(1, Math.round(source.size_bytes / 1024))} KB`}</strong><span className={`status-pill status-${source.status}`}>{source.status}</span></div>
-                  <button aria-label={`Archive ${source.display_name}`} className="archive-button compact" disabled={archiving} onClick={() => setPendingArchive(source)} type="button"><Archive size={14} /> Archive</button>
+                  <button aria-label={`Archive ${source.display_name}`} className="archive-button compact" disabled={archiving || loading} onClick={() => setPendingArchive(source)} type="button"><Archive size={14} /> Archive</button>
                 </article>
                 <ConfirmationDialog busy={archiving} busyLabel="Archiving source…" cancelLabel="Keep source" confirmLabel="Confirm archive source" description="The source leaves unified search immediately while its original bytes, revisions, and audit history remain preserved." onCancel={() => setPendingArchive(null)} onConfirm={() => void archiveSource()} open={pendingArchive?.id === source.id} title={pendingArchive?.id === source.id ? `Archive ${pendingArchive.display_name}` : "Archive source"} tone="danger" />
               </div>
@@ -1346,13 +1346,13 @@ export function PeopleConsole() {
             <form className="list-filter-bar member-filter-bar" onSubmit={(event) => { event.preventDefault(); setAppliedMemberSearch(memberSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={14} /><input aria-label="Search members" onChange={(event) => setMemberSearch(event.target.value)} placeholder="Name or username" type="search" value={memberSearch} /></label><label><select aria-label="Filter member status" onChange={(event) => setMemberStatus(event.target.value as typeof memberStatus)} value={memberStatus}><option value="">All statuses</option><option value="pending">Pending</option><option value="active">Active</option><option value="disabled">Disabled</option></select></label><label><select aria-label="Filter system role" onChange={(event) => setMemberRole(event.target.value as typeof memberRole)} value={memberRole}><option value="">All roles</option><option value="super_admin">Super admin</option><option value="member">Member</option></select></label><button className="secondary-button" type="submit">Apply</button></form>
             {memberPages.initialLoading || (memberPages.loading && members.length === 0) ? <ListSkeleton rows={6} /> : null}
             {memberPages.error ? <ListUnavailable label="members" onRetry={() => void memberPages.reload()} /> : null}
-            <div className="data-list">
+            <div aria-busy={memberPages.loading} className={`data-list${memberPages.loading && members.length > 0 ? " is-page-loading" : ""}`}>
               {members.map((person) => (
                 <article className="data-row member-row" key={person.id}>
                   <span className="profile-avatar">{person.display_name.slice(0, 2).toUpperCase()}</span>
                   <div className="row-copy"><h3>{person.display_name}</h3><p>@{person.username}</p></div>
                   <div className="member-state"><span className={`status-pill status-${person.status}`}>{person.status}</span>{person.requires_password_change ? <small>First sign-in pending</small> : null}</div>
-                  <button aria-label={`Manage ${person.display_name}`} className="row-action-button" onClick={() => { setSelectedMember(person); setPendingMemberAction(null); setResetPassword(null); }} type="button"><Settings2 size={14} /> Manage</button>
+                  <button aria-label={`Manage ${person.display_name}`} className="row-action-button" disabled={memberPages.loading} onClick={() => { setSelectedMember(person); setPendingMemberAction(null); setResetPassword(null); }} type="button"><Settings2 size={14} /> Manage</button>
                 </article>
               ))}
             </div>
@@ -1734,8 +1734,8 @@ export function SettingsConsole() {
           </form>
           {keyPages.initialLoading || (keyPages.loading && keys.length === 0) ? <ListSkeleton compact rows={3} /> : null}
           {keyPages.error ? <ListUnavailable label="API keys" onRetry={() => void keyPages.reload()} /> : null}
-          <div className="data-list compact-list">
-            {keys.map((key) => <article className="data-row" key={key.id}><span className="row-leading violet"><KeyRound size={17} /></span><div className="row-copy"><h3>{key.name}</h3><p>{key.public_id} · {key.scopes.join(", ")}</p></div><span className={`status-pill status-${key.status}`}>{key.status}</span>{key.status === "active" ? <button aria-label={`Revoke ${key.name}`} className="membership-remove-button" onClick={() => setPendingKeyRevocation(key)} type="button"><X size={15} /></button> : null}</article>)}
+          <div aria-busy={keyPages.loading} className={`data-list compact-list${keyPages.loading && keys.length > 0 ? " is-page-loading" : ""}`}>
+            {keys.map((key) => <article className="data-row" key={key.id}><span className="row-leading violet"><KeyRound size={17} /></span><div className="row-copy"><h3>{key.name}</h3><p>{key.public_id} · {key.scopes.join(", ")}</p></div><span className={`status-pill status-${key.status}`}>{key.status}</span>{key.status === "active" ? <button aria-label={`Revoke ${key.name}`} className="membership-remove-button" disabled={keyPages.loading} onClick={() => setPendingKeyRevocation(key)} type="button"><X size={15} /></button> : null}</article>)}
           </div>
           {keyPages.totalPages > 1 ? <PaginationControls loading={keyPages.loading} loadingPage={keyPages.loadingPage} onPageChange={(nextPage) => void keyPages.goToPage(nextPage)} page={keyPages.page} pageSize={keyPages.pageSize} totalItems={keyPages.totalItems} totalPages={keyPages.totalPages} /> : null}
           {keyError ? <p className="inline-error" role="alert">{keyError}</p> : null}
@@ -1747,8 +1747,8 @@ export function SettingsConsole() {
           <div className="list-filter-bar single-filter-bar"><label><select aria-label="Filter session status" onChange={(event) => setSessionStatus(event.target.value as typeof sessionStatus)} value={sessionStatus}><option value="">All statuses</option><option value="active">Active</option><option value="expired">Expired</option><option value="revoked">Revoked</option></select></label></div>
           {sessionPages.initialLoading || (sessionPages.loading && sessions.length === 0) ? <ListSkeleton compact rows={3} /> : null}
           {sessionPages.error ? <ListUnavailable label="sessions" onRetry={() => void sessionPages.reload()} /> : null}
-          <div className="data-list compact-list">
-            {sessions.map((session) => <article className="data-row" key={session.id}><span className="row-leading cyan"><MonitorSmartphone size={17} /></span><div className="row-copy"><h3>{session.current ? "This session" : "Website session"}</h3><p>Last active {formatDateTime(session.last_activity_at)}</p></div><span className={`status-pill status-${session.status}`}>{session.status}</span>{!session.current && session.status === "active" ? <button aria-label="Sign out website session" className="membership-remove-button" onClick={() => setPendingSessionRevocation(session)} type="button"><X size={15} /></button> : null}</article>)}
+          <div aria-busy={sessionPages.loading} className={`data-list compact-list${sessionPages.loading && sessions.length > 0 ? " is-page-loading" : ""}`}>
+            {sessions.map((session) => <article className="data-row" key={session.id}><span className="row-leading cyan"><MonitorSmartphone size={17} /></span><div className="row-copy"><h3>{session.current ? "This session" : "Website session"}</h3><p>Last active {formatDateTime(session.last_activity_at)}</p></div><span className={`status-pill status-${session.status}`}>{session.status}</span>{!session.current && session.status === "active" ? <button aria-label="Sign out website session" className="membership-remove-button" disabled={sessionPages.loading} onClick={() => setPendingSessionRevocation(session)} type="button"><X size={15} /></button> : null}</article>)}
             {!sessionPages.initialLoading && !sessionPages.loading && !sessionPages.error && sessions.length === 0 ? <div className="console-empty small"><MonitorSmartphone size={20} /><strong>No session records returned</strong></div> : null}
           </div>
           {sessionPages.totalPages > 1 ? <PaginationControls loading={sessionPages.loading} loadingPage={sessionPages.loadingPage} onPageChange={(nextPage) => void sessionPages.goToPage(nextPage)} page={sessionPages.page} pageSize={sessionPages.pageSize} totalItems={sessionPages.totalItems} totalPages={sessionPages.totalPages} /> : null}
@@ -1772,7 +1772,7 @@ export function SettingsConsole() {
           {member.system_role === "super_admin" ? <div className="list-filter-bar single-filter-bar"><label><select aria-label="Filter settings history state" onChange={(event) => setHistoryState(event.target.value as typeof historyState)} value={historyState}><option value="">All history</option><option value="active">Active</option><option value="superseded">Superseded</option></select></label></div> : null}
           {(historyPages.initialLoading || (historyPages.loading && settingsHistory.length === 0)) && member.system_role === "super_admin" ? <ListSkeleton compact rows={3} /> : null}
           {historyPages.error ? <ListUnavailable label="settings history" onRetry={() => void historyPages.reload()} /> : null}
-          {settingsHistory.length > 0 ? <div className="data-list compact-list">{settingsHistory.map((revision) => <article className="data-row" key={revision.id || revision.revision}><span className="row-leading violet"><Settings2 size={16} /></span><div className="row-copy"><h3>Revision {revision.revision}</h3><p>Retrieval limit {revision.values.retrieval?.limit ?? "default"} · {revision.state}</p></div>{revision.state === "superseded" ? <button aria-label={`Restore revision ${revision.revision}`} className="row-action-button" disabled={runtimeSaving} onClick={() => setPendingSettingsRestore(revision)} type="button">Restore</button> : <span className="status-pill status-active">active</span>}</article>)}</div> : null}
+          {settingsHistory.length > 0 ? <div aria-busy={historyPages.loading} className={`data-list compact-list${historyPages.loading ? " is-page-loading" : ""}`}>{settingsHistory.map((revision) => <article className="data-row" key={revision.id || revision.revision}><span className="row-leading violet"><Settings2 size={16} /></span><div className="row-copy"><h3>Revision {revision.revision}</h3><p>Retrieval limit {revision.values.retrieval?.limit ?? "default"} · {revision.state}</p></div>{revision.state === "superseded" ? <button aria-label={`Restore revision ${revision.revision}`} className="row-action-button" disabled={runtimeSaving || historyPages.loading} onClick={() => setPendingSettingsRestore(revision)} type="button">Restore</button> : <span className="status-pill status-active">active</span>}</article>)}</div> : null}
           {historyPages.totalPages > 1 ? <PaginationControls loading={historyPages.loading} loadingPage={historyPages.loadingPage} onPageChange={(nextPage) => void historyPages.goToPage(nextPage)} page={historyPages.page} pageSize={historyPages.pageSize} totalItems={historyPages.totalItems} totalPages={historyPages.totalPages} /> : null}
           <ConfirmationDialog busy={runtimeSaving} busyLabel="Restoring settings…" cancelLabel="Keep current" confirmDisabled={runtimeReason.trim().length < 5} confirmLabel={`Confirm restore revision ${pendingSettingsRestore?.revision ?? ""}`} description="This creates a new active revision from the historical values. The current revision remains preserved for audit and future recovery." onCancel={() => setPendingSettingsRestore(null)} onConfirm={() => void restoreRuntimeSettings()} open={Boolean(pendingSettingsRestore)} title={pendingSettingsRestore ? `Restore revision ${pendingSettingsRestore.revision}` : "Restore settings revision"} tone="danger" />
           <div className="runtime-values">
@@ -1895,7 +1895,7 @@ export function IngestionConsole() {
         {initialLoading || (loading && jobs.length === 0) ? <ListSkeleton /> : null}
         {paginationError ? <ListUnavailable label="ingestion jobs" onRetry={() => void reloadJobs()} /> : null}
         {!initialLoading && !loading && !paginationError && jobs.length === 0 ? <div className="console-empty"><Layers3 size={23} /><strong>{spaceFilter || stateFilter ? "No matching ingestion jobs" : "No ingestion jobs"}</strong><span>{spaceFilter || stateFilter ? "Choose a different space or state." : "Uploaded sources will appear here as soon as preparation begins."}</span></div> : null}
-        <div className="job-list">
+        <div aria-busy={loading} className={`job-list${loading && jobs.length > 0 ? " is-page-loading" : ""}`}>
           {jobs.map((job) => (
             <div className="job-card-group" key={job.id}>
               <article className="job-card">
@@ -1903,8 +1903,8 @@ export function IngestionConsole() {
                 <div className="job-context"><strong>{spaceLabel(spaces, job.space_id)}</strong><span>document {job.document_id}</span><span>attempt {job.attempt_count}/{job.max_attempts}</span></div>
                 <div className="progress-row"><progress max={100} value={Math.max(0, Math.min(100, job.progress))} /><strong>{Math.round(job.progress)}%</strong></div>
                 {job.last_error_code ? <p className="job-error">{job.last_error_code}</p> : null}
-                {!['succeeded', 'failed', 'cancelled'].includes(job.state) ? <button aria-label={`Cancel job ${job.id}`} className="archive-button compact" disabled={jobSaving} onClick={() => setPendingJobAction({ job, operation: "cancel" })} type="button">Cancel job</button> : null}
-                {['failed', 'cancelled'].includes(job.state) ? <button aria-label={`Retry job ${job.id}`} className="secondary-button" disabled={jobSaving} onClick={() => setPendingJobAction({ job, operation: "retry" })} type="button">Retry job</button> : null}
+                {!['succeeded', 'failed', 'cancelled'].includes(job.state) ? <button aria-label={`Cancel job ${job.id}`} className="archive-button compact" disabled={jobSaving || loading} onClick={() => setPendingJobAction({ job, operation: "cancel" })} type="button">Cancel job</button> : null}
+                {['failed', 'cancelled'].includes(job.state) ? <button aria-label={`Retry job ${job.id}`} className="secondary-button" disabled={jobSaving || loading} onClick={() => setPendingJobAction({ job, operation: "retry" })} type="button">Retry job</button> : null}
               </article>
               <ConfirmationDialog busy={jobSaving} busyLabel={pendingJobAction?.operation === "cancel" ? "Cancelling job…" : "Requesting retry…"} cancelLabel="Not now" confirmLabel={`Confirm ${pendingJobAction?.operation ?? "retry"} job`} description={pendingJobAction?.operation === "cancel" ? "The worker will stop at a safe boundary; completed durable stages and audit history remain preserved." : "This starts a new durable attempt from the preserved original source and records the request in the audit trail."} onCancel={() => setPendingJobAction(null)} onConfirm={() => void mutateJob()} open={pendingJobAction?.job.id === job.id} title={pendingJobAction?.job.id === job.id ? `${pendingJobAction.operation === "cancel" ? "Cancel" : "Retry"} job ${pendingJobAction.job.id}` : "Change ingestion job"} tone={pendingJobAction?.operation === "cancel" ? "danger" : "primary"} />
             </div>
@@ -2003,7 +2003,7 @@ export function ActivityConsole() {
           </form>
           {initialLoading || (loading && events.length === 0) ? <ListSkeleton /> : null}
           {paginationError ? <ListUnavailable label="audit events" onRetry={() => void reloadAuditEvents()} /> : null}
-          <div className="audit-list">
+          <div aria-busy={loading} className={`audit-list${loading && events.length > 0 ? " is-page-loading" : ""}`}>
             {events.map((event) => <article className="audit-row" key={event.id}><span className={`audit-outcome outcome-${event.outcome}`} /><time dateTime={event.occurred_at}>{formatDateTime(event.occurred_at)}</time><div><h3>{event.action}</h3><p>{event.resource_type}{event.resource_id ? ` · ${event.resource_id}` : ""}</p></div><code>{event.request_id}</code><span className="status-pill">{event.outcome}</span></article>)}
             {!initialLoading && !loading && !paginationError && events.length === 0 ? <div className="console-empty"><Activity size={23} /><strong>No audit events returned</strong><span>{appliedFilters.action || appliedFilters.outcome || appliedFilters.q || appliedFilters.resourceType ? "Try a broader filter or clear the filters." : "Security-sensitive actions will appear here as they happen."}</span></div> : null}
           </div>
@@ -2108,7 +2108,7 @@ export function AiActionsConsole() {
       </div>
       {actionPages.initialLoading || (actionPages.loading && pendingActions.length === 0) ? <section className="console-panel pending-ai-panel"><ListSkeleton compact rows={3} /></section> : null}
       {actionPages.error ? <section className="console-panel pending-ai-panel"><ListUnavailable label="pending actions" onRetry={() => void actionPages.reload()} /></section> : null}
-      {!actionPages.initialLoading && !actionPages.loading && !actionPages.error && pendingActions.length > 0 ? <section className="console-panel pending-ai-panel"><div className="panel-heading"><div><span>Human approval</span><h2>Pending confirmation</h2></div><span className="count-pill">{actionPages.totalItems}</span></div><div className="data-list">{pendingActions.map((action) => <article className="data-row" key={action.id}><span className="row-leading violet"><Sparkles size={17} /></span><div className="row-copy"><h3>{action.tool_name}</h3><p>{action.target_ids.join(", ")} · revision {action.expected_revision ?? "—"}</p></div><button aria-label={`Review ${action.tool_name} for ${action.target_ids.join(", ")}`} className="row-action-button" onClick={() => setReviewing(action)} type="button">Review</button></article>)}</div>{actionPages.totalPages > 1 ? <PaginationControls loading={actionPages.loading} loadingPage={actionPages.loadingPage} onPageChange={(nextPage) => void actionPages.goToPage(nextPage)} page={actionPages.page} pageSize={actionPages.pageSize} totalItems={actionPages.totalItems} totalPages={actionPages.totalPages} /> : null}<ConfirmationDialog busy={confirming} busyLabel="Executing AI action…" cancelLabel="Not now" confirmLabel="Confirm AI action" description={reviewing ? aiActionImpact(reviewing.tool_name) : "Review this action before execution."} onCancel={() => setReviewing(null)} onConfirm={() => void confirmAction()} open={Boolean(reviewing)} title={reviewing ? `Confirm ${reviewing.tool_name}` : "Confirm AI action"} tone="danger" /></section> : null}
+      {!actionPages.initialLoading && !actionPages.error && pendingActions.length > 0 ? <section className="console-panel pending-ai-panel"><div className="panel-heading"><div><span>Human approval</span><h2>Pending confirmation</h2></div><span className="count-pill">{actionPages.totalItems}</span></div><div aria-busy={actionPages.loading} className={`data-list${actionPages.loading ? " is-page-loading" : ""}`}>{pendingActions.map((action) => <article className="data-row" key={action.id}><span className="row-leading violet"><Sparkles size={17} /></span><div className="row-copy"><h3>{action.tool_name}</h3><p>{action.target_ids.join(", ")} · revision {action.expected_revision ?? "—"}</p></div><button aria-label={`Review ${action.tool_name} for ${action.target_ids.join(", ")}`} className="row-action-button" disabled={actionPages.loading} onClick={() => setReviewing(action)} type="button">Review</button></article>)}</div>{actionPages.totalPages > 1 ? <PaginationControls loading={actionPages.loading} loadingPage={actionPages.loadingPage} onPageChange={(nextPage) => void actionPages.goToPage(nextPage)} page={actionPages.page} pageSize={actionPages.pageSize} totalItems={actionPages.totalItems} totalPages={actionPages.totalPages} /> : null}<ConfirmationDialog busy={confirming} busyLabel="Executing AI action…" cancelLabel="Not now" confirmLabel="Confirm AI action" description={reviewing ? aiActionImpact(reviewing.tool_name) : "Review this action before execution."} onCancel={() => setReviewing(null)} onConfirm={() => void confirmAction()} open={Boolean(reviewing)} title={reviewing ? `Confirm ${reviewing.tool_name}` : "Confirm AI action"} tone="danger" /></section> : null}
       {!actionPages.initialLoading && !actionPages.loading && !actionPages.error && pendingActions.length === 0 ? <section className="console-panel pending-ai-panel"><div className="console-empty small"><Sparkles size={20} /><strong>No actions need approval</strong></div></section> : null}
       {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
     </ConsoleShell>

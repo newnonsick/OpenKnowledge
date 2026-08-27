@@ -1,19 +1,32 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
 
 type Theme = "light" | "dark";
 
 function currentTheme(): Theme {
-  if (typeof document === "undefined") {
+  if (typeof window === "undefined") {
     return "light";
   }
-  return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  try {
+    const stored = localStorage.getItem("aigw-theme");
+    if (stored === "dark" || stored === "light") {
+      return stored;
+    }
+  } catch {
+  }
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>(currentTheme);
+  const [theme, setTheme] = useState<Theme>("light");
+
+  useLayoutEffect(() => {
+    const resolved = currentTheme();
+    document.documentElement.dataset.theme = resolved;
+    setTheme(resolved);
+  }, []);
 
   useEffect(() => {
     const sync = () => setTheme(currentTheme());

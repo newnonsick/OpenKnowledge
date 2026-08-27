@@ -30,15 +30,17 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-const themeBootstrap = `(function(){try{var stored=localStorage.getItem("aigw-theme");var dark=stored?stored==="dark":window.matchMedia("(prefers-color-scheme: dark)").matches;if(dark){document.documentElement.dataset.theme="dark";}}catch(e){}})();`;
+const themeBootstrap = `(function(){try{var stored=localStorage.getItem("aigw-theme");var theme=stored==="dark"||stored==="light"?stored:window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.setAttribute("data-theme",theme);}catch(e){}})();`;
 
 export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   await connection();
   const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
-    <html lang="en" className={`${uiFont.variable} ${displayFont.variable}`}>
-      <body>
+    <html lang="en" className={`${uiFont.variable} ${displayFont.variable}`} data-theme="light" suppressHydrationWarning>
+      <head>
         <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} nonce={nonce} />
+      </head>
+      <body>
         {children}
       </body>
     </html>

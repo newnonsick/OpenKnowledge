@@ -429,6 +429,31 @@ describe("management console", () => {
     expect(screen.queryByText("First note")).not.toBeInTheDocument();
   });
 
+  it("keeps the current knowledge page stable and non-interactive while the next page loads", async () => {
+    let resolveSecondPage: ((value: unknown) => void) | undefined;
+    vi.mocked(apiRequest).mockImplementation((path) => {
+      if (path === "/api/v1/spaces?limit=100") {
+        return Promise.resolve({ items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] }) as never;
+      }
+      if (path === "/api/v1/knowledge?limit=25") {
+        return Promise.resolve({ items: [{ id: "note-1", space_id: "global", title: "First note", tags: [], version: 1, updated_at: "2026-08-20T12:00:00Z" }], page: 1, page_size: 25, total_items: 2, total_pages: 2 }) as never;
+      }
+      if (path === "/api/v1/knowledge?limit=25&page=2") {
+        return new Promise((resolve) => { resolveSecondPage = resolve; }) as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<KnowledgeConsole />);
+
+    const firstTitle = await screen.findByText("First note");
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(firstTitle.closest(".data-list")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Edit First note" })).toBeDisabled();
+
+    resolveSecondPage?.({ items: [{ id: "note-2", space_id: "global", title: "Second note", tags: [], version: 1, updated_at: "2026-08-20T11:00:00Z" }], page: 2, page_size: 25, total_items: 2, total_pages: 2 });
+    expect(await screen.findByText("Second note")).toBeInTheDocument();
+  });
+
   it("edits and archives knowledge with optimistic concurrency and confirmation", async () => {
     let version = 1;
     let archived = false;
