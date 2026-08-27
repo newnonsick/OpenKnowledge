@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Activity, Archive, ArrowUpRight, BookOpen, CircleAlert, Code2, FileText, FileUp, FolderKanban, KeyRound, Layers3, LoaderCircle, LockKeyhole, MonitorSmartphone, Plus, Save, Search, Settings2, ShieldCheck, Sparkles, Tag, UserMinus, UserPlus, UsersRound, X } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -47,6 +47,9 @@ const API_KEY_SCOPE_OPTIONS = [
 ] as const;
 
 const DEFAULT_API_KEY_SCOPES = ["knowledge:read"];
+
+const SETTINGS_SECTIONS = ["api-keys", "sessions", "runtime"] as const;
+type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 type SessionSummary = components["schemas"]["SessionSummary"];
 type SessionListResponse = components["schemas"]["Page_SessionSummary_"];
@@ -1448,12 +1451,17 @@ export function PeopleConsole() {
 
 export function SettingsConsole() {
   const member = useCurrentMember();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedSection = searchParams.get("section");
+  const initialSection = SETTINGS_SECTIONS.includes(requestedSection as SettingsSection) ? requestedSection as SettingsSection : "api-keys";
+  const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection);
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
   const [keySearch, setKeySearch] = useState("");
   const [appliedKeySearch, setAppliedKeySearch] = useState("");
-  const [keyStatus, setKeyStatus] = useState<"" | "active" | "revoked" | "expired">("");
-  const [sessionStatus, setSessionStatus] = useState<"" | "active" | "revoked" | "expired">("");
+  const [keyStatus, setKeyStatus] = useState<"" | "active" | "revoked" | "expired">("active");
+  const [sessionStatus, setSessionStatus] = useState<"" | "active" | "revoked" | "expired">("active");
   const [historyState, setHistoryState] = useState<"" | "active" | "superseded">("");
   const [runtimeDraft, setRuntimeDraft] = useState<RuntimeSettings | null>(null);
   const [pendingSettingsRestore, setPendingSettingsRestore] = useState<RuntimeSettings | null>(null);
@@ -1493,6 +1501,27 @@ export function SettingsConsole() {
   const keys = keyPages.items;
   const sessions = sessionPages.items;
   const settingsHistory = historyPages.items;
+
+  useEffect(() => {
+    setActiveSection(initialSection);
+  }, [initialSection]);
+
+  const selectSettingsSection = (section: SettingsSection) => {
+    setActiveSection(section);
+    router.replace(`/settings?section=${section}`, { scroll: false });
+  };
+
+  const moveSettingsSection = (event: ReactKeyboardEvent<HTMLButtonElement>, section: SettingsSection) => {
+    const currentIndex = SETTINGS_SECTIONS.indexOf(section);
+    const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    if (!direction) {
+      return;
+    }
+    event.preventDefault();
+    const nextSection = SETTINGS_SECTIONS[(currentIndex + direction + SETTINGS_SECTIONS.length) % SETTINGS_SECTIONS.length];
+    selectSettingsSection(nextSection);
+    document.getElementById(`settings-tab-${nextSection}`)?.focus();
+  };
 
   useEffect(() => {
     let active = true;
@@ -1673,8 +1702,13 @@ export function SettingsConsole() {
       spaceCount={loading ? null : spaces.length}
       title="Settings"
     >
+      <div aria-label="Settings sections" className="settings-tabs" role="tablist">
+        <button aria-controls="settings-panel-api-keys" aria-selected={activeSection === "api-keys"} className={activeSection === "api-keys" ? "is-active" : ""} id="settings-tab-api-keys" onClick={() => selectSettingsSection("api-keys")} onKeyDown={(event) => moveSettingsSection(event, "api-keys")} role="tab" tabIndex={activeSection === "api-keys" ? 0 : -1} type="button"><KeyRound size={16} /> API keys</button>
+        <button aria-controls="settings-panel-sessions" aria-selected={activeSection === "sessions"} className={activeSection === "sessions" ? "is-active" : ""} id="settings-tab-sessions" onClick={() => selectSettingsSection("sessions")} onKeyDown={(event) => moveSettingsSection(event, "sessions")} role="tab" tabIndex={activeSection === "sessions" ? 0 : -1} type="button"><MonitorSmartphone size={16} /> Sessions</button>
+        <button aria-controls="settings-panel-runtime" aria-selected={activeSection === "runtime"} className={activeSection === "runtime" ? "is-active" : ""} id="settings-tab-runtime" onClick={() => selectSettingsSection("runtime")} onKeyDown={(event) => moveSettingsSection(event, "runtime")} role="tab" tabIndex={activeSection === "runtime" ? 0 : -1} type="button"><Settings2 size={16} /> Runtime</button>
+      </div>
       <div className="settings-layout">
-        <section className="console-panel settings-section">
+        {activeSection === "api-keys" ? <section aria-labelledby="settings-tab-api-keys" className="console-panel settings-section" id="settings-panel-api-keys" role="tabpanel">
           <div className="panel-heading"><div><span>Personal credentials</span><h2>API keys</h2></div><KeyRound size={20} /></div>
           <p className="section-intro">Every member owns separate keys. Start with the narrowest scope and create another key for a different device or automation.</p>
           {createdKey ? <div className="secret-banner"><div><strong>Copy this key now</strong><span>It cannot be displayed again after you leave this result.</span></div><code>{createdKey.secret}</code><CopyButton label="Copy API key" value={createdKey.secret} /></div> : null}
@@ -1706,9 +1740,9 @@ export function SettingsConsole() {
           {keyPages.totalPages > 1 ? <PaginationControls loading={keyPages.loading} loadingPage={keyPages.loadingPage} onPageChange={(nextPage) => void keyPages.goToPage(nextPage)} page={keyPages.page} pageSize={keyPages.pageSize} totalItems={keyPages.totalItems} totalPages={keyPages.totalPages} /> : null}
           {keyError ? <p className="inline-error" role="alert">{keyError}</p> : null}
           <ConfirmationDialog busy={keySaving} busyLabel="Revoking API key…" cancelLabel="Keep key" confirmLabel="Confirm revoke API key" description="Clients using this key will lose access immediately." onCancel={() => setPendingKeyRevocation(null)} onConfirm={() => void revokeKey()} open={Boolean(pendingKeyRevocation)} title={pendingKeyRevocation ? `Revoke ${pendingKeyRevocation.name}` : "Revoke API key"} tone="danger" />
-        </section>
+        </section> : null}
 
-        <section className="console-panel settings-section">
+        {activeSection === "sessions" ? <section aria-labelledby="settings-tab-sessions" className="console-panel settings-section" id="settings-panel-sessions" role="tabpanel">
           <div className="panel-heading"><div><span>Website access</span><h2>Sessions</h2></div><MonitorSmartphone size={20} /></div>
           <div className="list-filter-bar single-filter-bar"><label><select aria-label="Filter session status" onChange={(event) => setSessionStatus(event.target.value as typeof sessionStatus)} value={sessionStatus}><option value="">All statuses</option><option value="active">Active</option><option value="expired">Expired</option><option value="revoked">Revoked</option></select></label></div>
           {sessionPages.initialLoading || (sessionPages.loading && sessions.length === 0) ? <ListSkeleton compact rows={3} /> : null}
@@ -1720,9 +1754,9 @@ export function SettingsConsole() {
           {sessionPages.totalPages > 1 ? <PaginationControls loading={sessionPages.loading} loadingPage={sessionPages.loadingPage} onPageChange={(nextPage) => void sessionPages.goToPage(nextPage)} page={sessionPages.page} pageSize={sessionPages.pageSize} totalItems={sessionPages.totalItems} totalPages={sessionPages.totalPages} /> : null}
           {sessionError ? <p className="inline-error" role="alert">{sessionError}</p> : null}
           <ConfirmationDialog busy={sessionSaving} busyLabel="Signing out session…" cancelLabel="Keep signed in" confirmLabel="Confirm sign out" description="The selected session and all of its credentials will be revoked." onCancel={() => setPendingSessionRevocation(null)} onConfirm={() => void revokeSession()} open={Boolean(pendingSessionRevocation)} title="Sign out website session" tone="danger" />
-        </section>
+        </section> : null}
 
-        <section className="console-panel settings-section runtime-section">
+        {activeSection === "runtime" ? <section aria-labelledby="settings-tab-runtime" className="console-panel settings-section runtime-section" id="settings-panel-runtime" role="tabpanel">
           <div className="panel-heading"><div><span>Production boundary</span><h2>Safe runtime settings</h2></div><Settings2 size={20} /></div>
           {loading ? <ListSkeleton compact rows={3} /> : <>
           <div className="runtime-summary"><div><span>Active revision</span><strong>{settings?.revision ?? 0}</strong></div><div><span>State</span><strong>{settings?.state || "active"}</strong></div><div><span>Change mode</span><strong>{member.system_role === "super_admin" ? "Draft + activate" : "Read only"}</strong></div></div>
@@ -1754,9 +1788,9 @@ export function SettingsConsole() {
             ))}
           </div>
           </>}
-        </section>
+        </section> : null}
       </div>
-      {runtimeError ? <p className="inline-error wide" role="alert">{runtimeError}</p> : null}
+      {runtimeError && activeSection === "runtime" ? <p className="inline-error wide" role="alert">{runtimeError}</p> : null}
     </ConsoleShell>
   );
 }

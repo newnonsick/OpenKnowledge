@@ -5,11 +5,12 @@ import { ActivityConsole, AiActionsConsole, ExploreConsole, IngestionConsole, Kn
 import { apiMultipart, apiRequest } from "@/lib/api-client";
 
 const currentMember = vi.hoisted(() => ({ display_name: "Mai", system_role: "member" as "member" | "super_admin" }));
+const navigation = vi.hoisted(() => ({ replace: vi.fn(), search: "q=water" }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/spaces",
-  useRouter: () => ({ replace: vi.fn() }),
-  useSearchParams: () => new URLSearchParams("q=water"),
+  useRouter: () => ({ replace: navigation.replace }),
+  useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 
 vi.mock("@/components/auth/session-gate", () => ({
@@ -103,6 +104,8 @@ describe("management console", () => {
   beforeEach(() => {
     currentMember.display_name = "Mai";
     currentMember.system_role = "member";
+    navigation.replace.mockReset();
+    navigation.search = "q=water";
     vi.mocked(apiRequest).mockReset();
     vi.mocked(apiMultipart).mockReset();
   });
@@ -758,6 +761,50 @@ describe("management console", () => {
     });
   });
 
+  it("shows one URL-addressable settings section and defaults credential lists to active records", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [] } as never;
+      }
+      if (path === "/api/v1/api-keys?limit=25&status=active" || path === "/api/v1/sessions?limit=25&status=active") {
+        return { items: [] } as never;
+      }
+      if (path === "/api/v1/settings") {
+        return { revision: 0, state: "active", values: { retrieval: { limit: 20 } } } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<SettingsConsole />);
+
+    expect(await screen.findByRole("tab", { name: "API keys" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "API keys" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Sessions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Safe runtime settings" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Sessions" }));
+    expect(screen.getByRole("heading", { name: "Sessions" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "API keys" })).not.toBeInTheDocument();
+    expect(navigation.replace).toHaveBeenCalledWith("/settings?section=sessions", { scroll: false });
+  });
+
+  it("opens a directly linked settings section", async () => {
+    currentMember.system_role = "super_admin";
+    navigation.search = "section=runtime";
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path.startsWith("/api/v1/spaces") || path.startsWith("/api/v1/api-keys") || path.startsWith("/api/v1/sessions") || path.startsWith("/api/v1/settings/history")) {
+        return { items: [] } as never;
+      }
+      if (path === "/api/v1/settings") {
+        return { revision: 2, state: "active", values: { retrieval: { limit: 20 } } } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<SettingsConsole />);
+
+    expect(screen.getByRole("tab", { name: "Runtime" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("heading", { name: "Safe runtime settings" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "API keys" })).not.toBeInTheDocument();
+  });
+
   it("revokes API keys and other website sessions only after confirmation", async () => {
     let keyRevoked = false;
     let sessionRevoked = false;
@@ -765,14 +812,14 @@ describe("management console", () => {
       if (path.startsWith("/api/v1/spaces")) {
         return { items: [] } as never;
       }
-      if (path === "/api/v1/api-keys?limit=25" && !options?.method) {
+      if (path === "/api/v1/api-keys?limit=25&status=active" && !options?.method) {
         return { items: keyRevoked ? [] : [{ id: "key-1", public_id: "pk_live_1", name: "Laptop", status: "active", scopes: ["knowledge:read"], created_at: "2026-08-20T12:00:00Z" }] } as never;
       }
       if (path === "/api/v1/api-keys/key-1" && options?.method === "DELETE") {
         keyRevoked = true;
         return undefined as never;
       }
-      if (path === "/api/v1/sessions?limit=25" && !options?.method) {
+      if (path === "/api/v1/sessions?limit=25&status=active" && !options?.method) {
         return { items: [
           { id: "session-current", current: true, status: "active", created_at: "2026-08-20T12:00:00Z", last_activity_at: "2026-08-20T12:00:00Z" },
           ...(!sessionRevoked ? [{ id: "session-other", current: false, status: "active", created_at: "2026-08-19T12:00:00Z", last_activity_at: "2026-08-19T13:00:00Z" }] : []),
@@ -795,6 +842,7 @@ describe("management console", () => {
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/api-keys/key-1", { idempotent: true, method: "DELETE" }));
     await waitFor(() => expect(screen.queryByText("pk_live_1 · knowledge:read")).not.toBeInTheDocument());
 
+    fireEvent.click(screen.getByRole("tab", { name: "Sessions" }));
     fireEvent.click(screen.getByRole("button", { name: "Sign out website session" }));
     expect(screen.getByRole("alertdialog", { name: "Sign out website session" })).toHaveAttribute("aria-modal", "true");
     fireEvent.click(screen.getByRole("button", { name: "Confirm sign out" }));
@@ -809,10 +857,10 @@ describe("management console", () => {
       if (path.startsWith("/api/v1/spaces")) {
         return { items: [] } as never;
       }
-      if (path === "/api/v1/api-keys?limit=25") {
+      if (path === "/api/v1/api-keys?limit=25&status=active") {
         return { items: [] } as never;
       }
-      if (path === "/api/v1/sessions?limit=25") {
+      if (path === "/api/v1/sessions?limit=25&status=active") {
         return { items: [] } as never;
       }
       if (path === "/api/v1/settings" && !options?.method) {
@@ -831,6 +879,7 @@ describe("management console", () => {
     });
     render(<SettingsConsole />);
 
+    fireEvent.click(screen.getByRole("tab", { name: "Runtime" }));
     fireEvent.change(await screen.findByLabelText("Retrieval result limit"), { target: { value: "15" } });
     fireEvent.change(screen.getByLabelText("Change reason"), { target: { value: "Improve focused family search" } });
     fireEvent.click(screen.getByRole("button", { name: "Create validated draft" }));
@@ -863,10 +912,10 @@ describe("management console", () => {
       if (path.startsWith("/api/v1/spaces")) {
         return { items: [] } as never;
       }
-      if (path === "/api/v1/api-keys?limit=25") {
+      if (path === "/api/v1/api-keys?limit=25&status=active") {
         return { items: [] } as never;
       }
-      if (path === "/api/v1/sessions?limit=25") {
+      if (path === "/api/v1/sessions?limit=25&status=active") {
         return { items: [] } as never;
       }
       if (path === "/api/v1/settings" && !options?.method) {
@@ -882,6 +931,7 @@ describe("management console", () => {
     });
     render(<SettingsConsole />);
 
+    fireEvent.click(screen.getByRole("tab", { name: "Runtime" }));
     fireEvent.change(await screen.findByLabelText("Change reason"), { target: { value: "Restore the proven focused profile" } });
     fireEvent.click(await screen.findByRole("button", { name: "Restore revision 1" }));
     expect(screen.getByRole("alertdialog", { name: "Restore revision 1" })).toHaveAttribute("aria-modal", "true");

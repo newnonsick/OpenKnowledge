@@ -84,7 +84,7 @@ export function AppSidebar({
         <span className="profile-avatar">{initials || "M"}</span>
         <span><strong>{member.displayName}</strong><small>{member.role}</small></span>
       </Link>
-      <Link className="account-link" href="/settings"><KeyRound aria-hidden="true" size={15} /><span>API keys</span></Link>
+      <Link className="account-link" href="/settings?section=api-keys"><KeyRound aria-hidden="true" size={15} /><span>API keys</span></Link>
       <ThemeToggle />
       <button aria-label="Sign out" className="account-link" disabled={signingOut} onClick={() => void signOut()} type="button"><LogOut aria-hidden="true" size={15} /><span>{signingOut ? "Signing out…" : "Sign out"}</span></button>
     </>
