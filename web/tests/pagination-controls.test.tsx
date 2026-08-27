@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { PaginationControls } from "@/components/pagination-controls";
 
 describe("PaginationControls", () => {
-  it("shows numeric pages, boundaries, totals, and direct page entry for long lists", () => {
+  it("shows compact navigation and clamped direct entry for long lists", () => {
     const onPageChange = vi.fn();
     render(
       <PaginationControls
@@ -18,19 +18,21 @@ describe("PaginationControls", () => {
     );
 
     expect(screen.getByRole("navigation", { name: "Pagination" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Page 1" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Page 2" })).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByRole("button", { name: "Page 1" })).not.toBeInTheDocument();
     expect(screen.getByText("26–50 of 300")).toBeInTheDocument();
+    expect(screen.getByText("of 12")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Previous page" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Next page" })).toBeEnabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Page 3" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    expect(onPageChange).toHaveBeenCalledWith(1);
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(onPageChange).toHaveBeenCalledWith(3);
 
     const directInput = screen.getByRole("textbox", { name: "Jump to page of 12" });
-    fireEvent.change(directInput, { target: { value: "1" } });
+    fireEvent.change(directInput, { target: { value: "99" } });
     fireEvent.keyDown(directInput, { key: "Enter" });
-    expect(onPageChange).toHaveBeenCalledWith(1);
+    expect(onPageChange).toHaveBeenCalledWith(12);
   });
 
   it("omits direct page entry for short lists", () => {
@@ -46,6 +48,7 @@ describe("PaginationControls", () => {
     );
 
     expect(screen.getByText("26–50 of 75")).toBeInTheDocument();
+    expect(screen.getByText("Page 2 of 3")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: /Jump to page/ })).not.toBeInTheDocument();
   });
 

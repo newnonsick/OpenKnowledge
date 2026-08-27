@@ -689,10 +689,10 @@ html[data-theme="dark"] .row-leading.violet { color: var(--accent); }
 
 .pagination-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
 .pagination-summary { margin: 0; margin-right: auto; color: var(--ink-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
-.pagination-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.pagination-actions { display: flex; align-items: center; gap: 6px; }
 .pagination-button {
-  min-width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
-  padding: 0 6px; border: 1px solid transparent; border-radius: 8px; background: transparent;
+  min-width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  padding: 0 10px; border: 1px solid transparent; border-radius: 8px; background: transparent;
   color: var(--ink-soft); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer;
   transition: border-color 0.15s ease-out, color 0.15s ease-out, background 0.15s ease-out;
 }
@@ -700,14 +700,10 @@ html[data-theme="dark"] .row-leading.violet { color: var(--accent); }
 html[data-theme="dark"] .pagination-button:hover:not(:disabled) { color: var(--ink); }
 .pagination-button:disabled { cursor: default; opacity: 0.4; }
 .pagination-step { border-color: var(--line-strong); background: var(--surface); }
-.pagination-number { padding: 0; }
-.pagination-number.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-strong); }
-html[data-theme="dark"] .pagination-number.active { color: var(--accent); }
-.pagination-pages { display: flex; align-items: center; gap: 2px; }
-.pagination-ellipsis { min-width: 14px; color: var(--ink-faint); text-align: center; font-size: 12px; }
-.pagination-jump-label { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; color: var(--ink-faint); font-size: 12px; font-weight: 550; }
+.pagination-current, .pagination-jump-label { min-height: 36px; display: inline-flex; align-items: center; gap: 6px; color: var(--ink-faint); font-size: 12px; font-weight: 550; white-space: nowrap; }
+.pagination-current { padding: 0 6px; font-variant-numeric: tabular-nums; }
 .pagination-jump-input {
-  width: 44px; height: 28px; padding: 0 7px; border: 1px solid var(--line-strong); border-radius: 8px;
+  width: 44px; height: 30px; padding: 0 7px; border: 1px solid var(--line-strong); border-radius: 8px;
   background: var(--surface); color: var(--ink); font-size: 12.5px; text-align: center; font-variant-numeric: tabular-nums;
 }
 .pagination-jump-input:focus { border-color: var(--accent); outline: 0; box-shadow: 0 0 0 3px var(--ring); }
@@ -1326,9 +1322,8 @@ html[data-theme="dark"] .auth-story { background: radial-gradient(circle at 85% 
   .list-filter-bar .secondary-button, .filter-clear-button { width: 100%; min-height: 40px; }
   .console-unavailable { grid-template-columns: 1fr; align-items: flex-start; }
   .console-unavailable .secondary-button { width: 100%; }
-  .pagination-jump-label { width: 100%; margin-left: 0; justify-content: space-between; }
-  .pagination-jump-word { display: none; }
-  .pagination-jump-input { flex: 1 1 auto; width: auto; min-width: 0; }
+  .pagination-actions { width: 100%; justify-content: space-between; }
+  .pagination-current, .pagination-jump-label { margin-inline: auto; }
   .editor-actions { grid-template-columns: 1fr; }
   .space-card-footer { align-items: stretch; flex-direction: column; }
   .space-manage-button { width: 100%; justify-content: center; white-space: normal; }
@@ -1345,6 +1340,9 @@ html[data-theme="dark"] .auth-story { background: radial-gradient(circle at 85% 
 }
 
 @media (max-width: 540px) {
+  .pagination-step-label { display: none; }
+  .pagination-button { width: 40px; height: 40px; padding: 0; }
+  .pagination-current, .pagination-jump-label { min-height: 40px; }
   .modal-backdrop { align-items: end; padding: 12px; }
   .modal-surface { width: 100%; max-height: calc(100dvh - 24px); border-radius: 18px; }
   .confirmation-dialog { padding: 20px; }

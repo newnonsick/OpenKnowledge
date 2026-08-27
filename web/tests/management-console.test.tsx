@@ -377,7 +377,7 @@ describe("management console", () => {
     expect(await screen.findByRole("option", { name: "Later space" })).toBeInTheDocument();
   });
 
-  it("paginates knowledge with numeric pages and resets after filtering", async () => {
+  it("paginates knowledge and resets after filtering", async () => {
     vi.mocked(apiRequest).mockImplementation(async (path) => {
       if (path === "/api/v1/spaces?limit=100") {
         return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] } as never;
@@ -414,7 +414,7 @@ describe("management console", () => {
     render(<KnowledgeConsole />);
 
     expect(await screen.findByText("First note")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Page 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(await screen.findByText("Second note")).toBeInTheDocument();
     expect(screen.queryByText("First note")).not.toBeInTheDocument();
 
@@ -563,7 +563,7 @@ describe("management console", () => {
     await waitFor(() => expect(screen.queryByText("Procedures")).not.toBeInTheDocument());
   });
 
-  it("loads a direct numeric source page and replaces the page contents", async () => {
+  it("loads the next source page and replaces the page contents", async () => {
     vi.mocked(apiRequest).mockImplementation(async (path) => {
       if (path.startsWith("/api/v1/spaces")) {
         return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] } as never;
@@ -579,7 +579,7 @@ describe("management console", () => {
     render(<SourcesConsole />);
 
     expect(await screen.findByText("Second")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Page 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
 
     expect(await screen.findByText("First")).toBeInTheDocument();
     expect(screen.queryByText("Second")).not.toBeInTheDocument();
