@@ -77,7 +77,20 @@ npm run test:browser       # Playwright chromium suite including accessibility c
 npm run build              # production build
 ```
 
-The browser suite runs on Windows in CI and includes accessibility assertions. Vitest runs in jsdom. Pagination component and management-console tests cover numeric page buttons, direct page navigation, server-side filter resets, total counts, and replacement of the visible page slice.
+The browser suite runs on Windows in CI and includes accessibility assertions. Vitest runs in jsdom. Pagination component and management-console tests cover compact previous/next controls, direct page entry for long collections, server-side filter resets, total counts, stable loading geometry, and replacement of the visible page slice. Browser coverage also checks modal focus restoration, stored-theme hydration, task-first responsive ordering, axe violations, document overflow, and visible component overflow.
+
+### Real-service console audits
+
+With the frontend, API, worker, PostgreSQL, object storage, and configured providers running from the repository `.env`, the browser scripts exercise the production interface against real services:
+
+```bash
+cd web
+node scripts/visual-audit.mjs
+node scripts/verify-flows.mjs
+node scripts/feature-e2e.mjs
+```
+
+`visual-audit.mjs` captures every console and public entry route at desktop, tablet, and mobile sizes, including each Settings section. It writes screenshots under `reports/shots/audit`, findings to `reports/audit-findings.json`, and per-route page-height and overflow measurements to `reports/audit-measurements.json`. `verify-flows.mjs` covers representative interaction, focus, dialog, pagination, theme, and sign-out behavior. `feature-e2e.mjs` is the broader destructive workflow check; it creates and archives test records, exercises ownership and identity controls, uploads a real source, waits for ingestion, rotates runtime settings, and signs out. Run it only in an isolated verification environment.
 
 ## Generated client contract
 

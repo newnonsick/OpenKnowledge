@@ -61,7 +61,7 @@ try {
   step("spaces: change role to editor", true);
 
   await memberRow.getByRole("button", { name: `Transfer ownership to ${helper.display_name}` }).click();
-  await page.locator(".confirmation-strip").waitFor();
+  await page.getByRole("alertdialog").waitFor();
   await page.getByRole("button", { name: "Confirm ownership transfer" }).click();
   const dialogAppeared = await page.locator(".step-up-dialog").waitFor({ state: "visible", timeout: 4000 }).then(() => true).catch(() => false);
   if (dialogAppeared) {
@@ -74,7 +74,7 @@ try {
     await card.getByRole("button", { name: `Manage access for ${uniqueName}` }).click();
     await page.locator(".space-access-panel").waitFor();
     await memberRow.getByRole("button", { name: `Transfer ownership to ${helper.display_name}` }).click();
-    await page.locator(".confirmation-strip").waitFor();
+    await page.getByRole("alertdialog").waitFor();
     await page.getByRole("button", { name: "Confirm ownership transfer" }).click();
     await page.waitForTimeout(1500);
   } else {
@@ -95,7 +95,7 @@ try {
   await page.getByLabel("New owner", { exact: true }).selectOption({ index: 0 });
   await page.getByLabel("Recovery reason").fill("Feature check recovery of the demo space");
   await page.getByRole("button", { name: "Review ownership repair" }).click();
-  await page.locator(".confirmation-strip").waitFor();
+  await page.getByRole("alertdialog").waitFor();
   await page.getByRole("button", { name: "Confirm emergency transfer" }).click();
   await page.locator(".inline-success").waitFor();
   step("people: emergency ownership recovery returns space to admin", true);
@@ -106,12 +106,12 @@ try {
   const rowText = await page.locator(".data-row").first().locator(".row-copy p").textContent();
   step("knowledge: rows show space name", !rowText.includes("space-"), rowText.trim());
   const summary1 = await page.locator(".pagination-summary").textContent();
-  await page.locator(".pagination-number", { hasText: "2" }).first().click();
+  await page.getByRole("button", { name: "Next page" }).click();
   await page.locator(".pagination-summary", { hasText: "26–50" }).waitFor();
   const summary2 = await page.locator(".pagination-summary").textContent();
   step("knowledge: page 2 navigation", summary1.includes("1–25") && summary2.includes("26–50"), `${summary1.trim()} -> ${summary2.trim()}`);
-  await page.getByRole("spinbutton", { name: "Go to page" }).fill("4");
-  await page.getByRole("button", { name: "Go to page" }).click();
+  await page.getByRole("textbox", { name: /Jump to page/ }).fill("4");
+  await page.getByRole("textbox", { name: /Jump to page/ }).press("Enter");
   await page.locator(".pagination-summary", { hasText: "76–8" }).waitFor();
   const summary3 = await page.locator(".pagination-summary").textContent();
   step("knowledge: go-to-page jumps to 4", summary3.includes("76–8"), summary3.trim());
@@ -132,7 +132,7 @@ try {
   step("knowledge: save revision bumps version", true);
 
   await page.getByRole("button", { name: "Archive" }).click();
-  await page.locator(".confirmation-strip").waitFor();
+  await page.getByRole("alertdialog").waitFor();
   await page.getByRole("button", { name: "Confirm archive" }).click();
   await page.waitForTimeout(1000);
   step("knowledge: archive item", true);
@@ -174,7 +174,7 @@ try {
   const failedCard = page.locator(".job-card", { hasText: "embedding_provider_error" }).first();
   if (await failedCard.count() > 0) {
     await failedCard.getByRole("button", { name: "Retry job" }).click();
-    await page.locator(".confirmation-strip").waitFor();
+    await page.getByRole("alertdialog").waitFor();
     await page.getByRole("button", { name: "Confirm retry job" }).click();
     await page.waitForTimeout(1200);
     let retriedOk = false;
@@ -205,17 +205,17 @@ try {
   await newMemberRow.getByRole("button", { name: "Manage Feature Check Member" }).click();
   await page.locator(".member-admin-panel").waitFor();
   await page.getByRole("button", { name: `Disable Feature Check Member ${runId}` }).click();
-  await page.locator(".confirmation-strip").waitFor();
+  await page.getByRole("alertdialog").waitFor();
   await page.getByRole("button", { name: "Confirm disable member" }).click();
   await page.getByRole("button", { name: `Enable Feature Check Member ${runId}` }).waitFor();
   step("people: disable member", true);
   await page.getByRole("button", { name: `Enable Feature Check Member ${runId}` }).click();
-  await page.locator(".confirmation-strip").waitFor();
+  await page.getByRole("alertdialog").waitFor();
   await page.getByRole("button", { name: "Confirm enable member" }).click();
   await page.getByRole("button", { name: `Disable Feature Check Member ${runId}` }).waitFor();
   step("people: enable member", true);
   await page.getByRole("button", { name: `Reset Feature Check Member ${runId} password` }).click();
-  await page.locator(".confirmation-strip").waitFor();
+  await page.getByRole("alertdialog").waitFor();
   await page.getByRole("button", { name: "Confirm password reset" }).click();
   await page.locator(".member-reset-secret").waitFor();
   step("people: reset password shows temporary secret", true);
@@ -230,12 +230,12 @@ try {
   step("settings: create API key reveals secret once", true);
   const keyRow = page.locator(".data-row", { hasText: `Feature check key ${runId}` });
   await keyRow.getByRole("button", { name: `Revoke Feature check key ${runId}` }).click();
-  await page.locator(".confirmation-strip").waitFor();
+  await page.getByRole("alertdialog").waitFor();
   await page.getByRole("button", { name: "Confirm revoke API key" }).click();
-  await keyRow.locator(".status-pill", { hasText: "revoked" }).waitFor();
-  const revokedPill = await keyRow.locator(".status-pill").textContent();
-  step("settings: revoke API key", revokedPill.includes("revoked"), revokedPill.trim());
+  await keyRow.waitFor({ state: "hidden" });
+  step("settings: revoke API key leaves the active list", true);
 
+  await page.getByRole("tab", { name: "Runtime" }).click();
   const activeRevision = await page.locator(".runtime-summary div:nth-child(1) strong").textContent();
   await page.getByLabel("Retrieval result limit").fill("23");
   await page.getByLabel("Change reason").fill("Feature check runtime adjustment");
@@ -248,7 +248,7 @@ try {
 
   const restoreRow = page.locator(".data-row", { hasText: `Revision ${activeRevision}` });
   await restoreRow.getByRole("button", { name: `Restore revision ${activeRevision}` }).click();
-  await page.locator(".confirmation-strip").waitFor();
+  await page.getByRole("alertdialog").waitFor();
   await page.getByRole("button", { name: `Confirm restore revision ${activeRevision}` }).click();
   await page.waitForTimeout(1200);
   step("settings: restore historical revision", true);

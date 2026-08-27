@@ -131,16 +131,15 @@ const firstArchive = page.getByRole("button", { name: /^Archive .* source/ }).fi
 const rowTitle = await firstArchive.evaluate((el) => el.getAttribute("aria-label").replace("Archive ", ""));
 await firstArchive.click();
 await page.waitForTimeout(500);
-const stripVisible = await page.getByRole("alertdialog", { name: `Archive ${rowTitle}` }).isVisible();
-const stripNearRow = stripVisible ? await page.getByRole("alertdialog", { name: `Archive ${rowTitle}` }).evaluate((el, title) => {
-  const strip = el.getBoundingClientRect();
-  const rows = [...document.querySelectorAll(".source-row")];
-  const row = rows.find((r) => r.textContent.includes(title));
-  const rowRect = row.getBoundingClientRect();
-  return strip.top >= rowRect.top && strip.bottom - rowRect.bottom < 220;
-}, rowTitle) : false;
-check("source archive confirmation appears under its row", stripNearRow, rowTitle);
-await page.screenshot({ path: `${shots}/08-source-confirm-inline.png` });
+const archiveDialog = page.getByRole("alertdialog", { name: `Archive ${rowTitle}` });
+check("source archive confirmation is modal", await archiveDialog.getAttribute("aria-modal") === "true", rowTitle);
+await page.keyboard.press("Escape");
+await archiveDialog.waitFor({ state: "hidden" });
+check("Escape closes source confirmation", await archiveDialog.count() === 0);
+check("source confirmation restores trigger focus", await firstArchive.evaluate((element) => element === document.activeElement));
+await firstArchive.click();
+await archiveDialog.waitFor();
+await page.screenshot({ path: `${shots}/08-source-confirm-modal.png` });
 await page.getByRole("button", { name: "Keep source" }).click();
 
 await page.getByRole("link", { name: "Activity" }).click();
@@ -175,20 +174,8 @@ const revokeRow = page.getByRole("article").filter({ hasText: keyName });
 await revokeRow.getByRole("button", { name: `Revoke ${keyName}` }).click();
 await page.waitForTimeout(400);
 await page.getByRole("alertdialog", { name: `Revoke ${keyName}` }).getByRole("button", { name: "Confirm revoke API key" }).click();
-let revoked = false;
-let lastRowText = "";
-let dialogStillOpen = 0;
-for (let attempt = 0; attempt < 15 && !revoked; attempt += 1) {
-  await page.waitForTimeout(1000);
-  lastRowText = await page.locator("article").filter({ hasText: keyName }).first().textContent().catch(() => "");
-  dialogStillOpen = await page.getByRole("alertdialog", { name: `Revoke ${keyName}` }).count();
-  revoked = Boolean(lastRowText && lastRowText.toLowerCase().includes("revoked"));
-}
-if (!revoked) {
-  await page.screenshot({ path: `${shots}/revoke-failure.png` });
-  console.log("revoke debug: row=" + JSON.stringify(lastRowText) + " dialogOpen=" + dialogStillOpen);
-}
-check("API key revoked", revoked);
+await revokeRow.waitFor({ state: "hidden", timeout: 15000 });
+check("API key revoked and removed from the active list", true);
 await page.screenshot({ path: `${shots}/10-settings-key-revoked.png` });
 
 const themeBefore = await page.evaluate(() => document.documentElement.dataset.theme);

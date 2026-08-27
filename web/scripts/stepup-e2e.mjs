@@ -35,7 +35,7 @@ try {
   await page.locator(".membership-row", { hasText: memberName }).waitFor();
   const transferButton = page.getByRole("button", { name: `Transfer ownership to ${memberName}` });
   await transferButton.click();
-  await page.locator(".confirmation-strip").waitFor();
+  await page.getByRole("alertdialog").waitFor();
   await page.getByRole("button", { name: "Confirm ownership transfer" }).click();
   await page.locator(".step-up-dialog").waitFor({ timeout: 8000 });
   await page.screenshot({ path: "../reports/shots/e2e/step-up-dialog.png" });
@@ -48,7 +48,7 @@ try {
   step("step-up: verification accepted, dialog closes", true);
 
   await transferButton.click();
-  await page.locator(".confirmation-strip").waitFor();
+  await page.getByRole("alertdialog").waitFor();
   await page.getByRole("button", { name: "Confirm ownership transfer" }).click();
   await page.locator(".space-access-panel").waitFor({ state: "hidden", timeout: 8000 });
   step("step-up: retried action succeeds", true);

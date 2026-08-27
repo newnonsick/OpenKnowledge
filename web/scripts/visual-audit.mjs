@@ -17,7 +17,9 @@ const PAGES = [
   { path: "/ai-actions", name: "ai-actions" },
   { path: "/people", name: "people" },
   { path: "/activity", name: "activity" },
-  { path: "/settings", name: "settings" },
+  { path: "/settings?section=api-keys", name: "settings-api-keys" },
+  { path: "/settings?section=sessions", name: "settings-sessions" },
+  { path: "/settings?section=runtime", name: "settings-runtime" },
   { path: "/first-use/password", name: "first-use-password" },
   { path: "/login", name: "login" },
 ];
@@ -26,6 +28,7 @@ mkdirSync("../reports/shots/audit", { recursive: true });
 
 const browser = await launch();
 const findings = [];
+const measurements = [];
 
 for (const viewport of VIEWPORTS) {
   let context, page;
@@ -55,7 +58,11 @@ for (const viewport of VIEWPORTS) {
           wide.push(`${el.tagName.toLowerCase()}.${String(el.className).split(" ")[0]}(${Math.round(box.right)})`);
         }
       });
-      return { scrollW: doc.scrollWidth, clientW: doc.clientWidth, wide: wide.slice(0, 6), url: location.pathname };
+      const componentOverflow = [...document.querySelectorAll("main *")].filter((el) => {
+        const style = getComputedStyle(el);
+        return style.display !== "none" && style.visibility !== "hidden" && style.overflowX === "visible" && el.scrollWidth > el.clientWidth + 1;
+      }).map((el) => `${el.tagName.toLowerCase()}.${String(el.className).split(" ")[0]}`).slice(0, 8);
+      return { scrollW: doc.scrollWidth, clientW: doc.clientWidth, componentOverflow, pageHeight: doc.scrollHeight, wide: wide.slice(0, 6), url: location.pathname + location.search };
     });
     if (overflow.url !== target.path) {
       findings.push({ viewport: viewport.name, page: target.name, issue: `redirected to ${overflow.url}` });
@@ -69,6 +76,10 @@ for (const viewport of VIEWPORTS) {
         elements: overflow.wide,
       });
     }
+    if (overflow.componentOverflow.length > 0) {
+      findings.push({ viewport: viewport.name, page: target.name, issue: "visible component overflow", elements: overflow.componentOverflow });
+    }
+    measurements.push({ viewport: viewport.name, page: target.name, pageHeight: overflow.pageHeight, clientWidth: overflow.clientW, scrollWidth: overflow.scrollW, componentOverflow: overflow.componentOverflow });
     await page.screenshot({ path: `../reports/shots/audit/${target.name}-${viewport.name}.png`, fullPage: true });
   }
 
@@ -80,5 +91,6 @@ for (const viewport of VIEWPORTS) {
 
 await browser.close();
 writeFileSync("../reports/audit-findings.json", JSON.stringify(findings, null, 2));
+writeFileSync("../reports/audit-measurements.json", JSON.stringify(measurements, null, 2));
 console.log(JSON.stringify(findings, null, 1));
 console.log("AUDIT DONE, findings:", findings.length);
