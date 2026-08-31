@@ -228,7 +228,10 @@ describe("management console", () => {
     });
     render(<SpacesConsole />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Manage access for Travel plans" }));
+    const accessTrigger = await screen.findByRole("button", { name: "Manage access for Travel plans" });
+    accessTrigger.focus();
+    fireEvent.click(accessTrigger);
+    expect(await screen.findByRole("dialog", { name: "Travel plans access" })).toHaveAttribute("aria-modal", "true");
     expect(await screen.findByRole("option", { name: "Nana (@nana)" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add member" }));
 
@@ -249,6 +252,8 @@ describe("management console", () => {
       method: "DELETE",
     }));
     await waitFor(() => expect(screen.queryByText("@nana")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Close access manager" }));
+    await waitFor(() => expect(accessTrigger).toHaveFocus());
   });
 
   it("uses the step-up ownership command instead of an ordinary role change", async () => {

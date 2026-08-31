@@ -620,10 +620,7 @@ html[data-theme="dark"] .role-owner { color: var(--accent); }
 html[data-theme="dark"] .space-manage-button:hover { color: var(--accent); }
 
 .access-loading { margin-top: 16px; border-top: 1px solid var(--line); }
-.space-access-panel, .member-admin-panel {
-  margin: 18px 0; padding: 20px 22px; border: 1px solid var(--line-strong); border-radius: var(--radius-md);
-  background: var(--surface); animation: reveal 0.18s ease-out;
-}
+.space-access-dialog { width: min(100%, 760px); padding: 24px; }
 .space-access-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .space-access-actions { display: flex; flex: 0 0 auto; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .archive-button.compact { min-height: 32px; margin: 0; padding: 0 10px; border-radius: 8px; }
@@ -1446,7 +1443,7 @@ html[data-theme="dark"] .auth-story { background: radial-gradient(circle at 85% 
   .modal-surface { width: 100%; max-height: calc(100dvh - 24px); border-radius: 18px; }
   .confirmation-dialog { padding: 20px; }
   .knowledge-editor { padding: 20px; }
-  .member-editor-dialog { padding: 20px; }
+  .member-editor-dialog, .space-access-dialog { padding: 20px; }
   .modal-actions { display: grid; grid-template-columns: 1fr; }
   .modal-actions > button { width: 100%; min-height: 44px; }
   .auth-story { padding: 18px 20px 24px; }

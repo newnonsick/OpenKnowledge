@@ -148,9 +148,9 @@ export function SpacesConsole() {
   const [accessError, setAccessError] = useState<string | null>(null);
   const [totalSpaces, setTotalSpaces] = useState<number | null>(null);
   const [spaceCountLoading, setSpaceCountLoading] = useState(true);
-  const accessPanelRef = useRef<HTMLElement>(null);
+  const accessDialogTitleId = useId();
+  const accessDialogReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const createNameRef = useRef<HTMLInputElement>(null);
-  const scrolledSpaceRef = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -192,26 +192,11 @@ export function SpacesConsole() {
   const accessLoading = selectedSpace !== null && (!memberPages.queryReady || !candidatePages.queryReady || memberPages.initialLoading || candidatePages.initialLoading || (memberPages.loading && spaceMembers.length === 0) || (candidatePages.loading && memberCandidates.length === 0));
 
   useEffect(() => {
-    if (!selectedSpace) {
-      scrolledSpaceRef.current = null;
-      return;
-    }
-    if (scrolledSpaceRef.current === selectedSpace.id || accessLoading) {
-      return;
-    }
-    const node = accessPanelRef.current;
-    if (!node) {
-      return;
-    }
-    scrolledSpaceRef.current = selectedSpace.id;
-    node.scrollIntoView({ block: "nearest" });
-  }, [selectedSpace, accessLoading]);
-
-  useEffect(() => {
     setCandidateId((current) => memberCandidates.some((candidate) => candidate.member_id === current) ? current : memberCandidates[0]?.member_id || "");
   }, [memberCandidates]);
 
-  const loadAccess = useCallback((space: Space) => {
+  const loadAccess = useCallback((space: Space, trigger: HTMLButtonElement) => {
+    accessDialogReturnFocusRef.current = trigger;
     setSelectedSpace(space);
     setMemberSearch("");
     setAppliedMemberSearch("");
@@ -221,6 +206,17 @@ export function SpacesConsole() {
     setConfirmSpaceArchive(false);
     setAccessError(null);
   }, []);
+
+  const closeAccessManager = () => {
+    if (accessSaving) {
+      return;
+    }
+    setSelectedSpace(null);
+    setPendingRemoval(null);
+    setPendingOwnership(null);
+    setConfirmSpaceArchive(false);
+    setAccessError(null);
+  };
 
   const refreshSelectedSpace = useCallback(async () => {
     if (!selectedSpace) {
@@ -383,16 +379,18 @@ export function SpacesConsole() {
             <span className="count-pill">{spacePages.initialLoading ? "…" : spacePages.totalItems}</span>
           </div>
           <form className="list-filter-bar space-filter-bar" onSubmit={(event) => { event.preventDefault(); setAppliedSpaceSearch(spaceSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={15} /><input aria-label="Search spaces" onChange={(event) => setSpaceSearch(event.target.value)} placeholder="Search name or ID" type="search" value={spaceSearch} /></label><button className="secondary-button" type="submit">Apply</button>{appliedSpaceSearch ? <button className="filter-clear-button" onClick={() => { setSpaceSearch(""); setAppliedSpaceSearch(""); }} type="button">Clear</button> : null}</form>
-          {selectedSpace && !accessLoading ? (
-            <section className="space-access-panel" aria-label={`${selectedSpace.name} access`} ref={accessPanelRef}>
+          {selectedSpace ? (
+            <>
+            <ModalDialog ariaLabelledBy={accessDialogTitleId} className="space-access-dialog" onClose={closeAccessManager} open={!pendingRemoval && !pendingOwnership && !confirmSpaceArchive} returnFocusTarget={accessDialogReturnFocusRef.current}>
               <div className="space-access-heading">
-                <div><span>Owner controls</span><h2>{selectedSpace.name} access</h2></div>
+                <div><span>Owner controls</span><h2 id={accessDialogTitleId}>{selectedSpace.name} access</h2></div>
                 <div className="space-access-actions">
                   {selectedSpace.id !== "global" ? <button aria-label={`Archive ${selectedSpace.name}`} className="archive-button compact" onClick={() => setConfirmSpaceArchive(true)} type="button"><Archive size={14} /> Archive space</button> : null}
-                  <button aria-label="Close access manager" className="icon-button" onClick={() => setSelectedSpace(null)} type="button"><X size={16} /></button>
+                  <button aria-label="Close access manager" className="icon-button" disabled={accessSaving} onClick={closeAccessManager} type="button"><X size={16} /></button>
                 </div>
               </div>
               {accessError ? <p className="inline-error" role="alert">{accessError}</p> : null}
+              {accessLoading ? <div className="console-loading access-loading"><LoaderCircle className="spin" size={18} /> Loading space access…</div> : <>
               <form className="list-filter-bar access-filter-bar" onSubmit={(event) => { event.preventDefault(); setAppliedCandidateSearch(candidateSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={14} /><input aria-label="Find member to add" onChange={(event) => setCandidateSearch(event.target.value)} placeholder="Find a member to add" type="search" value={candidateSearch} /></label><button className="secondary-button" type="submit">Find member</button></form>
               <form className="membership-add-form" onSubmit={addMember}>
                 <div>
@@ -426,12 +424,13 @@ export function SpacesConsole() {
               {memberPages.error || candidatePages.error ? <ListUnavailable label="space access" onRetry={() => { void memberPages.reload(); void candidatePages.reload(); }} /> : null}
               {memberPages.totalPages > 1 ? <div className="access-pagination-group"><p className="access-pagination-label">Members</p><PaginationControls loading={memberPages.loading} loadingPage={memberPages.loadingPage} onPageChange={(nextPage) => void memberPages.goToPage(nextPage)} page={memberPages.page} pageSize={memberPages.pageSize} totalItems={memberPages.totalItems} totalPages={memberPages.totalPages} /></div> : null}
               {candidatePages.totalPages > 1 ? <div className="access-pagination-group"><p className="access-pagination-label">Members available to add</p><PaginationControls loading={candidatePages.loading} loadingPage={candidatePages.loadingPage} onPageChange={(nextPage) => void candidatePages.goToPage(nextPage)} page={candidatePages.page} pageSize={candidatePages.pageSize} totalItems={candidatePages.totalItems} totalPages={candidatePages.totalPages} /></div> : null}
+              </>}
+            </ModalDialog>
               <ConfirmationDialog busy={accessSaving} busyLabel="Removing member…" cancelLabel="Keep member" confirmLabel="Confirm removal" description="They will immediately lose access to this space and its search results." onCancel={() => setPendingRemoval(null)} onConfirm={() => void removeMember()} open={Boolean(pendingRemoval)} title={pendingRemoval ? `Remove ${pendingRemoval.display_name} from ${selectedSpace.name}` : "Remove member"} tone="danger" />
               <ConfirmationDialog busy={accessSaving} busyLabel="Transferring ownership…" cancelLabel="Keep ownership" confirmLabel="Confirm ownership transfer" description="You will become an editor. A recent identity verification is required, and the blocked action is never replayed automatically." onCancel={() => setPendingOwnership(null)} onConfirm={() => void transferOwnership()} open={Boolean(pendingOwnership)} title={pendingOwnership ? `Transfer ownership to ${pendingOwnership.display_name}` : "Transfer ownership"} tone="danger" />
               <ConfirmationDialog busy={accessSaving} busyLabel="Archiving space…" cancelLabel="Keep space" confirmLabel="Confirm archive space" description="Its knowledge will leave unified search immediately, while history remains preserved." onCancel={() => setConfirmSpaceArchive(false)} onConfirm={() => void archiveSelectedSpace()} open={confirmSpaceArchive} title={`Archive ${selectedSpace.name}`} tone="danger" />
-            </section>
+            </>
           ) : null}
-          {accessLoading ? <div className="console-loading access-loading"><LoaderCircle className="spin" size={18} /> Loading space access…</div> : null}
           {spacePages.initialLoading || (spacePages.loading && spaces.length === 0) ? <ListSkeleton /> : null}
           {spacePages.error ? <ListUnavailable label="spaces" onRetry={() => void spacePages.reload()} /> : null}
           {!spacePages.initialLoading && !spacePages.loading && !spacePages.error && spaces.length === 0 ? (
@@ -450,7 +449,7 @@ export function SpacesConsole() {
                 <span className={`role-pill role-${space.role}`}>{space.role}</span>
                 <div className="space-card-footer">
                   <span className="space-card-meta"><ShieldCheck aria-hidden="true" size={13} /> {space.role === "owner" ? "You manage this space" : "Request access changes from the owner"}</span>
-                  {space.role === "owner" ? <button aria-label={`Manage access for ${space.name}`} className="space-manage-button" disabled={spacePages.loading} onClick={() => void loadAccess(space)} type="button"><UsersRound size={13} /> Manage access</button> : null}
+                  {space.role === "owner" ? <button aria-label={`Manage access for ${space.name}`} className="space-manage-button" disabled={spacePages.loading} onClick={(event) => loadAccess(space, event.currentTarget)} type="button"><UsersRound size={13} /> Manage access</button> : null}
                 </div>
               </article>
             ))}
