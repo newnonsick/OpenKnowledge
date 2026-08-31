@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SessionGate } from "@/components/auth/session-gate";
@@ -252,5 +252,39 @@ describe("SessionGate", () => {
       const path = input instanceof Request ? new URL(input.url).pathname : String(input);
       return path === "/api/v1/auth/step-up";
     })).toHaveLength(1);
+  });
+
+  it("keeps cancellation locked while identity verification is submitting", async () => {
+    let resolveStepUp: (response: Response) => void = () => {};
+    const pendingStepUp = new Promise<Response>((resolve) => {
+      resolveStepUp = resolve;
+    });
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const path = input instanceof Request ? new URL(input.url).pathname : String(input);
+      if (path === "/api/v1/auth/step-up") {
+        return pendingStepUp;
+      }
+      return new Response(JSON.stringify({
+        id: "member-1",
+        username: "mai",
+        display_name: "Mai",
+        status: "active",
+        system_role: "member",
+        requires_password_change: false,
+      }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<SessionGate><div>Private console</div></SessionGate>);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    window.dispatchEvent(new CustomEvent("aigw-step-up-required"));
+    fireEvent.change(await screen.findByLabelText("Current password"), { target: { value: "family-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Verify identity" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled());
+    resolveStepUp(new Response(JSON.stringify({ status: "reauthenticated", step_up_expires_at: "2026-08-20T12:10:00Z" }), { status: 200 }));
   });
 });

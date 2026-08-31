@@ -204,6 +204,24 @@ test("opens discovery with the advertised keyboard shortcut", async ({ page }) =
   await expect(page.getByRole("heading", { name: "Explore" })).toBeVisible();
 });
 
+test("returns focus after confirmation hands off to identity verification", async ({ page }) => {
+  await mockGateway(page);
+  await page.goto("/spaces");
+
+  await page.getByRole("button", { name: "Manage access for Travel plans" }).click();
+  const trigger = page.getByRole("button", { name: "Transfer ownership to Nana Arun" });
+  await trigger.click();
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("aigw-step-up-required")));
+  await expect(page.getByRole("dialog", { name: "Verify your identity" })).toBeVisible();
+  await expect(page.locator("[aria-modal='true']:visible")).toHaveCount(1);
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  await expect(page.getByRole("dialog", { name: "Verify your identity" })).toBeHidden();
+  await expect(trigger).toBeFocused();
+});
+
 test("keeps the sign-in action in the first mobile viewport", async ({ page }) => {
   await page.setViewportSize({ height: 844, width: 390 });
   await page.goto("/login");

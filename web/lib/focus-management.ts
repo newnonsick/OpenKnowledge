@@ -4,6 +4,20 @@ import { useLayoutEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 
 const focusableSelector = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+const modalReturnTargets = new WeakMap<Event, HTMLElement>();
+let activeModalReturnTarget: HTMLElement | null = null;
+
+export function modalReturnTargetFor(event: Event): HTMLElement | null {
+  const mappedTarget = modalReturnTargets.get(event);
+  if (mappedTarget?.isConnected) {
+    return mappedTarget;
+  }
+  if (activeModalReturnTarget?.isConnected) {
+    modalReturnTargets.set(event, activeModalReturnTarget);
+    return activeModalReturnTarget;
+  }
+  return null;
+}
 
 function focusableElements(root: HTMLElement): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>(focusableSelector)).filter((element) => !element.hidden);
@@ -69,7 +83,7 @@ export function useDrawerFocus(open: boolean, setOpen: Dispatch<SetStateAction<b
   return { closeRef, drawerRef, triggerRef };
 }
 
-export function useModalFocus(open: boolean, onClose: () => void) {
+export function useModalFocus(open: boolean, onClose: () => void, explicitReturnTarget?: HTMLElement | null) {
   const dialogRef = useRef<HTMLElement>(null);
   const returnRef = useRef<HTMLElement | null>(null);
   const closeRef = useRef(onClose);
@@ -88,7 +102,10 @@ export function useModalFocus(open: boolean, onClose: () => void) {
       return;
     }
 
-    returnRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    returnRef.current = explicitReturnTarget?.isConnected ? explicitReturnTarget : activeElement;
+    activeModalReturnTarget = returnRef.current;
+    const modalReturnTarget = returnRef.current;
     const background = Array.from(document.body.children).filter((element) => !element.hasAttribute("data-modal-root")) as HTMLElement[];
     const priorOverflow = document.body.style.overflow;
     background.forEach((element) => {
@@ -119,16 +136,26 @@ export function useModalFocus(open: boolean, onClose: () => void) {
         containFocus(event, dialogRef.current);
       }
     };
+    const preserveReturnTarget = (event: Event) => {
+      if (returnRef.current?.isConnected) {
+        modalReturnTargets.set(event, returnRef.current);
+      }
+    };
 
     document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("aigw-step-up-required", preserveReturnTarget, { capture: true });
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("aigw-step-up-required", preserveReturnTarget, { capture: true });
+      if (activeModalReturnTarget === modalReturnTarget) {
+        activeModalReturnTarget = null;
+      }
       background.forEach((element) => {
         element.inert = false;
       });
       document.body.style.overflow = priorOverflow;
     };
-  }, [open]);
+  }, [explicitReturnTarget, open]);
 
   return dialogRef;
 }

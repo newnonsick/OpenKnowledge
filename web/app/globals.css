@@ -1361,7 +1361,7 @@ html[data-theme="dark"] .auth-story { background: radial-gradient(circle at 85% 
   .ownership-transfer-button, .membership-remove-button, .secret-value button, .secret-banner button { width: 40px; height: 40px; }
   .icon-button, .mobile-menu-button { width: 40px; height: 40px; }
   .pagination-button { min-width: 38px; min-height: 38px; }
-  .pagination-direct-input { height: 38px; }
+  .pagination-jump-input { height: 38px; }
   .first-use-page { padding: 22px; }
   .first-use-layout { grid-template-columns: minmax(0, 1fr); gap: 36px; padding: 40px 0; }
   .first-use-context, .first-use-card { min-width: 0; }

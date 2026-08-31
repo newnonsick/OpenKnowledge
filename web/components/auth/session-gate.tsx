@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 
 import { ModalDialog } from "@/components/confirmation-dialog";
 import { ApiError, apiRequest, contractClient, contractData, noteMeaningfulActivity, refreshSession } from "@/lib/api-client";
+import { modalReturnTargetFor } from "@/lib/focus-management";
 import type { components } from "@/lib/generated/openapi";
 
 export type CurrentMember = components["schemas"]["CurrentMember"];
@@ -34,6 +35,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
   const [member, setMember] = useState<CurrentMember | null>(cachedMember);
   const [failed, setFailed] = useState(false);
   const [stepUpOpen, setStepUpOpen] = useState(false);
+  const [stepUpReturnTarget, setStepUpReturnTarget] = useState<HTMLElement | null>(null);
   const [stepUpFactor, setStepUpFactor] = useState<"recovery" | "totp">("totp");
   const [stepUpError, setStepUpError] = useState<string | null>(null);
   const [stepUpSubmitting, setStepUpSubmitting] = useState(false);
@@ -124,7 +126,8 @@ export function SessionGate({ children }: { children: ReactNode }) {
   }, [router]);
 
   useEffect(() => {
-    const requireStepUp = () => {
+    const requireStepUp = (event: Event) => {
+      setStepUpReturnTarget(modalReturnTargetFor(event));
       setStepUpError(null);
       setStepUpOpen(true);
     };
@@ -173,7 +176,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
   return (
     <SessionContext.Provider value={member}>
       {children}
-      <ModalDialog ariaDescribedBy={stepUpDescriptionId} ariaLabelledBy={stepUpTitleId} className="step-up-dialog" onClose={() => { if (!stepUpSubmitting) setStepUpOpen(false); }} open={stepUpOpen}>
+      <ModalDialog ariaDescribedBy={stepUpDescriptionId} ariaLabelledBy={stepUpTitleId} className="step-up-dialog" onClose={() => { if (!stepUpSubmitting) setStepUpOpen(false); }} open={stepUpOpen} returnFocusTarget={stepUpReturnTarget}>
             <div className="step-up-heading"><span><KeyRound aria-hidden="true" size={18} /></span><div><small>Security check</small><h2 id={stepUpTitleId}>Verify your identity</h2></div><button aria-label="Close identity verification" disabled={stepUpSubmitting} onClick={() => setStepUpOpen(false)} type="button"><X aria-hidden="true" size={18} /></button></div>
             <p id={stepUpDescriptionId}>For extra security, this action needs a fresh identity check. Nothing was saved yet — verify below, then run the action again.</p>
             <form onSubmit={submitStepUp}>
@@ -190,7 +193,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
                 </>
               ) : null}
               {stepUpError ? <div className="auth-error" role="alert">{stepUpError}</div> : null}
-              <div className="step-up-actions"><button className="secondary-button" onClick={() => setStepUpOpen(false)} type="button">Cancel</button><button className="primary-button" disabled={stepUpSubmitting} type="submit">{stepUpSubmitting ? "Verifying…" : "Verify identity"}</button></div>
+              <div className="step-up-actions"><button className="secondary-button" disabled={stepUpSubmitting} onClick={() => setStepUpOpen(false)} type="button">Cancel</button><button className="primary-button" disabled={stepUpSubmitting} type="submit">{stepUpSubmitting ? "Verifying…" : "Verify identity"}</button></div>
             </form>
       </ModalDialog>
     </SessionContext.Provider>

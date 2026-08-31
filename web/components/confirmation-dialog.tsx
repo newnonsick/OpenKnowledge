@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode, useId, useState } from "react";
+import { ReactNode, useEffect, useId, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, LoaderCircle } from "lucide-react";
 
@@ -13,6 +13,7 @@ type ModalDialogProps = {
   className?: string;
   onClose: () => void;
   open: boolean;
+  returnFocusTarget?: HTMLElement | null;
   role?: "alertdialog" | "dialog";
 };
 
@@ -23,9 +24,10 @@ export function ModalDialog({
   className = "",
   onClose,
   open,
+  returnFocusTarget,
   role = "dialog",
 }: ModalDialogProps) {
-  const dialogRef = useModalFocus(open, onClose);
+  const dialogRef = useModalFocus(open, onClose, returnFocusTarget);
   const [portalRoot] = useState<HTMLElement | null>(() => {
     if (typeof document === "undefined") {
       return null;
@@ -96,6 +98,15 @@ export function ConfirmationDialog({
   const titleId = useId();
   const descriptionId = useId();
   const actionClass = tone === "danger" ? "danger-button" : tone === "primary" ? "primary-button" : "secondary-button modal-confirm-button";
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const closeForStepUp = () => onCancel();
+    window.addEventListener("aigw-step-up-required", closeForStepUp);
+    return () => window.removeEventListener("aigw-step-up-required", closeForStepUp);
+  }, [onCancel, open]);
 
   return (
     <ModalDialog
