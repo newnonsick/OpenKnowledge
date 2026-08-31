@@ -713,7 +713,7 @@ describe("management console", () => {
 
     expect(await screen.findByText("Temp-Only-Once!42")).toBeInTheDocument();
     expect(screen.getByRole("searchbox", { name: "Search members" })).toHaveValue("nana");
-    expect(await screen.findByRole("button", { name: "Manage Nana" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Edit Nana" })).toBeInTheDocument();
     const createdMemberPath = memberPaths.findLast((path) => path.includes("q=nana"));
     expect(createdMemberPath).not.toContain("status=");
     expect(createdMemberPath).not.toContain("system_role=");
@@ -728,20 +728,21 @@ describe("management console", () => {
         return { items: [{ id: "global", name: "Family Shared", role: "owner", revision: 1 }] } as never;
       }
       if (path === "/api/v1/members?limit=25") {
-        return { items: [{ id: "member-1", username: "nana", display_name: "Nana", status: disabled ? "disabled" : "active", system_role: "member", requires_password_change: false }] } as never;
+        return { items: [{ id: "member-1", username: "nana", display_name: "Nana", mfa_enabled: false, status: disabled ? "disabled" : "active", system_role: "member", requires_password_change: false }] } as never;
       }
       if (path === "/api/v1/members/member-1/password-reset" && options?.method === "POST") {
         return { id: "member-1", temporary_password: "Reset-Only-Once!42", temporary_password_expires_at: "2026-08-21T12:00:00Z", requires_password_change: true } as never;
       }
       if (path === "/api/v1/members/member-1" && options?.method === "PATCH") {
         disabled = true;
-        return { id: "member-1", username: "nana", display_name: "Nana", status: "disabled", system_role: "member", requires_password_change: true } as never;
+        return { id: "member-1", username: "nana", display_name: "Nana", mfa_enabled: false, status: "disabled", system_role: "member", requires_password_change: true } as never;
       }
       throw new Error(`Unexpected path ${path}`);
     });
     render(<PeopleConsole />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Manage Nana" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Nana" }));
+    expect(screen.getByRole("dialog", { name: "Edit Nana" })).toHaveAttribute("aria-modal", "true");
     fireEvent.click(screen.getByRole("button", { name: "Reset Nana password" }));
     expect(screen.getByRole("alertdialog", { name: "Reset Nana password" })).toHaveAttribute("aria-modal", "true");
     expect(screen.getByText(/signs out every session/i)).toBeInTheDocument();
@@ -757,7 +758,49 @@ describe("management console", () => {
       idempotent: true,
       method: "PATCH",
     }));
-    expect(await screen.findByText("disabled")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText("disabled").length).toBeGreaterThan(0));
+  });
+
+  it("gates super-admin promotion on confirmed member MFA inside the edit dialog", async () => {
+    currentMember.system_role = "super_admin";
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [] } as never;
+      }
+      if (path === "/api/v1/members?limit=25") {
+        return { items: [
+          { id: "member-1", username: "nana", display_name: "Nana", mfa_enabled: false, status: "active", system_role: "member", requires_password_change: false },
+          { id: "member-2", username: "jo", display_name: "Jo", mfa_enabled: true, status: "active", system_role: "member", requires_password_change: false },
+        ] } as never;
+      }
+      if (path === "/api/v1/members/member-2" && options?.method === "PATCH") {
+        return { id: "member-2", username: "jo", display_name: "Jo", mfa_enabled: true, status: "active", system_role: "super_admin", requires_password_change: false } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<PeopleConsole />);
+
+    const nanaTrigger = await screen.findByRole("button", { name: "Edit Nana" });
+    nanaTrigger.focus();
+    fireEvent.click(nanaTrigger);
+    const nanaDialog = screen.getByRole("dialog", { name: "Edit Nana" });
+    expect(nanaDialog).toBeInTheDocument();
+    expect(nanaDialog.querySelector('option[value="super_admin"]')).toBeDisabled();
+    expect(screen.getByText(/set up MFA in Settings.*Security/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close member editor" }));
+    await waitFor(() => expect(nanaTrigger).toHaveFocus());
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Jo" }));
+    expect(screen.getByRole("dialog", { name: "Edit Jo" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("System role"), { target: { value: "super_admin" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save account" }));
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/members/member-2", {
+      body: { display_name: "Jo", status: "active", system_role: "super_admin" },
+      idempotent: true,
+      method: "PATCH",
+    }));
+    expect(screen.queryByRole("dialog", { name: "Edit Jo" })).not.toBeInTheDocument();
   });
 
   it("lets a super admin repair ownership without granting themselves space access", async () => {

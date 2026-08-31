@@ -36,6 +36,11 @@ type APIKeySummary = components["schemas"]["APIKeySummary"];
 type APIKeyListResponse = components["schemas"]["Page_APIKeySummary_"];
 type CreatedAPIKey = components["schemas"]["CreatedAPIKey"];
 
+type MemberDraft = {
+  displayName: string;
+  systemRole: MemberSummary["system_role"];
+};
+
 const API_KEY_SCOPE_OPTIONS = [
   { description: "Search and read knowledge you can access", label: "Read knowledge", value: "knowledge:read" },
   { description: "Create and edit knowledge in writable spaces", label: "Write knowledge", value: "knowledge:write" },
@@ -1131,6 +1136,7 @@ export function PeopleConsole() {
   const [displayName, setDisplayName] = useState("");
   const [created, setCreated] = useState<CreatedMember | null>(null);
   const [selectedMember, setSelectedMember] = useState<MemberSummary | null>(null);
+  const [memberDraft, setMemberDraft] = useState<MemberDraft | null>(null);
   const [pendingMemberAction, setPendingMemberAction] = useState<"disable" | "enable" | "reset" | null>(null);
   const [resetPassword, setResetPassword] = useState<ResetMemberPassword | null>(null);
   const [recoverySpaceSearch, setRecoverySpaceSearch] = useState("");
@@ -1149,6 +1155,8 @@ export function PeopleConsole() {
   const [manageError, setManageError] = useState<string | null>(null);
   const [recoverySaving, setRecoverySaving] = useState(false);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const memberEditorTitleId = useId();
+  const memberEditorReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const isAdmin = member.system_role === "super_admin";
 
   const loadMemberPage = useCallback((page: number, signal: AbortSignal) => isAdmin
@@ -1230,8 +1238,8 @@ export function PeopleConsole() {
     }
   };
 
-  const updateSelectedMember = async (status = selectedMember?.status) => {
-    if (!selectedMember || !status || memberSaving) {
+  const updateSelectedMember = async (status = selectedMember?.status, closeOnSuccess = false) => {
+    if (!selectedMember || !memberDraft || !status || memberSaving) {
       return;
     }
     setMemberSaving(true);
@@ -1239,20 +1247,37 @@ export function PeopleConsole() {
     try {
       const response = await contractData(contractClient.PATCH("/api/v1/members/{member_id}", {
         body: {
-          display_name: selectedMember.display_name,
+          display_name: memberDraft.displayName.trim(),
           status,
-          system_role: selectedMember.system_role,
+          system_role: memberDraft.systemRole,
         },
         params: { header: { "Idempotency-Key": idempotencyKey() }, path: { member_id: selectedMember.id } },
       }));
-      setSelectedMember(response);
       setPendingMemberAction(null);
+      if (closeOnSuccess) {
+        setSelectedMember(null);
+        setMemberDraft(null);
+      } else {
+        setSelectedMember(response);
+        setMemberDraft({ displayName: response.display_name, systemRole: response.system_role });
+      }
       memberPages.reload();
     } catch (updateError) {
       setManageError(message(updateError));
     } finally {
       setMemberSaving(false);
     }
+  };
+
+  const closeMemberEditor = () => {
+    if (memberSaving) {
+      return;
+    }
+    setSelectedMember(null);
+    setMemberDraft(null);
+    setPendingMemberAction(null);
+    setResetPassword(null);
+    setManageError(null);
   };
 
   const resetSelectedMemberPassword = async () => {
@@ -1340,33 +1365,54 @@ export function PeopleConsole() {
             {memberPages.error ? <ListUnavailable label="members" onRetry={() => void memberPages.reload()} /> : null}
             <div aria-busy={memberPages.loading} className={`data-list${memberPages.loading && members.length > 0 ? " is-page-loading" : ""}`}>
               {members.map((person) => (
-                <article className="data-row member-row" key={person.id}>
+                <button
+                  aria-label={`Edit ${person.display_name}`}
+                  className="data-row member-row member-row-trigger"
+                  disabled={memberPages.loading}
+                  key={person.id}
+                  onClick={(event) => {
+                    memberEditorReturnFocusRef.current = event.currentTarget;
+                    setSelectedMember(person);
+                    setMemberDraft({ displayName: person.display_name, systemRole: person.system_role });
+                    setPendingMemberAction(null);
+                    setResetPassword(null);
+                    setManageError(null);
+                  }}
+                  type="button"
+                >
                   <span className="profile-avatar">{person.display_name.slice(0, 2).toUpperCase()}</span>
-                  <div className="row-copy"><h3>{person.display_name}</h3><p>@{person.username}</p></div>
-                  <div className="member-state"><span className={`status-pill status-${person.status}`}>{person.status}</span>{person.requires_password_change ? <small>First sign-in pending</small> : null}</div>
-                  <button aria-label={`Manage ${person.display_name}`} className="row-action-button" disabled={memberPages.loading} onClick={() => { setSelectedMember(person); setPendingMemberAction(null); setResetPassword(null); }} type="button"><Settings2 size={14} /> Manage</button>
-                </article>
+                  <span className="row-copy member-row-copy"><strong>{person.display_name}</strong><small>@{person.username}</small></span>
+                  <span className="member-state"><span className={`status-pill status-${person.status}`}>{person.status}</span>{person.requires_password_change ? <small>First sign-in pending</small> : null}</span>
+                  <span className="member-edit-affordance"><span>Edit</span><ArrowUpRight aria-hidden="true" size={14} /></span>
+                </button>
               ))}
             </div>
             {memberPages.totalPages > 1 ? <PaginationControls loading={memberPages.loading} loadingPage={memberPages.loadingPage} onPageChange={(nextPage) => void memberPages.goToPage(nextPage)} page={memberPages.page} pageSize={memberPages.pageSize} totalItems={memberPages.totalItems} totalPages={memberPages.totalPages} /> : null}
-            {selectedMember ? (
-              <section aria-label={`Manage ${selectedMember.display_name}`} className="member-admin-panel">
-                <div className="space-access-heading"><div><span>Account controls</span><h2>{selectedMember.display_name}</h2></div><button aria-label="Close member manager" className="icon-button" onClick={() => setSelectedMember(null)} type="button"><X size={16} /></button></div>
+            {selectedMember && memberDraft ? (
+              <>
+              <ModalDialog ariaLabelledBy={memberEditorTitleId} className="member-editor-dialog" onClose={closeMemberEditor} open={pendingMemberAction === null} returnFocusTarget={memberEditorReturnFocusRef.current}>
+                <div className="member-editor-header"><div><span>Account controls</span><h2 id={memberEditorTitleId}>Edit {selectedMember.display_name}</h2><p>@{selectedMember.username}</p></div><button aria-label="Close member editor" className="icon-button" disabled={memberSaving} onClick={closeMemberEditor} type="button"><X size={16} /></button></div>
+                <div className="member-readiness">
+                  <div><span>Account status</span><strong className={`status-pill status-${selectedMember.status}`}>{selectedMember.status}</strong></div>
+                  <div><span>Multi-factor authentication</span><strong className={`status-pill ${selectedMember.mfa_enabled ? "status-active" : "status-pending"}`}>{selectedMember.mfa_enabled ? "Ready" : "Not set up"}</strong></div>
+                </div>
                 <div className="member-admin-form">
-                  <div><label htmlFor="member-admin-display-name">Display name</label><input id="member-admin-display-name" maxLength={255} onChange={(event) => setSelectedMember({ ...selectedMember, display_name: event.target.value })} value={selectedMember.display_name} /></div>
-                  <div><label htmlFor="member-admin-system-role">System role</label><select id="member-admin-system-role" onChange={(event) => setSelectedMember({ ...selectedMember, system_role: event.target.value as MemberSummary["system_role"] })} value={selectedMember.system_role}><option value="member">Member</option><option value="super_admin">Super admin</option></select></div>
-                  <button className="secondary-button" disabled={memberSaving} onClick={() => void updateSelectedMember()} type="button"><Save size={14} /> Save account</button>
+                  <div><label htmlFor="member-admin-display-name">Display name</label><input id="member-admin-display-name" maxLength={255} onChange={(event) => setMemberDraft({ ...memberDraft, displayName: event.target.value })} value={memberDraft.displayName} /></div>
+                  <div><label htmlFor="member-admin-system-role">System role</label><select id="member-admin-system-role" onChange={(event) => setMemberDraft({ ...memberDraft, systemRole: event.target.value as MemberSummary["system_role"] })} value={memberDraft.systemRole}><option value="member">Member</option><option disabled={selectedMember.system_role !== "super_admin" && (!selectedMember.mfa_enabled || selectedMember.status !== "active")} value="super_admin">Super admin</option></select></div>
+                  {selectedMember.system_role !== "super_admin" && (!selectedMember.mfa_enabled || selectedMember.status !== "active") ? <p className="member-promotion-guidance"><LockKeyhole aria-hidden="true" size={15} /> This member must set up MFA in Settings → Security before promotion to Super admin.</p> : null}
+                  <div className="member-editor-actions"><button className="secondary-button" disabled={memberSaving} onClick={closeMemberEditor} type="button">Cancel</button><button className="primary-button" disabled={memberSaving || !memberDraft.displayName.trim()} onClick={() => void updateSelectedMember(undefined, true)} type="button">{memberSaving ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <Save aria-hidden="true" size={14} />} Save account</button></div>
                 </div>
                 <div className="member-security-actions">
                   <button className="secondary-button" disabled={memberSaving} onClick={() => { setResetPassword(null); setPendingMemberAction("reset"); }} type="button"><KeyRound size={14} /> Reset {selectedMember.display_name} password</button>
                   {selectedMember.status === "disabled" ? <button className="secondary-button" disabled={memberSaving} onClick={() => setPendingMemberAction("enable")} type="button">Enable {selectedMember.display_name}</button> : <button className="archive-button compact" disabled={memberSaving} onClick={() => setPendingMemberAction("disable")} type="button">Disable {selectedMember.display_name}</button>}
                 </div>
                 {manageError ? <p className="inline-error" role="alert">{manageError}</p> : null}
-                <ConfirmationDialog busy={memberSaving} busyLabel="Resetting password…" cancelLabel="Keep password" confirmLabel="Confirm password reset" description="This signs out every session, revokes active API keys, and creates a one-time password." onCancel={() => setPendingMemberAction(null)} onConfirm={() => void resetSelectedMemberPassword()} open={pendingMemberAction === "reset"} title={`Reset ${selectedMember.display_name} password`} tone="danger" />
-                <ConfirmationDialog busy={memberSaving} busyLabel="Disabling member…" cancelLabel="Keep active" confirmLabel="Confirm disable member" description="This immediately revokes sessions and API keys. Space history remains preserved." onCancel={() => setPendingMemberAction(null)} onConfirm={() => void updateSelectedMember("disabled")} open={pendingMemberAction === "disable"} title={`Disable ${selectedMember.display_name}`} tone="danger" />
-                <ConfirmationDialog busy={memberSaving} busyLabel="Enabling member…" cancelLabel="Keep disabled" confirmLabel="Confirm enable member" description="The member can authenticate again, but revoked sessions and keys remain revoked." onCancel={() => setPendingMemberAction(null)} onConfirm={() => void updateSelectedMember("active")} open={pendingMemberAction === "enable"} title={`Enable ${selectedMember.display_name}`} tone="primary" />
                 {resetPassword ? <div className="member-reset-secret"><p>This temporary password is shown only once.</p><div className="secret-value"><code>{resetPassword.temporary_password}</code><CopyButton label="Copy reset password" value={resetPassword.temporary_password} /></div></div> : null}
-              </section>
+              </ModalDialog>
+              <ConfirmationDialog busy={memberSaving} busyLabel="Resetting password…" cancelLabel="Keep password" confirmLabel="Confirm password reset" description="This signs out every session, revokes active API keys, and creates a one-time password." onCancel={() => setPendingMemberAction(null)} onConfirm={() => void resetSelectedMemberPassword()} open={pendingMemberAction === "reset"} title={`Reset ${selectedMember.display_name} password`} tone="danger" />
+              <ConfirmationDialog busy={memberSaving} busyLabel="Disabling member…" cancelLabel="Keep active" confirmLabel="Confirm disable member" description="This immediately revokes sessions and API keys. Space history remains preserved." onCancel={() => setPendingMemberAction(null)} onConfirm={() => void updateSelectedMember("disabled")} open={pendingMemberAction === "disable"} title={`Disable ${selectedMember.display_name}`} tone="danger" />
+              <ConfirmationDialog busy={memberSaving} busyLabel="Enabling member…" cancelLabel="Keep disabled" confirmLabel="Confirm enable member" description="The member can authenticate again, but revoked sessions and keys remain revoked." onCancel={() => setPendingMemberAction(null)} onConfirm={() => void updateSelectedMember("active")} open={pendingMemberAction === "enable"} title={`Enable ${selectedMember.display_name}`} tone="primary" />
+              </>
             ) : null}
           </section>
           <aside className="console-panel action-panel member-create-panel">
