@@ -149,6 +149,27 @@ describe("usePagePagination", () => {
     expect(result.current.items).toHaveLength(1);
   });
 
+  it("marks changed query data stale until the replacement request settles", async () => {
+    let resolveEngineering: ((value: { items: { id: string; label: string }[]; page: number; page_size: number; total_items: number; total_pages: number }) => void) | undefined;
+    const { result, rerender } = renderHook(
+      ({ query }) => usePagePagination({
+        loadPage: () => query === "finance"
+          ? Promise.resolve({ items: [{ id: "finance", label: "Finance" }], page: 1, page_size: 25, total_items: 1, total_pages: 1 })
+          : new Promise<{ items: { id: string; label: string }[]; page: number; page_size: number; total_items: number; total_pages: number }>((resolve) => { resolveEngineering = resolve; }),
+        queryKey: query,
+      }),
+      { initialProps: { query: "finance" } },
+    );
+
+    await waitFor(() => expect(result.current.queryReady).toBe(true));
+    rerender({ query: "engineering" });
+    expect(result.current.queryReady).toBe(false);
+
+    resolveEngineering?.({ items: [{ id: "engineering", label: "Engineering" }], page: 1, page_size: 25, total_items: 1, total_pages: 1 });
+    await waitFor(() => expect(result.current.queryReady).toBe(true));
+    expect(result.current.items[0]?.id).toBe("engineering");
+  });
+
   it("exposes errors and can recover with reload", async () => {
     let attempt = 0;
     const loadPage = vi.fn(async () => {

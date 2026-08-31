@@ -1,11 +1,11 @@
 "use client";
 
-import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useId, useRef, useState } from "react";
 import { Activity, Archive, ArrowUpRight, BookOpen, CircleAlert, Code2, FileText, FileUp, FolderKanban, KeyRound, Layers3, LoaderCircle, LockKeyhole, MonitorSmartphone, Plus, Save, Search, Settings2, ShieldCheck, Sparkles, Tag, UserMinus, UserPlus, UsersRound, X } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { useCurrentMember } from "@/components/auth/session-gate";
-import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { ConfirmationDialog, ModalDialog } from "@/components/confirmation-dialog";
 import { ConsoleShell } from "@/components/console-shell";
 import { CopyButton } from "@/components/copy-button";
 import { PaginationControls } from "@/components/pagination-controls";
@@ -183,7 +183,7 @@ export function SpacesConsole() {
   const candidatePages = usePagePagination<SpaceMemberCandidate>({ loadPage: loadCandidatePage, queryKey: JSON.stringify([selectedSpace?.id, appliedCandidateSearch]) });
   const memberCandidates = candidatePages.items;
   const selectedCandidateId = memberCandidates.some((candidate) => candidate.member_id === candidateId) ? candidateId : memberCandidates[0]?.member_id || "";
-  const accessLoading = selectedSpace !== null && (memberPages.initialLoading || candidatePages.initialLoading || (memberPages.loading && spaceMembers.length === 0) || (candidatePages.loading && memberCandidates.length === 0));
+  const accessLoading = selectedSpace !== null && (!memberPages.queryReady || !candidatePages.queryReady || memberPages.initialLoading || candidatePages.initialLoading || (memberPages.loading && spaceMembers.length === 0) || (candidatePages.loading && memberCandidates.length === 0));
 
   useEffect(() => {
     if (!selectedSpace) {
@@ -498,24 +498,9 @@ export function KnowledgeConsole() {
   const [editorError, setEditorError] = useState<string | null>(null);
   const [editorSaving, setEditorSaving] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
-  const editorRef = useRef<HTMLElement>(null);
-  const editedIdRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!editing) {
-      editedIdRef.current = null;
-      return;
-    }
-    if (editedIdRef.current === editing.id) {
-      return;
-    }
-    const node = editorRef.current;
-    if (!node) {
-      return;
-    }
-    editedIdRef.current = editing.id;
-    node.scrollIntoView({ block: "nearest" });
-  }, [editing]);
+  const editorCloseRef = useRef<HTMLButtonElement>(null);
+  const editorReturnFocusRef = useRef<HTMLButtonElement>(null);
+  const editorTitleId = useId();
 
   const loadKnowledgePage = useCallback((page: number, signal: AbortSignal) => contractData(
     contractClient.GET("/api/v1/knowledge", {
@@ -619,7 +604,8 @@ export function KnowledgeConsole() {
     }
   };
 
-  const openEditor = async (item: KnowledgeSummary) => {
+  const openEditor = async (item: KnowledgeSummary, returnFocusTarget: HTMLButtonElement) => {
+    editorReturnFocusRef.current = returnFocusTarget;
     setDetailLoading(true);
     setCreateError(null);
     try {
@@ -748,17 +734,18 @@ export function KnowledgeConsole() {
                 <span className="row-leading violet"><BookOpen aria-hidden="true" size={18} /></span>
                 <div className="row-copy"><h3>{item.title}</h3><p>{spaceLabel(spaces, item.space_id)} · version {item.version}</p></div>
                 <div className="tag-list">{item.tags.slice(0, 3).map((value) => <span key={value}><Tag size={11} />{value}</span>)}</div>
-                <button aria-label={`Edit ${item.title}`} className="row-action-button" disabled={loading} onClick={() => void openEditor(item)} type="button">Edit</button>
+                <button aria-label={`Edit ${item.title}`} className="row-action-button" disabled={loading} onClick={(event) => void openEditor(item, event.currentTarget)} type="button">Edit</button>
               </article>
             ))}
           </div>
           {knowledgeTotalPages > 1 ? <PaginationControls loading={loading} loadingPage={knowledgeLoadingPage} onPageChange={(nextPage) => void goToKnowledgePage(nextPage)} page={knowledgePage} pageSize={knowledgePageSize} totalItems={knowledgeTotalItems} totalPages={knowledgeTotalPages} /> : null}
           {detailLoading ? <div className="console-loading access-loading"><LoaderCircle className="spin" size={18} /> Loading knowledge detail…</div> : null}
           {editing ? (
-            <section className="knowledge-editor" aria-label={`Edit ${editing.title}`} ref={editorRef}>
+            <>
+            <ModalDialog ariaLabelledBy={editorTitleId} className="knowledge-editor" onClose={closeEditor} open={!confirmArchive && !confirmDiscard} returnFocusTarget={editorReturnFocusRef.current}>
               <div className="space-access-heading">
-                <div><span>Immutable revision</span><h2>Edit knowledge</h2></div>
-                <button aria-label="Close knowledge editor" className="icon-button" onClick={closeEditor} type="button"><X size={16} /></button>
+                <div><span>Immutable revision</span><h2 id={editorTitleId}>Edit {editing.title}</h2></div>
+                <button aria-label="Close knowledge editor" className="icon-button" onClick={closeEditor} ref={editorCloseRef} type="button"><X size={16} /></button>
               </div>
               <p className="revision-state">Version {editing.version} is active</p>
               {savedRevision ? <p className="inline-success" role="status"><ShieldCheck size={14} /> Revision {savedRevision} saved and searchable.</p> : null}
@@ -775,9 +762,10 @@ export function KnowledgeConsole() {
                   <button aria-label={`Archive ${editing.title}`} className="archive-button" disabled={editorSaving} onClick={() => setConfirmArchive(true)} type="button"><Archive size={15} /> Archive</button>
                 </div>
               </form>
-              <ConfirmationDialog cancelLabel="Keep editing" confirmLabel="Discard changes" description="Closing the editor now leaves the active revision unchanged." onCancel={() => setConfirmDiscard(false)} onConfirm={() => { setEditing(null); setConfirmDiscard(false); }} open={confirmDiscard} title="Discard unsaved changes" tone="danger" />
-              <ConfirmationDialog busy={editorSaving} busyLabel="Archiving knowledge…" cancelLabel="Keep active" confirmLabel="Confirm archive" description="It will leave default retrieval but its revision history remains preserved." onCancel={() => setConfirmArchive(false)} onConfirm={() => void archiveKnowledge()} open={confirmArchive} title={`Archive ${editing.title}`} tone="danger" />
-            </section>
+            </ModalDialog>
+            <ConfirmationDialog cancelLabel="Keep editing" confirmLabel="Discard changes" description="Closing the editor now leaves the active revision unchanged." onCancel={() => { setConfirmDiscard(false); window.setTimeout(() => editorCloseRef.current?.focus(), 0); }} onConfirm={() => { setEditing(null); setConfirmDiscard(false); }} open={confirmDiscard} returnFocusTarget={editorReturnFocusRef.current} title="Discard unsaved changes" tone="danger" />
+            <ConfirmationDialog busy={editorSaving} busyLabel="Archiving knowledge…" cancelLabel="Keep active" confirmLabel="Confirm archive" description="It will leave default retrieval but its revision history remains preserved." onCancel={() => { setConfirmArchive(false); window.setTimeout(() => editorCloseRef.current?.focus(), 0); }} onConfirm={() => void archiveKnowledge()} open={confirmArchive} returnFocusTarget={editorReturnFocusRef.current} title={`Archive ${editing.title}`} tone="danger" />
+            </>
           ) : null}
         </section>
         <aside className="console-panel action-panel capture-panel">
@@ -1230,7 +1218,10 @@ export function PeopleConsole() {
       setCreated(response);
       setUsername("");
       setDisplayName("");
-      memberPages.reload();
+      setMemberSearch(response.username);
+      setAppliedMemberSearch(response.username);
+      setMemberStatus("");
+      setMemberRole("");
     } catch (createError) {
       setCreateError(message(createError));
     } finally {

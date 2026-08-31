@@ -28,11 +28,14 @@ type PagePaginationState<T> = {
   loading: boolean;
   loadingPage: number | null;
   retryPage: number | null;
+  resolvedQueryKey: string | null;
   error: string | null;
 };
 
 export function usePagePagination<T>({ loadPage, queryKey, initialPage = 1 }: PagePaginationOptions<T>) {
   const loadPageRef = useRef(loadPage);
+  const queryKeyRef = useRef(queryKey);
+  queryKeyRef.current = queryKey;
   const requestIdRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
   const stateRef = useRef<PagePaginationState<T>>({
@@ -45,6 +48,7 @@ export function usePagePagination<T>({ loadPage, queryKey, initialPage = 1 }: Pa
     loading: true,
     loadingPage: initialPage,
     retryPage: null,
+    resolvedQueryKey: null,
     error: null,
   });
   const [state, setState] = useState(stateRef.current);
@@ -60,6 +64,7 @@ export function usePagePagination<T>({ loadPage, queryKey, initialPage = 1 }: Pa
 
   const fetchPage = useCallback(async (requestedPage: number, clearItems: boolean) => {
     const targetPage = Number.isFinite(requestedPage) ? Math.max(1, Math.trunc(requestedPage)) : 1;
+    const requestQueryKey = queryKeyRef.current;
     const requestId = ++requestIdRef.current;
     controllerRef.current?.abort();
     const controller = new AbortController();
@@ -97,6 +102,7 @@ export function usePagePagination<T>({ loadPage, queryKey, initialPage = 1 }: Pa
         loading: false,
         loadingPage: null,
         retryPage: null,
+        resolvedQueryKey: requestQueryKey,
         error: null,
       });
     } catch (error) {
@@ -109,6 +115,7 @@ export function usePagePagination<T>({ loadPage, queryKey, initialPage = 1 }: Pa
         loading: false,
         loadingPage: null,
         retryPage: targetPage,
+        resolvedQueryKey: requestQueryKey,
         error: error instanceof Error ? error.message : "Unable to load this page.",
       });
     }
@@ -141,6 +148,7 @@ export function usePagePagination<T>({ loadPage, queryKey, initialPage = 1 }: Pa
     ...state,
     hasNext: state.totalPages > 0 && state.page < state.totalPages,
     hasPrevious: state.page > 1,
+    queryReady: state.resolvedQueryKey === queryKey,
     goToPage,
     nextPage,
     previousPage,

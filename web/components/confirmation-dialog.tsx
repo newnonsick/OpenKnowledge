@@ -78,6 +78,7 @@ type ConfirmationDialogProps = {
   onCancel: () => void;
   onConfirm: () => void;
   open: boolean;
+  returnFocusTarget?: HTMLElement | null;
   title: string;
   tone?: "danger" | "primary" | "neutral";
 };
@@ -92,6 +93,7 @@ export function ConfirmationDialog({
   onCancel,
   onConfirm,
   open,
+  returnFocusTarget,
   title,
   tone = "neutral",
 }: ConfirmationDialogProps) {
@@ -119,6 +121,7 @@ export function ConfirmationDialog({
         }
       }}
       open={open}
+      returnFocusTarget={returnFocusTarget}
       role="alertdialog"
     >
       <div className="modal-heading">

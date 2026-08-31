@@ -94,10 +94,6 @@ export function useModalFocus(open: boolean, onClose: () => void, explicitReturn
 
   useLayoutEffect(() => {
     if (!open) {
-      if (returnRef.current?.isConnected) {
-        const target = returnRef.current;
-        queueMicrotask(() => target.focus());
-      }
       returnRef.current = null;
       return;
     }
@@ -147,6 +143,11 @@ export function useModalFocus(open: boolean, onClose: () => void, explicitReturn
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("aigw-step-up-required", preserveReturnTarget, { capture: true });
+      if (returnRef.current?.isConnected) {
+        const target = returnRef.current;
+        queueMicrotask(() => target.focus());
+      }
+      returnRef.current = null;
       if (activeModalReturnTarget === modalReturnTarget) {
         activeModalReturnTarget = null;
       }

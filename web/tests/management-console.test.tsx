@@ -480,6 +480,7 @@ describe("management console", () => {
     render(<KnowledgeConsole />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Edit Water valve" }));
+    expect(await screen.findByRole("dialog", { name: "Edit Water valve" })).toHaveAttribute("aria-modal", "true");
     fireEvent.change(await screen.findByLabelText("Edit content"), { target: { value: "Turn clockwise, then close the main tap." } });
     fireEvent.click(screen.getByRole("button", { name: "Save revision" }));
 
@@ -505,6 +506,40 @@ describe("management console", () => {
       method: "DELETE",
     }));
     await waitFor(() => expect(screen.queryByText("Version 2 is active")).not.toBeInTheDocument());
+  });
+
+  it("returns focus through knowledge editor confirmation handoffs", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] } as never;
+      }
+      if (path === "/api/v1/knowledge?limit=25") {
+        return { items: [{ id: "note-1", space_id: "global", title: "Water valve", tags: ["home"], version: 1, updated_at: "2026-08-20T12:00:00Z" }] } as never;
+      }
+      if (path === "/api/v1/knowledge/note-1") {
+        return { id: "note-1", space_id: "global", title: "Water valve", content: "Turn clockwise.", tags: ["home"], version: 1, updated_at: "2026-08-20T12:00:00Z" } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<KnowledgeConsole />);
+
+    const editButton = await screen.findByRole("button", { name: "Edit Water valve" });
+    editButton.focus();
+    fireEvent.click(editButton);
+    await screen.findByRole("dialog", { name: "Edit Water valve" });
+    fireEvent.click(screen.getByRole("button", { name: "Archive Water valve" }));
+    fireEvent.click(screen.getByRole("button", { name: "Keep active" }));
+
+    const closeButton = await screen.findByRole("button", { name: "Close knowledge editor" });
+    await waitFor(() => expect(closeButton).toHaveFocus());
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(editButton).toHaveFocus());
+
+    fireEvent.click(editButton);
+    fireEvent.change(await screen.findByLabelText("Edit content"), { target: { value: "Unsaved change" } });
+    fireEvent.click(screen.getByRole("button", { name: "Close knowledge editor" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+    await waitFor(() => expect(editButton).toHaveFocus());
   });
 
   it("searches every accessible space and exposes degraded semantic health", async () => {
@@ -638,6 +673,50 @@ describe("management console", () => {
 
     expect(await screen.findByText("Temp-Only-Once!42")).toBeInTheDocument();
     expect(screen.getByText(/shown only once/i)).toBeInTheDocument();
+  });
+
+  it("keeps a newly created member discoverable when the directory spans multiple pages", async () => {
+    currentMember.system_role = "super_admin";
+    const memberPaths: string[] = [];
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Family Shared", role: "owner", revision: 1 }] } as never;
+      }
+      if (path.startsWith("/api/v1/members") && options?.method === "POST") {
+        return { id: "member-new", username: "nana", display_name: "Nana", temporary_password: "Temp-Only-Once!42", temporary_password_expires_at: "2026-08-21T12:00:00Z", requires_password_change: true } as never;
+      }
+      if (path.startsWith("/api/v1/members")) {
+        memberPaths.push(path);
+      }
+      if (path.includes("q=nana")) {
+        const incompatibleFiltersRemain = path.includes("status=") || path.includes("system_role=") || path.includes("page=");
+        return { items: incompatibleFiltersRemain ? [] : [{ id: "member-new", username: "nana", display_name: "Nana", status: "pending", system_role: "member", requires_password_change: true }], page: 1, page_size: 25, total_items: incompatibleFiltersRemain ? 0 : 1, total_pages: incompatibleFiltersRemain ? 0 : 1 } as never;
+      }
+      if (path.startsWith("/api/v1/members")) {
+        const page = path.includes("page=3") ? 3 : path.includes("page=2") ? 2 : 1;
+        return { items: [{ id: `member-${page}`, username: `member-${page}`, display_name: `Member ${page}`, status: "disabled", system_role: "super_admin", requires_password_change: false }], page, page_size: 25, total_items: 51, total_pages: 3 } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<PeopleConsole />);
+
+    await screen.findByRole("heading", { name: "Create a member" });
+    fireEvent.change(screen.getByLabelText("Filter member status"), { target: { value: "disabled" } });
+    fireEvent.change(screen.getByLabelText("Filter system role"), { target: { value: "super_admin" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Next page" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("Member 3")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "nana" } });
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Nana" } });
+    fireEvent.click(screen.getByRole("button", { name: "Generate member" }));
+
+    expect(await screen.findByText("Temp-Only-Once!42")).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "Search members" })).toHaveValue("nana");
+    expect(await screen.findByRole("button", { name: "Manage Nana" })).toBeInTheDocument();
+    const createdMemberPath = memberPaths.findLast((path) => path.includes("q=nana"));
+    expect(createdMemberPath).not.toContain("status=");
+    expect(createdMemberPath).not.toContain("system_role=");
+    expect(createdMemberPath).not.toContain("page=");
   });
 
   it("resets and disables a member only after explicit confirmation", async () => {

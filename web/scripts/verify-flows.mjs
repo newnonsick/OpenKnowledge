@@ -79,7 +79,7 @@ if (await manageBtn.count()) {
   const ownerRowRemove = await page.locator(".membership-row").filter({ hasText: "Administrator" }).getByRole("button", { name: /Remove Administrator/ }).count();
   check("owner row has no remove button", ownerRowRemove === 0);
   const memberLabel = await page.getByText("Current members", { exact: true }).count();
-  check("access panel labels member list", memberLabel === 1);
+  check("access panel labels member list", memberLabel === 1, `${memberLabel} labels found`);
   const strayPaginations = await page.locator(".space-access-panel .pagination-summary").allTextContents();
   check("single-page member lists hide pagination", strayPaginations.filter((t) => t.includes("1–1 of 1")).length === 0, JSON.stringify(strayPaginations));
 }
@@ -107,19 +107,26 @@ const success = await page.locator(".inline-success").textContent().catch(() => 
 check("capture shows success feedback", Boolean(success && success.includes("Verify probe note")), success ?? "none");
 await page.screenshot({ path: `${shots}/06-knowledge-captured.png` });
 
-await page.getByRole("button", { name: "Edit Verify probe note" }).click();
+const editKnowledgeButton = page.getByRole("button", { name: "Edit Verify probe note" });
+await editKnowledgeButton.click();
 await page.waitForTimeout(1200);
+const knowledgeEditor = page.getByRole("dialog", { name: "Edit Verify probe note" });
+check("knowledge editor opens as modal", await knowledgeEditor.getAttribute("aria-modal") === "true");
+check("knowledge editor locks background scroll", await page.evaluate(() => document.body.style.overflow) === "hidden");
 await page.getByLabel("Edit content").fill("Verification of capture feedback. Edited but not saved.");
 await page.getByRole("button", { name: "Close knowledge editor" }).click();
 await page.waitForTimeout(400);
 const discardStrip = await page.getByRole("alertdialog", { name: "Discard unsaved changes" }).count();
 check("editor asks before discarding unsaved changes", discardStrip === 1);
+check("editor handoff keeps one active modal", await page.locator("[aria-modal='true']").count() === 1);
 await page.screenshot({ path: `${shots}/07-knowledge-discard-guard.png` });
 if (discardStrip) {
   await page.getByRole("button", { name: "Discard changes" }).click();
   await page.waitForTimeout(300);
+  check("discard returns focus to edit trigger", await editKnowledgeButton.evaluate((element) => element === document.activeElement));
+  check("closing knowledge editor restores background scroll", await page.evaluate(() => document.body.style.overflow) === "");
 }
-await page.getByRole("button", { name: "Edit Verify probe note" }).click();
+await editKnowledgeButton.click();
 await page.waitForTimeout(1000);
 await page.getByRole("button", { name: "Archive Verify probe note" }).click();
 await page.waitForTimeout(400);
