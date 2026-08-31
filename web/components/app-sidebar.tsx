@@ -1,14 +1,14 @@
 "use client";
 
-import { ReactNode, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Boxes, KeyRound, LogOut, X } from "lucide-react";
+import { Boxes, X } from "lucide-react";
 import type { RefObject } from "react";
 
+import { AccountMenu } from "@/components/account-menu";
 import { contractClient, contractData } from "@/lib/api-client";
 import { resetCachedMember } from "@/components/auth/session-gate";
-import { ThemeToggle } from "@/components/theme-toggle";
 
 export type SidebarMember = {
   displayName: string;
@@ -45,8 +45,6 @@ export function AppSidebar({
   const pathname = usePathname();
   const router = useRouter();
   const [signingOut, setSigningOut] = useState(false);
-  const initials = member.displayName.split(/\s+/).map((value) => value[0]).join("").slice(0, 2).toUpperCase();
-
   const signOut = async () => {
     if (signingOut) {
       return;
@@ -78,18 +76,6 @@ export function AppSidebar({
     </div>
   );
 
-  const footer: ReactNode = (
-    <>
-      <Link className="profile-card static-profile" href="/settings">
-        <span className="profile-avatar">{initials || "M"}</span>
-        <span><strong>{member.displayName}</strong><small>{member.role}</small></span>
-      </Link>
-      <Link className="account-link" href="/settings?section=api-keys"><KeyRound aria-hidden="true" size={15} /><span>API keys</span></Link>
-      <ThemeToggle />
-      <button aria-label="Sign out" className="account-link" disabled={signingOut} onClick={() => void signOut()} type="button"><LogOut aria-hidden="true" size={15} /><span>{signingOut ? "Signing out…" : "Sign out"}</span></button>
-    </>
-  );
-
   return (
     <aside className={`sidebar console-sidebar${menuOpen ? " is-open" : ""}`} id={drawerId} ref={drawerRef}>
       <div className="brand-lockup">
@@ -111,7 +97,7 @@ export function AppSidebar({
         {manageGroups.map(renderGroup)}
       </nav>
 
-      <div className="sidebar-footer console-account">{footer}</div>
+      <div className="sidebar-footer console-account"><AccountMenu member={member} onSignOut={() => void signOut()} signingOut={signingOut} /></div>
     </aside>
   );
 }

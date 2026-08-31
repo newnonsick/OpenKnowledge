@@ -185,6 +185,28 @@ html[data-theme="dark"] .navigation-item.is-active { color: var(--accent-strong)
 }
 
 .sidebar-footer { border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 4px; }
+.account-menu { position: relative; min-width: 0; }
+.account-menu-popover {
+  position: absolute; bottom: calc(100% + 9px); left: 0; z-index: 40; width: 218px; padding: 7px;
+  border: 1px solid var(--line-strong); border-radius: 13px; background: var(--surface);
+  box-shadow: 0 18px 45px rgba(16, 21, 19, 0.16), 0 3px 10px rgba(16, 21, 19, 0.08);
+  animation: account-menu-in 0.14s var(--ease-out);
+}
+@keyframes account-menu-in { from { opacity: 0; transform: translateY(5px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.account-menu-identity { display: grid; gap: 2px; padding: 8px 9px 10px; border-bottom: 1px solid var(--line); margin-bottom: 5px; }
+.account-menu-identity strong { overflow: hidden; font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.account-menu-identity span { color: var(--ink-faint); font-size: 11px; }
+.account-menu-item, .account-menu-popover .theme-toggle {
+  width: 100%; min-height: 36px; display: flex; align-items: center; gap: 10px; padding: 0 9px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--ink-soft); font-size: 12.5px;
+  text-align: left; cursor: pointer; transition: background 0.15s ease-out, color 0.15s ease-out;
+}
+.account-menu-item:hover, .account-menu-popover .theme-toggle:hover { background: var(--surface-soft); color: var(--ink); }
+.account-menu-item:disabled { cursor: wait; opacity: 0.55; }
+.account-menu-item.is-danger { color: var(--coral); }
+.account-menu-separator { height: 1px; margin: 5px 7px; background: var(--line); }
+.account-menu-trigger > svg { flex: 0 0 auto; color: var(--ink-faint); transition: transform 0.15s ease-out; }
+.account-menu-trigger > svg.is-open { transform: rotate(180deg); }
 .profile-card {
   width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px;
   border: 0; border-radius: 10px; background: transparent; text-align: left; cursor: pointer;
@@ -198,8 +220,6 @@ html[data-theme="dark"] .navigation-item.is-active { color: var(--accent-strong)
   width: 32px; height: 32px; display: grid; place-items: center; flex: 0 0 auto;
   border-radius: 50%; background: var(--ink); color: var(--paper); font-size: 11px; font-weight: 650;
 }
-.static-profile { cursor: default; }
-.static-profile:hover { background: transparent; }
 .console-account { display: grid; gap: 3px; }
 .account-link {
   width: 100%; min-height: 32px; display: flex; align-items: center; gap: 9px; padding: 0 8px;
@@ -1269,7 +1289,7 @@ html[data-theme="dark"] .auth-story { background: radial-gradient(circle at 85% 
   .brand-lockup { justify-content: center; padding-inline: 0; }
   .brand-lockup > span:not(.brand-mark),
   .family-copy, .family-switcher > svg, .navigation-label, .navigation-item span,
-  .profile-card > span:nth-child(2), .profile-card > svg,
+  .account-menu-trigger > span:nth-child(2), .account-menu-trigger > svg,
   .theme-toggle span, .account-link span { display: none; }
   .family-switcher, .navigation-item, .profile-card, .theme-toggle, .account-link { justify-content: center; padding-inline: 0; }
   .navigation-item.is-active::before { left: -12px; }
@@ -1299,7 +1319,9 @@ html[data-theme="dark"] .auth-story { background: radial-gradient(circle at 85% 
   .menu-open .sidebar { visibility: visible; transform: translateX(0); transition-delay: 0s; }
   .brand-lockup { justify-content: flex-start; }
   .brand-lockup > span:not(.brand-mark), .family-copy, .navigation-label, .navigation-item span,
-  .profile-card > span:nth-child(2) { display: flex; }
+  .account-menu-trigger > span:nth-child(2) { display: flex; }
+  .account-menu-trigger > svg { display: block; }
+  .account-menu-popover { width: 100%; }
   .family-switcher, .navigation-item, .profile-card, .theme-toggle, .account-link { justify-content: flex-start; padding-inline: 10px; }
   .theme-toggle span, .account-link span { display: inline; }
   .mobile-menu-button { width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--surface); color: var(--ink-soft); cursor: pointer; }

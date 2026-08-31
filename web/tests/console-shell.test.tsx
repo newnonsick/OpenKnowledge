@@ -68,6 +68,7 @@ describe("ConsoleShell", () => {
       </ConsoleShell>,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "Open account menu" }));
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     await waitFor(() => expect(contractClient.POST).toHaveBeenCalledWith("/api/v1/auth/logout", { body: {} }));
