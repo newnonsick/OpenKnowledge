@@ -5,6 +5,7 @@ import { Activity, Archive, ArrowUpRight, BookOpen, CircleAlert, Code2, FileText
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { useCurrentMember } from "@/components/auth/session-gate";
+import { MfaSecurityPanel } from "@/components/auth/mfa-security-panel";
 import { ConfirmationDialog, ModalDialog } from "@/components/confirmation-dialog";
 import { ConsoleShell } from "@/components/console-shell";
 import { CopyButton } from "@/components/copy-button";
@@ -48,7 +49,7 @@ const API_KEY_SCOPE_OPTIONS = [
 
 const DEFAULT_API_KEY_SCOPES = ["knowledge:read"];
 
-const SETTINGS_SECTIONS = ["api-keys", "sessions", "runtime"] as const;
+const SETTINGS_SECTIONS = ["security", "api-keys", "sessions", "runtime"] as const;
 type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 type SessionSummary = components["schemas"]["SessionSummary"];
@@ -1470,6 +1471,7 @@ export function SettingsConsole() {
   const [keyError, setKeyError] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [mfaEnabled, setMfaEnabled] = useState(member.mfa_enabled);
 
   const loadKeyPage = useCallback((page: number, signal: AbortSignal) => contractData(
     contractClient.GET("/api/v1/api-keys", {
@@ -1694,11 +1696,14 @@ export function SettingsConsole() {
       title="Settings"
     >
       <div aria-label="Settings sections" className="settings-tabs" role="tablist">
+        <button aria-controls="settings-panel-security" aria-selected={activeSection === "security"} className={activeSection === "security" ? "is-active" : ""} id="settings-tab-security" onClick={() => selectSettingsSection("security")} onKeyDown={(event) => moveSettingsSection(event, "security")} role="tab" tabIndex={activeSection === "security" ? 0 : -1} type="button"><ShieldCheck size={16} /> Security</button>
         <button aria-controls="settings-panel-api-keys" aria-selected={activeSection === "api-keys"} className={activeSection === "api-keys" ? "is-active" : ""} id="settings-tab-api-keys" onClick={() => selectSettingsSection("api-keys")} onKeyDown={(event) => moveSettingsSection(event, "api-keys")} role="tab" tabIndex={activeSection === "api-keys" ? 0 : -1} type="button"><KeyRound size={16} /> API keys</button>
         <button aria-controls="settings-panel-sessions" aria-selected={activeSection === "sessions"} className={activeSection === "sessions" ? "is-active" : ""} id="settings-tab-sessions" onClick={() => selectSettingsSection("sessions")} onKeyDown={(event) => moveSettingsSection(event, "sessions")} role="tab" tabIndex={activeSection === "sessions" ? 0 : -1} type="button"><MonitorSmartphone size={16} /> Sessions</button>
         <button aria-controls="settings-panel-runtime" aria-selected={activeSection === "runtime"} className={activeSection === "runtime" ? "is-active" : ""} id="settings-tab-runtime" onClick={() => selectSettingsSection("runtime")} onKeyDown={(event) => moveSettingsSection(event, "runtime")} role="tab" tabIndex={activeSection === "runtime" ? 0 : -1} type="button"><Settings2 size={16} /> Runtime</button>
       </div>
       <div className="settings-layout">
+        {activeSection === "security" ? <section aria-labelledby="settings-tab-security" className="console-panel settings-section" id="settings-panel-security" role="tabpanel"><MfaSecurityPanel enabled={mfaEnabled} onEnabled={() => setMfaEnabled(true)} /></section> : null}
+
         {activeSection === "api-keys" ? <section aria-labelledby="settings-tab-api-keys" className="console-panel settings-section" id="settings-panel-api-keys" role="tabpanel">
           <div className="panel-heading"><div><span>Personal credentials</span><h2>API keys</h2></div><KeyRound size={20} /></div>
           <p className="section-intro">Every member owns separate keys. Start with the narrowest scope and create another key for a different device or automation.</p>

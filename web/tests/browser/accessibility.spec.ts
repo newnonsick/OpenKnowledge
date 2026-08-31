@@ -18,6 +18,7 @@ const loginFixture = {
 const memberFixture = {
   display_name: "Mai Arun",
   id: "member-1",
+  mfa_enabled: false,
   requires_password_change: false,
   status: "active",
   system_role: "member",

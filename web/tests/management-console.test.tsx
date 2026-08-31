@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityConsole, AiActionsConsole, ExploreConsole, IngestionConsole, KnowledgeConsole, PeopleConsole, SettingsConsole, SourcesConsole, SpacesConsole } from "@/components/management-console";
 import { apiMultipart, apiRequest } from "@/lib/api-client";
 
-const currentMember = vi.hoisted(() => ({ display_name: "Mai", system_role: "member" as "member" | "super_admin" }));
+const currentMember = vi.hoisted(() => ({ display_name: "Mai", mfa_enabled: false, system_role: "member" as "member" | "super_admin" }));
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), search: "q=water" }));
 
 vi.mock("next/navigation", () => ({
@@ -103,6 +103,7 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
 describe("management console", () => {
   beforeEach(() => {
     currentMember.display_name = "Mai";
+    currentMember.mfa_enabled = false;
     currentMember.system_role = "member";
     navigation.replace.mockReset();
     navigation.search = "q=water";
@@ -884,6 +885,9 @@ describe("management console", () => {
     expect(screen.getByRole("heading", { name: "API keys" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Sessions" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Safe runtime settings" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Security" }));
+    expect(screen.getByRole("heading", { name: "Multi-factor authentication" })).toBeInTheDocument();
+    expect(navigation.replace).toHaveBeenCalledWith("/settings?section=security", { scroll: false });
     fireEvent.click(screen.getByRole("tab", { name: "Sessions" }));
     expect(screen.getByRole("heading", { name: "Sessions" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "API keys" })).not.toBeInTheDocument();

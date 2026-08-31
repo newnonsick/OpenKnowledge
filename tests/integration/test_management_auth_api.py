@@ -450,3 +450,84 @@ async def test_member_receives_exactly_one_personal_api_key_after_first_password
                 assert len(stored_keys) == 1
         finally:
             set_session_factory(None)
+
+
+async def test_proactive_member_mfa_enrollment_does_not_create_an_extra_api_key() -> None:
+    now = datetime.now(timezone.utc)
+    mfa_key = Fernet.generate_key().decode("ascii")
+    settings = Settings(
+        gateway={
+            "environment": "test",
+            "public_base_url": "https://gateway.test",
+            "api_key_peppers": {1: "test-api-key-pepper-with-adequate-length"},
+            "active_api_key_pepper_version": 1,
+            "mfa_encryption_keys": {1: mfa_key},
+            "active_mfa_encryption_key_version": 1,
+        }
+    )
+    password_service = PasswordService(memory_cost=8192, time_cost=2, parallelism=1)
+    member_id = uuid4()
+    password = "Permanent-Family-Password-735!"
+
+    async with isolated_postgres_database() as (_, factory):
+        async with factory.begin() as session:
+            session.add(
+                MemberModel(
+                    id=member_id,
+                    username="mfa-ready-member",
+                    username_normalized="mfa-ready-member",
+                    display_name="MFA Ready Member",
+                    status=MemberStatus.ACTIVE.value,
+                    system_role=SystemRole.MEMBER.value,
+                    force_password_change=False,
+                )
+            )
+            session.add(
+                PasswordCredentialModel(
+                    id=uuid4(),
+                    member_id=member_id,
+                    password_hash=password_service.hash(password, username="mfa-ready-member"),
+                    temporary=False,
+                )
+            )
+
+        app = FastAPI()
+        app.state.settings = settings
+        register_exception_handlers(app)
+        app.add_middleware(APIKeyAuthMiddleware, allowed_keys=[], session_factory=factory)
+        app.add_middleware(SettingsContextMiddleware)
+        app.include_router(router)
+        set_session_factory(factory)
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="https://gateway.test") as client:
+                login = await client.post(
+                    "/api/v1/auth/login",
+                    json={"username": "mfa-ready-member", "password": password},
+                )
+                assert login.status_code == 200
+                csrf = client.cookies.get("aigw-csrf")
+                headers = {"Origin": "https://gateway.test", "X-CSRF-Token": csrf}
+                enrollment = await client.post(
+                    "/api/v1/auth/mfa/totp/enroll",
+                    headers=headers,
+                    json={"current_password": password},
+                )
+                assert enrollment.status_code == 200
+                confirmation = await client.post(
+                    "/api/v1/auth/mfa/totp/confirm",
+                    headers=headers,
+                    json={
+                        "current_password": password,
+                        "factor_id": enrollment.json()["factor_id"],
+                        "code": pyotp.TOTP(enrollment.json()["secret"]).now(),
+                    },
+                )
+                assert confirmation.status_code == 200
+                assert confirmation.json()["initial_api_key"] is None
+
+            async with factory() as verification_session:
+                keys = list(await verification_session.scalars(select(PersonalAPIKeyModel).where(PersonalAPIKeyModel.member_id == member_id)))
+                assert keys == []
+        finally:
+            set_session_factory(None)

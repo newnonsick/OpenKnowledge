@@ -517,15 +517,17 @@ async def confirm_totp(
         now=current_time,
         step_up_at=current_time,
     )
-    initial_api_key = await APIKeyService(
-        session,
-        configured_api_key_codec(),
-    ).create_initial(
-        member_id,
-        family_id=secrets.family_id,
-        request_id=get_request_id(request),
-        now=current_time,
-    )
+    initial_api_key = None
+    if principal.restricted:
+        initial_api_key = await APIKeyService(
+            session,
+            configured_api_key_codec(),
+        ).create_initial(
+            member_id,
+            family_id=secrets.family_id,
+            request_id=get_request_id(request),
+            now=current_time,
+        )
     _apply_session_cookies(response, secrets)
     return TotpConfirmation(
         member_id=str(member_id),
