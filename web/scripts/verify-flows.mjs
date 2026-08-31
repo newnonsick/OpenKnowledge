@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { chromium } from "playwright";
+import { exitCodeFor } from "./lib/audit-results.mjs";
 import { credentials, totp } from "./lib/session.mjs";
 
 const shots = "../gui-test-screenshots/verify";
@@ -22,6 +23,7 @@ page.on("console", (msg) => {
 });
 
 await page.goto("http://127.0.0.1:3000/login", { waitUntil: "domcontentloaded" });
+await page.waitForTimeout(600);
 await page.getByRole("textbox", { name: "Username" }).fill("no_such_audit_user");
 await page.getByRole("textbox", { name: "Password" }).fill("definitely-wrong");
 await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -73,10 +75,10 @@ check("space cards hide raw space IDs", idLineCount === 0, `${idLineCount} raw I
 const manageBtn = page.getByRole("button", { name: "Manage access for Family Shared" });
 if (await manageBtn.count()) {
   await manageBtn.click();
-  await page.waitForTimeout(1400);
+  await page.getByText("Current members").waitFor({ state: "visible", timeout: 15000 });
   const ownerRowRemove = await page.locator(".membership-row").filter({ hasText: "Administrator" }).getByRole("button", { name: /Remove Administrator/ }).count();
   check("owner row has no remove button", ownerRowRemove === 0);
-  const memberLabel = await page.getByText("Current members").count();
+  const memberLabel = await page.getByText("Current members", { exact: true }).count();
   check("access panel labels member list", memberLabel === 1);
   const strayPaginations = await page.locator(".space-access-panel .pagination-summary").allTextContents();
   check("single-page member lists hide pagination", strayPaginations.filter((t) => t.includes("1–1 of 1")).length === 0, JSON.stringify(strayPaginations));
@@ -197,3 +199,4 @@ await context.close();
 await browser.close();
 writeFileSync("../reports/verify-flows.json", JSON.stringify(results, null, 2));
 console.log("VERIFY DONE:", results.filter((r) => r.ok).length + "/" + results.length, "passed");
+process.exit(exitCodeFor(results));

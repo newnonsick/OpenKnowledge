@@ -88,9 +88,10 @@ cd web
 node scripts/visual-audit.mjs
 node scripts/verify-flows.mjs
 node scripts/feature-e2e.mjs
+node scripts/stepup-e2e.mjs
 ```
 
-`visual-audit.mjs` captures every console and public entry route at desktop, tablet, and mobile sizes, including each Settings section. It writes screenshots under `reports/shots/audit`, findings to `reports/audit-findings.json`, and per-route page-height and overflow measurements to `reports/audit-measurements.json`. `verify-flows.mjs` covers representative interaction, focus, dialog, pagination, theme, and sign-out behavior. `feature-e2e.mjs` is the broader destructive workflow check; it creates and archives test records, exercises ownership and identity controls, uploads a real source, waits for ingestion, rotates runtime settings, and signs out. Run it only in an isolated verification environment.
+`visual-audit.mjs` waits for semantic loading states to settle, then captures every console and public entry route at desktop, tablet, and mobile sizes, including MFA enrollment and each Settings section. It writes screenshots under `reports/shots/audit`, findings to `reports/audit-findings.json`, and per-route page-height and overflow measurements to `reports/audit-measurements.json`; visible loading artifacts, overflow, redirects, and unexpected console errors fail the run. `verify-flows.mjs` covers representative interaction, focus, dialog, pagination, theme, and sign-out behavior. `feature-e2e.mjs` is the broader destructive workflow check; it creates and archives test records, exercises ownership and identity controls, uploads a real source, requires ingestion success, rotates runtime settings, and signs out. `stepup-e2e.mjs` waits through the real recent-authentication window and verifies that confirmation hands off to a single identity modal before a deliberate retry. Run the destructive scripts only in an isolated verification environment.
 
 ## Generated client contract
 

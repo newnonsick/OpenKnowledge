@@ -110,11 +110,12 @@ try {
   await page.locator(".pagination-summary", { hasText: "26–50" }).waitFor();
   const summary2 = await page.locator(".pagination-summary").textContent();
   step("knowledge: page 2 navigation", summary1.includes("1–25") && summary2.includes("26–50"), `${summary1.trim()} -> ${summary2.trim()}`);
-  await page.getByRole("textbox", { name: /Jump to page/ }).fill("4");
-  await page.getByRole("textbox", { name: /Jump to page/ }).press("Enter");
+  await page.getByRole("button", { name: "Next page" }).click();
+  await page.locator(".pagination-summary", { hasText: "51–75" }).waitFor();
+  await page.getByRole("button", { name: "Next page" }).click();
   await page.locator(".pagination-summary", { hasText: "76–8" }).waitFor();
   const summary3 = await page.locator(".pagination-summary").textContent();
-  step("knowledge: go-to-page jumps to 4", summary3.includes("76–8"), summary3.trim());
+  step("knowledge: next-page navigation reaches page 4", summary3.includes("76–8"), summary3.trim());
 
   await page.locator("#knowledge-space").selectOption({ label: uniqueName });
   await page.getByLabel("Title").fill(`Feature check note ${runId}`);
@@ -156,40 +157,37 @@ try {
   step("sources: upload queues ingestion", true);
 
   await page.goto(BASE + "/ingestion", { waitUntil: "domcontentloaded" });
-  await page.locator(".job-card", { hasText: "Feature" }).waitFor({ timeout: 30000 }).catch(async () => {
+  const jobCard = page.locator(".job-card", { hasText: uniqueName }).first();
+  await jobCard.waitFor({ timeout: 30000 }).catch(async () => {
     await page.getByRole("combobox", { name: "Filter ingestion space" }).selectOption({ label: uniqueName });
   });
-  let succeeded = false;
-  for (let i = 0; i < 24 && !succeeded; i += 1) {
-    const badges = await page.locator(".job-card .status-pill").allTextContents();
-    succeeded = badges.some((text) => text.includes("succeeded"));
-    if (!succeeded) {
+  await jobCard.waitFor({ timeout: 30000 });
+  let ingestionState = "";
+  for (let i = 0; i < 45 && !["succeeded", "failed"].includes(ingestionState); i += 1) {
+    ingestionState = (await jobCard.locator(".status-pill").textContent() ?? "").trim();
+    if (!["succeeded", "failed"].includes(ingestionState)) {
       await page.waitForTimeout(2500);
       await page.getByRole("button", { name: "Refresh now" }).click().catch(() => {});
       await page.waitForTimeout(800);
     }
   }
-  step("ingestion: uploaded source reaches succeeded", succeeded);
+  const ingestionError = await jobCard.locator(".job-error").textContent().catch(() => "");
+  step("ingestion: uploaded source reaches succeeded", ingestionState === "succeeded", `${ingestionState}${ingestionError ? ` · ${ingestionError}` : ""}`);
 
-  const failedCard = page.locator(".job-card", { hasText: "embedding_provider_error" }).first();
-  if (await failedCard.count() > 0) {
-    await failedCard.getByRole("button", { name: "Retry job" }).click();
+  if (ingestionState === "failed") {
+    await jobCard.getByRole("button", { name: /Retry job/ }).click();
     await page.getByRole("alertdialog").waitFor();
     await page.getByRole("button", { name: "Confirm retry job" }).click();
-    await page.waitForTimeout(1200);
-    let retriedOk = false;
-    for (let i = 0; i < 24 && !retriedOk; i += 1) {
-      const badges = await page.locator(".job-card .status-pill").allTextContents();
-      retriedOk = badges.some((text) => text.includes("succeeded"));
-      if (!retriedOk) {
-        await page.waitForTimeout(2500);
-        await page.getByRole("button", { name: "Refresh now" }).click().catch(() => {});
-        await page.waitForTimeout(800);
-      }
+    let retryState = "failed";
+    for (let i = 0; i < 45 && retryState !== "succeeded"; i += 1) {
+      await page.waitForTimeout(2500);
+      await page.getByRole("button", { name: "Refresh now" }).click().catch(() => {});
+      await page.waitForTimeout(800);
+      retryState = (await jobCard.locator(".status-pill").textContent() ?? "").trim();
     }
-    step("ingestion: retry failed job recovers", retriedOk);
+    step("ingestion: failed job retry reaches succeeded", retryState === "succeeded", retryState);
   } else {
-    step("ingestion: retry failed job recovers", true, "no failed job present");
+    step("ingestion: retry path not needed", true, "job succeeded");
   }
 
   // ---------- PEOPLE ----------

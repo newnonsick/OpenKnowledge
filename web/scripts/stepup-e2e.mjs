@@ -18,6 +18,9 @@ try {
   await page.goto(BASE + "/spaces", { waitUntil: "domcontentloaded" });
   await page.getByLabel("Space name").fill(spaceName);
   await page.getByRole("button", { name: "Create space" }).click();
+  await page.locator(".inline-success", { hasText: `${spaceName} is ready` }).waitFor();
+  await page.getByLabel("Search spaces").fill(spaceName);
+  await page.getByRole("button", { name: "Apply" }).click();
   await page.locator(".space-card", { hasText: spaceName }).waitFor();
   console.log("setup: space created, waiting 10.5 minutes for step-up staleness…");
   await page.waitForTimeout(630000);
@@ -40,12 +43,17 @@ try {
   await page.locator(".step-up-dialog").waitFor({ timeout: 8000 });
   await page.screenshot({ path: "../reports/shots/e2e/step-up-dialog.png" });
   step("step-up: dialog appears after staleness window", true);
+  const modalCount = await page.locator("[aria-modal='true']:visible").count();
+  const confirmationCount = await page.getByRole("alertdialog").count();
+  step("step-up: identity dialog is the only open modal", modalCount === 1 && confirmationCount === 0, `${modalCount} modal, ${confirmationCount} confirmation`);
 
   await page.getByLabel("Current password").fill(credentials().password);
   await page.getByLabel("Authentication code").fill(totp());
   await page.locator(".step-up-dialog").getByRole("button", { name: "Verify identity" }).click();
   await page.locator(".step-up-dialog").waitFor({ state: "hidden" });
   step("step-up: verification accepted, dialog closes", true);
+  const focusReturned = await transferButton.evaluate((element) => element === document.activeElement);
+  step("step-up: focus returns to ownership action", focusReturned);
 
   await transferButton.click();
   await page.getByRole("alertdialog").waitFor();

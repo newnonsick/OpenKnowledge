@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from "node:fs";
+import { exitCodeFor } from "./lib/audit-results.mjs";
 import { launch, loginContext } from "./lib/session.mjs";
 
 const VIEWPORTS = [
@@ -21,8 +22,11 @@ const PAGES = [
   { path: "/settings?section=sessions", name: "settings-sessions" },
   { path: "/settings?section=runtime", name: "settings-runtime" },
   { path: "/first-use/password", name: "first-use-password" },
+  { path: "/first-use/mfa", name: "first-use-mfa" },
   { path: "/login", name: "login" },
 ];
+
+const loadingSelector = ".session-loading, .list-skeleton, .console-loading, .enrollment-loading, [aria-busy='true']";
 
 mkdirSync("../reports/shots/audit", { recursive: true });
 
@@ -40,7 +44,8 @@ for (const viewport of VIEWPORTS) {
   }
   const consoleErrors = [];
   page.on("console", (msg) => {
-    if (msg.type() === "error" && !msg.text().includes("Applying inline style violates")) {
+    const expectedEnrollmentResponse = new URL(page.url()).pathname === "/first-use/mfa" && msg.text().includes("status of 401");
+    if (msg.type() === "error" && !msg.text().includes("Applying inline style violates") && !expectedEnrollmentResponse) {
       consoleErrors.push(msg.text().slice(0, 250));
     }
   });
@@ -48,7 +53,12 @@ for (const viewport of VIEWPORTS) {
 
   for (const target of PAGES) {
     await page.goto(`http://127.0.0.1:3000${target.path}`, { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(1600);
+    await page.waitForFunction((selector) => !document.querySelector(selector), loadingSelector, { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(100);
+    const unsettled = await page.locator(loadingSelector).count();
+    if (unsettled > 0) {
+      findings.push({ viewport: viewport.name, page: target.name, issue: `${unsettled} loading states remained visible` });
+    }
     const overflow = await page.evaluate(() => {
       const doc = document.documentElement;
       const wide = [];
@@ -94,3 +104,4 @@ writeFileSync("../reports/audit-findings.json", JSON.stringify(findings, null, 2
 writeFileSync("../reports/audit-measurements.json", JSON.stringify(measurements, null, 2));
 console.log(JSON.stringify(findings, null, 1));
 console.log("AUDIT DONE, findings:", findings.length);
+process.exit(exitCodeFor(findings.map(() => ({ ok: false }))));
