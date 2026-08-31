@@ -1437,6 +1437,8 @@ export interface components {
             display_name: string;
             /** Id */
             id: string;
+            /** Mfa Enabled */
+            mfa_enabled: boolean;
             /** Requires Password Change */
             requires_password_change: boolean;
             status: components["schemas"]["MemberStatus"];
@@ -1711,6 +1713,8 @@ export interface components {
             display_name: string;
             /** Id */
             id: string;
+            /** Mfa Enabled */
+            mfa_enabled: boolean;
             /** Requires Password Change */
             requires_password_change: boolean;
             status: components["schemas"]["MemberStatus"];

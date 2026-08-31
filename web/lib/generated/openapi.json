@@ -1398,6 +1398,10 @@
             "title": "Id",
             "type": "string"
           },
+          "mfa_enabled": {
+            "title": "Mfa Enabled",
+            "type": "boolean"
+          },
           "requires_password_change": {
             "title": "Requires Password Change",
             "type": "boolean"
@@ -1419,7 +1423,8 @@
           "display_name",
           "status",
           "system_role",
-          "requires_password_change"
+          "requires_password_change",
+          "mfa_enabled"
         ],
         "title": "CurrentMember",
         "type": "object"
@@ -2225,6 +2230,10 @@
             "title": "Id",
             "type": "string"
           },
+          "mfa_enabled": {
+            "title": "Mfa Enabled",
+            "type": "boolean"
+          },
           "requires_password_change": {
             "title": "Requires Password Change",
             "type": "boolean"
@@ -2258,7 +2267,8 @@
           "display_name",
           "status",
           "system_role",
-          "requires_password_change"
+          "requires_password_change",
+          "mfa_enabled"
         ],
         "title": "MemberSummary",
         "type": "object"

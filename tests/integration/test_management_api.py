@@ -11,7 +11,7 @@ from src.gateway.application.services.session_service import SessionService
 from src.gateway.config import Settings
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SpaceRole, SystemRole
 from src.gateway.infrastructure.database import set_session_factory
-from src.gateway.infrastructure.persistence.identity_models import AuditEventModel, MemberModel, PasswordCredentialModel, SpaceMembershipModel
+from src.gateway.infrastructure.persistence.identity_models import AuditEventModel, MFAFactorModel, MemberModel, PasswordCredentialModel, SpaceMembershipModel
 from src.gateway.infrastructure.persistence.models import Workspace
 from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGenerationModel
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
@@ -95,6 +95,23 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
             await session.flush()
             session.add_all(
                 [
+                    MFAFactorModel(
+                        id=uuid4(),
+                        member_id=member_id,
+                        factor_type="totp",
+                        secret_ciphertext=b"confirmed-factor",
+                        encryption_key_version=1,
+                        confirmed_at=now,
+                    ),
+                    MFAFactorModel(
+                        id=uuid4(),
+                        member_id=repair_target_id,
+                        factor_type="totp",
+                        secret_ciphertext=b"retired-factor",
+                        encryption_key_version=1,
+                        confirmed_at=now,
+                        retired_at=now,
+                    ),
                     SpaceMembershipModel(
                         id=uuid4(),
                         space_id="global",
@@ -165,6 +182,7 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 me = await member_client.get("/api/v1/me")
                 assert me.status_code == 200
                 assert me.json()["id"] == str(member_id)
+                assert me.json()["mfa_enabled"] is True
 
                 spaces = await member_client.get("/api/v1/spaces", params={"page": 1, "page_size": 20})
                 assert spaces.status_code == 200
@@ -398,6 +416,9 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 assert member_list.status_code == 200
                 assert "temporary_password" not in str(member_list.json())
                 assert any(item["username"] == "new-member" for item in member_list.json()["items"])
+                members_by_id = {item["id"]: item for item in member_list.json()["items"]}
+                assert members_by_id[str(member_id)]["mfa_enabled"] is True
+                assert members_by_id[str(repair_target_id)]["mfa_enabled"] is False
                 created_member_id = created_member.json()["id"]
                 admin_spaces = await admin_client.get("/api/v1/admin/spaces", params={"page": 1, "page_size": 100})
                 assert admin_spaces.status_code == 200
@@ -448,6 +469,7 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 )
                 assert disabled_member.status_code == 200
                 assert disabled_member.json()["status"] == "disabled"
+                assert disabled_member.json()["mfa_enabled"] is False
 
                 current_settings = await admin_client.get("/api/v1/settings")
                 assert current_settings.status_code == 200

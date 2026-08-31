@@ -192,6 +192,7 @@ class CurrentMember(ContractModel):
     status: MemberStatus
     system_role: SystemRole
     requires_password_change: bool
+    mfa_enabled: bool
 
 
 class SpaceSummary(ContractModel):

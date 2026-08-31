@@ -35,7 +35,7 @@ from src.gateway.infrastructure.persistence.ingestion_models import DocumentMode
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
 from src.gateway.infrastructure.persistence.models import KnowledgeItem as KnowledgeItemModel, KnowledgeRevision as KnowledgeRevisionModel
 from src.gateway.infrastructure.persistence.retrieval_unit_repository import PostgresRetrievalUnitRepository
-from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeModel, AuditEventModel, MemberModel, PendingAIActionModel, PersonalAPIKeyModel, SessionCredentialModel, SessionFamilyModel, SpaceMembershipModel
+from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeModel, AuditEventModel, MemberModel, MFAFactorModel, PendingAIActionModel, PersonalAPIKeyModel, SessionCredentialModel, SessionFamilyModel, SpaceMembershipModel
 from src.gateway.infrastructure.persistence.models import Workspace
 from src.gateway.infrastructure.persistence.runtime_settings_models import RuntimeSettingRevisionModel
 from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings
@@ -969,6 +969,11 @@ async def me(
     member = await session.get(MemberModel, _actor_id(principal))
     if member is None or member.status == MemberStatus.DISABLED.value:
         raise AuthorizationException()
+    mfa_enabled = bool(await session.scalar(select(exists().where(
+        MFAFactorModel.member_id == member.id,
+        MFAFactorModel.confirmed_at.is_not(None),
+        MFAFactorModel.retired_at.is_(None),
+    ))))
     return {
         "id": str(member.id),
         "username": member.username,
@@ -976,6 +981,7 @@ async def me(
         "status": member.status,
         "system_role": member.system_role,
         "requires_password_change": member.force_password_change,
+        "mfa_enabled": mfa_enabled,
     }
 
 
@@ -2065,7 +2071,12 @@ async def list_members(
 ) -> dict:
     if principal.system_role is not SystemRole.SUPER_ADMIN:
         raise AuthorizationException()
-    query = select(MemberModel).order_by(MemberModel.username_normalized)
+    mfa_enabled = exists().where(
+        MFAFactorModel.member_id == MemberModel.id,
+        MFAFactorModel.confirmed_at.is_not(None),
+        MFAFactorModel.retired_at.is_(None),
+    ).label("mfa_enabled")
+    query = select(MemberModel, mfa_enabled).order_by(MemberModel.username_normalized)
     if q is not None and q.strip():
         pattern = _contains_pattern(q)
         query = query.where(
@@ -2084,7 +2095,6 @@ async def list_members(
         query,
         page=page,
         page_size=page_size,
-        scalars=True,
     )
     return {
         "items": [
@@ -2095,10 +2105,11 @@ async def list_members(
                 "status": member.status,
                 "system_role": member.system_role,
                 "requires_password_change": member.force_password_change,
+                "mfa_enabled": bool(member_mfa_enabled),
                 "created_at": member.created_at.isoformat(),
                 "updated_at": member.updated_at.isoformat(),
             }
-            for member in rows
+            for member, member_mfa_enabled in rows
         ],
         **metadata,
     }
@@ -2185,6 +2196,11 @@ async def update_member(
     member = await session.get(MemberModel, member_id)
     if member is None:
         raise AuthorizationException()
+    mfa_enabled = bool(await session.scalar(select(exists().where(
+        MFAFactorModel.member_id == member.id,
+        MFAFactorModel.confirmed_at.is_not(None),
+        MFAFactorModel.retired_at.is_(None),
+    ))))
     return {
         "id": str(member.id),
         "username": member.username,
@@ -2192,6 +2208,7 @@ async def update_member(
         "status": member.status,
         "system_role": member.system_role,
         "requires_password_change": member.force_password_change,
+        "mfa_enabled": mfa_enabled,
     }
 
 
