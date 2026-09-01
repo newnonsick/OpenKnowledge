@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityConsole, AiActionsConsole, ExploreConsole, IngestionConsole, KnowledgeConsole, PeopleConsole, SettingsConsole, SourcesConsole, SpacesConsole } from "@/components/management-console";
 import { apiMultipart, apiRequest } from "@/lib/api-client";
 
-const currentMember = vi.hoisted(() => ({ display_name: "Mai", mfa_enabled: false, system_role: "member" as "member" | "super_admin" }));
+const currentMember = vi.hoisted(() => ({ display_name: "Mai", id: "admin-1", mfa_enabled: false, system_role: "member" as "member" | "super_admin" }));
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), search: "q=water" }));
 
 vi.mock("next/navigation", () => ({
@@ -103,6 +103,7 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
 describe("management console", () => {
   beforeEach(() => {
     currentMember.display_name = "Mai";
+    currentMember.id = "admin-1";
     currentMember.mfa_enabled = false;
     currentMember.system_role = "member";
     navigation.replace.mockReset();
@@ -758,6 +759,37 @@ describe("management console", () => {
     expect(createdMemberPath).not.toContain("page=");
   });
 
+  it("routes self password changes to Security and requires enabling a disabled target", async () => {
+    currentMember.system_role = "super_admin";
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [] } as never;
+      }
+      if (path === "/api/v1/members?limit=25") {
+        return { items: [
+          { id: "admin-1", username: "mai", display_name: "Mai", mfa_enabled: true, status: "active", system_role: "super_admin", requires_password_change: false },
+          { id: "member-disabled", username: "nok", display_name: "Nok", mfa_enabled: false, status: "disabled", system_role: "member", requires_password_change: false },
+          { id: "member-pending", username: "jo", display_name: "Jo", mfa_enabled: false, status: "pending", system_role: "member", requires_password_change: true },
+        ] } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<PeopleConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Mai" }));
+    expect(screen.queryByRole("button", { name: "Reset Mai password" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Change your password in Security settings" })).toHaveAttribute("href", "/settings?section=security");
+    fireEvent.click(screen.getByRole("button", { name: "Close member editor" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Nok" }));
+    expect(screen.getByRole("button", { name: "Reset Nok password" })).toBeDisabled();
+    expect(screen.getByText("Enable this member before resetting their password.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close member editor" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Jo" }));
+    expect(screen.getByRole("button", { name: "Reset Jo password" })).toBeEnabled();
+  });
+
   it("resets and disables a member only after explicit confirmation", async () => {
     currentMember.system_role = "super_admin";
     let disabled = false;
@@ -813,6 +845,43 @@ describe("management console", () => {
       return options?.method === "PATCH" && body?.status === "disabled" && body.system_role === "super_admin";
     });
     expect(disabledPromotionCalls).toHaveLength(0);
+  });
+
+  it("explains existing MFA and clears a Super Admin reset secret when the editor closes", async () => {
+    currentMember.system_role = "super_admin";
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [] } as never;
+      }
+      if (path === "/api/v1/members?limit=25") {
+        return { items: [
+          { id: "admin-2", username: "nana", display_name: "Nana", mfa_enabled: true, status: "active", system_role: "super_admin", requires_password_change: false },
+        ] } as never;
+      }
+      if (path === "/api/v1/members/admin-2/password-reset" && options?.method === "POST") {
+        return {
+          id: "admin-2",
+          requires_password_change: true,
+          temporary_password: "Reset-Only-Once!42",
+          temporary_password_expires_at: "2026-09-02T12:00:00Z",
+        } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<PeopleConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Nana" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset Nana password" }));
+    expect(screen.getByText("Their existing MFA remains required.", { exact: false })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm password reset" }));
+    expect(await screen.findByText("Reset-Only-Once!42")).toBeInTheDocument();
+    expect(screen.getByText(/expires/i)).toBeInTheDocument();
+
+    const memberDialog = screen.getByRole("dialog", { name: "Edit Nana" });
+    fireEvent.click(within(memberDialog).getByRole("button", { name: "Close member editor" }));
+    expect(screen.queryByText("Reset-Only-Once!42")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit Nana" }));
+    expect(screen.queryByText("Reset-Only-Once!42")).not.toBeInTheDocument();
   });
 
   it.each([

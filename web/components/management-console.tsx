@@ -2,6 +2,7 @@
 
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useId, useRef, useState } from "react";
 import { Activity, Archive, ArrowUpRight, BookOpen, CircleAlert, Code2, FileText, FileUp, FolderKanban, KeyRound, Layers3, LoaderCircle, LockKeyhole, MonitorSmartphone, Plus, Save, Search, Settings2, ShieldCheck, Sparkles, Tag, UserMinus, UserPlus, UsersRound, X } from "lucide-react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { useCurrentMember } from "@/components/auth/session-gate";
@@ -1155,6 +1156,12 @@ export function PeopleConsole() {
   const [memberSaving, setMemberSaving] = useState(false);
   const [manageError, setManageError] = useState<string | null>(null);
   const [recoverySaving, setRecoverySaving] = useState(false);
+  const selectedMemberIsActor = selectedMember?.id === member.id;
+  const selectedMemberCanReset = Boolean(
+    selectedMember
+    && !selectedMemberIsActor
+    && selectedMember.status !== "disabled"
+  );
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const memberEditorTitleId = useId();
   const memberEditorReturnFocusRef = useRef<HTMLButtonElement | null>(null);
@@ -1286,7 +1293,7 @@ export function PeopleConsole() {
   };
 
   const resetSelectedMemberPassword = async () => {
-    if (!selectedMember || memberSaving) {
+    if (!selectedMember || !selectedMemberCanReset || memberSaving) {
       return;
     }
     setMemberSaving(true);
@@ -1408,13 +1415,18 @@ export function PeopleConsole() {
                   <div className="member-editor-actions"><button className="secondary-button" disabled={memberSaving} onClick={closeMemberEditor} type="button">Cancel</button><button className="primary-button" disabled={memberSaving || !memberDraft.displayName.trim() || (memberDraft.systemRole === "super_admin" && selectedMember.system_role !== "super_admin" && selectedMember.status !== "active")} onClick={() => void updateSelectedMember(undefined, true)} type="button">{memberSaving ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <Save aria-hidden="true" size={14} />} Save account</button></div>
                 </div>
                 <div className="member-security-actions">
-                  <button className="secondary-button" disabled={memberSaving} onClick={() => { setManageError(null); setResetPassword(null); setPendingMemberAction("reset"); }} type="button"><KeyRound size={14} /> Reset {selectedMember.display_name} password</button>
+                  {selectedMemberIsActor ? (
+                    <Link className="secondary-button" href="/settings?section=security"><KeyRound size={14} /> Change your password in Security settings</Link>
+                  ) : (
+                    <button className="secondary-button" disabled={memberSaving || !selectedMemberCanReset} onClick={() => { setManageError(null); setResetPassword(null); setPendingMemberAction("reset"); }} type="button"><KeyRound size={14} /> Reset {selectedMember.display_name} password</button>
+                  )}
                   {selectedMember.status === "disabled" ? <button className="secondary-button" disabled={memberSaving} onClick={() => { setManageError(null); setPendingMemberAction("enable"); }} type="button">Enable {selectedMember.display_name}</button> : <button className="archive-button compact" disabled={memberSaving} onClick={() => { setManageError(null); setPendingMemberAction("disable"); }} type="button">Disable {selectedMember.display_name}</button>}
+                  {!selectedMemberIsActor && selectedMember.status === "disabled" ? <p className="member-reset-guidance">Enable this member before resetting their password.</p> : null}
                 </div>
                 {manageError ? <p className="inline-error" role="alert">{manageError}</p> : null}
-                {resetPassword ? <div className="member-reset-secret"><p>This temporary password is shown only once.</p><div className="secret-value"><code>{resetPassword.temporary_password}</code><CopyButton label="Copy reset password" value={resetPassword.temporary_password} /></div></div> : null}
+                {resetPassword ? <div className="member-reset-secret"><p>This temporary password is shown only once.</p><p>It expires {formatDateTime(resetPassword.temporary_password_expires_at)}.</p><div className="secret-value"><code>{resetPassword.temporary_password}</code><CopyButton label="Copy reset password" value={resetPassword.temporary_password} /></div></div> : null}
               </ModalDialog>
-              <ConfirmationDialog busy={memberSaving} busyLabel="Resetting password…" cancelLabel="Keep password" confirmLabel="Confirm password reset" description="This signs out every session, revokes active API keys, and creates a one-time password." error={manageError} onCancel={() => setPendingMemberAction(null)} onConfirm={() => void resetSelectedMemberPassword()} open={pendingMemberAction === "reset"} title={`Reset ${selectedMember.display_name} password`} tone="danger" />
+              <ConfirmationDialog busy={memberSaving} busyLabel="Resetting password…" cancelLabel="Keep password" confirmLabel="Confirm password reset" description={`This signs out every session, revokes active API keys, and creates a one-time password.${selectedMember.system_role === "super_admin" ? " Their existing MFA remains required." : ""}`} error={manageError} onCancel={() => setPendingMemberAction(null)} onConfirm={() => void resetSelectedMemberPassword()} open={pendingMemberAction === "reset"} title={`Reset ${selectedMember.display_name} password`} tone="danger" />
               <ConfirmationDialog busy={memberSaving} busyLabel="Disabling member…" cancelLabel="Keep active" confirmLabel="Confirm disable member" description="This immediately revokes sessions and API keys. Space history remains preserved." error={manageError} onCancel={() => setPendingMemberAction(null)} onConfirm={() => void updateSelectedMember("disabled", false, false)} open={pendingMemberAction === "disable"} title={`Disable ${selectedMember.display_name}`} tone="danger" />
               <ConfirmationDialog busy={memberSaving} busyLabel="Enabling member…" cancelLabel="Keep disabled" confirmLabel="Confirm enable member" description="The member can authenticate again, but revoked sessions and keys remain revoked." error={manageError} onCancel={() => setPendingMemberAction(null)} onConfirm={() => void updateSelectedMember("active", false, false)} open={pendingMemberAction === "enable"} title={`Enable ${selectedMember.display_name}`} tone="primary" />
               </>

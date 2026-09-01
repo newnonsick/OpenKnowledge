@@ -848,8 +848,11 @@ html[data-theme="dark"] .member-row-trigger:hover .member-edit-affordance, html[
 html[data-theme="dark"] .ownership-boundary svg { color: var(--accent); }
 .member-security-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 .member-security-actions .secondary-button, .member-security-actions .archive-button { min-height: 34px; margin: 0; }
+.member-security-actions > .secondary-button { text-decoration: none; }
+.member-reset-guidance { width: 100%; margin: 0; color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
 .member-reset-secret { margin-top: 14px; padding: 14px; border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent); border-radius: var(--radius-md); background: var(--accent-softer); }
 .member-reset-secret > p { margin: 0 0 10px; color: var(--accent-strong); font-size: 12px; font-weight: 600; }
+.member-reset-secret > p + p { margin-top: -4px; color: var(--ink-soft); font-weight: 500; }
 html[data-theme="dark"] .member-reset-secret > p { color: var(--accent); }
 
 .status-pill { padding: 3px 9px; background: var(--surface-soft); color: var(--ink-soft); }
