@@ -37,11 +37,11 @@ export function MfaSecurityPanel({ enabled, onEnabled }: { enabled: boolean; onE
     setBusy(true);
     setError(null);
     passwordRef.current = currentPassword;
-    form.reset();
     try {
       const response = await contractDataWithSessionRetry(() => contractClient.POST("/api/v1/auth/mfa/totp/enroll", {
         body: { current_password: currentPassword },
       }));
+      form.reset();
       setEnrollment(response);
     } catch (requestError) {
       passwordRef.current = "";

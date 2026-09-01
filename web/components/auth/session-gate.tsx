@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 
 import { ModalDialog } from "@/components/confirmation-dialog";
 import { ApiError, apiRequest, contractClient, contractData, noteMeaningfulActivity, refreshSession } from "@/lib/api-client";
-import { modalReturnTargetFor } from "@/lib/focus-management";
+import { focusModalReturnTarget, modalReturnTargetFor } from "@/lib/focus-management";
 import type { components } from "@/lib/generated/openapi";
 
 export type CurrentMember = components["schemas"]["CurrentMember"];
@@ -127,9 +127,11 @@ export function SessionGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const requireStepUp = (event: Event) => {
-      setStepUpReturnTarget(modalReturnTargetFor(event));
-      setStepUpError(null);
-      setStepUpOpen(true);
+      queueMicrotask(() => {
+        setStepUpReturnTarget(modalReturnTargetFor(event));
+        setStepUpError(null);
+        setStepUpOpen(true);
+      });
     };
     window.addEventListener("aigw-step-up-required", requireStepUp);
     return () => window.removeEventListener("aigw-step-up-required", requireStepUp);
@@ -137,6 +139,26 @@ export function SessionGate({ children }: { children: ReactNode }) {
 
   const stepUpTitleId = useId();
   const stepUpDescriptionId = useId();
+
+  function closeStepUp() {
+    setStepUpOpen(false);
+  }
+
+  useEffect(() => {
+    if (stepUpOpen || !stepUpReturnTarget) {
+      return;
+    }
+    let focusTimer = 0;
+    let attempts = 0;
+    const restoreFocus = () => {
+      attempts += 1;
+      if (!focusModalReturnTarget(stepUpReturnTarget) && attempts < 20) {
+        focusTimer = window.setTimeout(restoreFocus, 16);
+      }
+    };
+    focusTimer = window.setTimeout(restoreFocus, 0);
+    return () => window.clearTimeout(focusTimer);
+  }, [stepUpOpen, stepUpReturnTarget]);
 
   async function submitStepUp(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -153,7 +175,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
         method: "POST",
         retryAuthentication: false,
       });
-      setStepUpOpen(false);
+      closeStepUp();
     } catch (error) {
       setStepUpError(error instanceof ApiError && error.code === "recent_authentication_required"
         ? "Verify your identity, then run that action again."
@@ -176,8 +198,8 @@ export function SessionGate({ children }: { children: ReactNode }) {
   return (
     <SessionContext.Provider value={member}>
       {children}
-      <ModalDialog ariaDescribedBy={stepUpDescriptionId} ariaLabelledBy={stepUpTitleId} className="step-up-dialog" onClose={() => { if (!stepUpSubmitting) setStepUpOpen(false); }} open={stepUpOpen} returnFocusTarget={stepUpReturnTarget}>
-            <div className="step-up-heading"><span><KeyRound aria-hidden="true" size={18} /></span><div><small>Security check</small><h2 id={stepUpTitleId}>Verify your identity</h2></div><button aria-label="Close identity verification" disabled={stepUpSubmitting} onClick={() => setStepUpOpen(false)} type="button"><X aria-hidden="true" size={18} /></button></div>
+      <ModalDialog ariaDescribedBy={stepUpDescriptionId} ariaLabelledBy={stepUpTitleId} className="step-up-dialog" onClose={() => { if (!stepUpSubmitting) closeStepUp(); }} open={stepUpOpen} returnFocusTarget={stepUpReturnTarget}>
+            <div className="step-up-heading"><span><KeyRound aria-hidden="true" size={18} /></span><div><small>Security check</small><h2 id={stepUpTitleId}>Verify your identity</h2></div><button aria-label="Close identity verification" disabled={stepUpSubmitting} onClick={closeStepUp} type="button"><X aria-hidden="true" size={18} /></button></div>
             <p id={stepUpDescriptionId}>For extra security, this action needs a fresh identity check. Nothing was saved yet — verify below, then run the action again.</p>
             <form onSubmit={submitStepUp}>
               <label className="field-label" htmlFor="step-up-password">Current password</label>
@@ -193,7 +215,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
                 </>
               ) : null}
               {stepUpError ? <div className="auth-error" role="alert">{stepUpError}</div> : null}
-              <div className="step-up-actions"><button className="secondary-button" disabled={stepUpSubmitting} onClick={() => setStepUpOpen(false)} type="button">Cancel</button><button className="primary-button" disabled={stepUpSubmitting} type="submit">{stepUpSubmitting ? "Verifying…" : "Verify identity"}</button></div>
+              <div className="step-up-actions"><button className="secondary-button" disabled={stepUpSubmitting} onClick={closeStepUp} type="button">Cancel</button><button className="primary-button" disabled={stepUpSubmitting} type="submit">{stepUpSubmitting ? "Verifying…" : "Verify identity"}</button></div>
             </form>
       </ModalDialog>
     </SessionContext.Provider>

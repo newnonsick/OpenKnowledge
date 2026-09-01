@@ -268,6 +268,20 @@ async def test_member_lifecycle_prevents_lockout_and_revokes_credentials_with_ha
                 )
             )
             await session.flush()
+            target_before_disabled_promotion = await session.get(MemberModel, member_id)
+            assert target_before_disabled_promotion is not None
+            assert target_before_disabled_promotion.system_role == SystemRole.MEMBER.value
+            with pytest.raises(ResourceConflictException):
+                await service.update(
+                    principal(admin_id),
+                    family_id=admin_session.family_id,
+                    member_id=member_id,
+                    display_name="Member",
+                    status=MemberStatus.DISABLED,
+                    system_role=SystemRole.SUPER_ADMIN,
+                    request_id="promote-disabled-with-mfa",
+                    now=now,
+                )
             await service.update(
                 principal(admin_id),
                 family_id=admin_session.family_id,

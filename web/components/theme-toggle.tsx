@@ -19,7 +19,7 @@ function currentTheme(): Theme {
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-export function ThemeToggle() {
+export function ThemeToggle({ menuItem = false, onFocus, tabIndex }: { menuItem?: boolean; onFocus?: () => void; tabIndex?: number } = {}) {
   const [theme, setTheme] = useState<Theme>("light");
 
   useLayoutEffect(() => {
@@ -49,6 +49,9 @@ export function ThemeToggle() {
       aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
       className="theme-toggle"
       onClick={() => apply(next)}
+      onFocus={onFocus}
+      role={menuItem ? "menuitem" : undefined}
+      tabIndex={tabIndex}
       type="button"
     >
       {theme === "dark" ? <Sun aria-hidden="true" size={15} /> : <Moon aria-hidden="true" size={15} />}

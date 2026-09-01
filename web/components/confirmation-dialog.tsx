@@ -75,6 +75,7 @@ type ConfirmationDialogProps = {
   confirmDisabled?: boolean;
   confirmLabel: string;
   description: string;
+  error?: string | null;
   onCancel: () => void;
   onConfirm: () => void;
   open: boolean;
@@ -90,6 +91,7 @@ export function ConfirmationDialog({
   confirmDisabled = false,
   confirmLabel,
   description,
+  error,
   onCancel,
   onConfirm,
   open,
@@ -132,6 +134,7 @@ export function ConfirmationDialog({
         </div>
       </div>
       <p className="modal-copy" id={descriptionId}>{description}</p>
+      {error ? <p className="inline-error modal-error" role="alert">{error}</p> : null}
       <div className="modal-actions">
         <button className="secondary-button" disabled={busy} onClick={onCancel} type="button">{cancelLabel}</button>
         <button className={actionClass} disabled={busy || confirmDisabled} onClick={onConfirm} type="button">

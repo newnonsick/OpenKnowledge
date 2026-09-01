@@ -17,7 +17,9 @@ type AccountMenuProps = {
 
 export function AccountMenu({ member, onSignOut, signingOut }: AccountMenuProps) {
   const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
   const initials = member.displayName.split(/\s+/).map((value) => value[0]).join("").slice(0, 2).toUpperCase();
@@ -45,24 +47,57 @@ export function AccountMenu({ member, onSignOut, signingOut }: AccountMenuProps)
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    queueMicrotask(() => {
+      const items = menuRef.current?.querySelectorAll<HTMLElement>("[role='menuitem']");
+      items?.[activeIndex]?.focus();
+    });
+  }, [activeIndex, open]);
+
   const close = () => setOpen(false);
+  const openAt = (index: number) => {
+    setActiveIndex(index);
+    setOpen(true);
+  };
+  const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Tab") {
+      setOpen(false);
+      return;
+    }
+    const itemCount = menuRef.current?.querySelectorAll("[role='menuitem']").length ?? 0;
+    if (!itemCount || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      return;
+    }
+    event.preventDefault();
+    if (event.key === "Home") {
+      setActiveIndex(0);
+    } else if (event.key === "End") {
+      setActiveIndex(itemCount - 1);
+    } else {
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      setActiveIndex((current) => (current + direction + itemCount) % itemCount);
+    }
+  };
 
   return (
     <div className="account-menu" ref={containerRef}>
       {open ? (
-        <div aria-label="Account" className="account-menu-popover" id={menuId} role="menu">
-          <div className="account-menu-identity">
+        <div aria-label="Account" className="account-menu-popover" id={menuId} onKeyDown={handleMenuKeyDown} ref={menuRef} role="menu">
+          <div aria-hidden="true" className="account-menu-identity" role="presentation">
             <strong>{member.displayName}</strong>
             <span>{member.role}</span>
           </div>
-          <Link className="account-menu-item" href="/settings" onClick={close}><Settings2 aria-hidden="true" size={16} /><span>Profile and settings</span></Link>
-          <Link className="account-menu-item" href="/settings?section=api-keys" onClick={close}><KeyRound aria-hidden="true" size={16} /><span>API keys</span></Link>
-          <ThemeToggle />
-          <div className="account-menu-separator" />
-          <button aria-label="Sign out" className="account-menu-item is-danger" disabled={signingOut} onClick={() => { close(); onSignOut(); }} type="button"><LogOut aria-hidden="true" size={16} /><span>{signingOut ? "Signing out…" : "Sign out"}</span></button>
+          <Link className="account-menu-item" href="/settings?section=security" onClick={close} onFocus={() => setActiveIndex(0)} role="menuitem" tabIndex={activeIndex === 0 ? 0 : -1}><Settings2 aria-hidden="true" size={16} /><span>Security settings</span></Link>
+          <Link className="account-menu-item" href="/settings?section=api-keys" onClick={close} onFocus={() => setActiveIndex(1)} role="menuitem" tabIndex={activeIndex === 1 ? 0 : -1}><KeyRound aria-hidden="true" size={16} /><span>API keys</span></Link>
+          <ThemeToggle menuItem onFocus={() => setActiveIndex(2)} tabIndex={activeIndex === 2 ? 0 : -1} />
+          <div className="account-menu-separator" role="separator" />
+          <button aria-label="Sign out" className="account-menu-item is-danger" disabled={signingOut} onClick={() => { close(); onSignOut(); }} onFocus={() => setActiveIndex(3)} role="menuitem" tabIndex={activeIndex === 3 ? 0 : -1} type="button"><LogOut aria-hidden="true" size={16} /><span>{signingOut ? "Signing out…" : "Sign out"}</span></button>
         </div>
       ) : null}
-      <button aria-controls={menuId} aria-expanded={open} aria-haspopup="menu" aria-label="Open account menu" className="profile-card account-menu-trigger" onClick={() => setOpen((current) => !current)} ref={triggerRef} type="button">
+      <button aria-controls={menuId} aria-expanded={open} aria-haspopup="menu" aria-label="Open account menu" className="profile-card account-menu-trigger" onClick={() => { if (open) close(); else openAt(0); }} onKeyDown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); openAt(event.key === "ArrowDown" ? 0 : 3); } }} ref={triggerRef} type="button">
         <span className="profile-avatar">{initials || "M"}</span>
         <span><strong>{member.displayName}</strong><small>{member.role}</small></span>
         <ChevronUp aria-hidden="true" className={open ? "is-open" : ""} size={16} />

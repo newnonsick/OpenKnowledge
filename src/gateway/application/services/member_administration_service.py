@@ -179,6 +179,8 @@ class MemberAdministrationService:
         if removes_active_admin and len(active_admins) <= 1:
             raise ResourceConflictException("At least one active super admin is required.")
         if system_role is SystemRole.SUPER_ADMIN and member.system_role != SystemRole.SUPER_ADMIN.value:
+            if status is not MemberStatus.ACTIVE:
+                raise ResourceConflictException("Only active members can be promoted to Super Admin.")
             confirmed_mfa = await self._session.scalar(
                 select(MFAFactorModel.id).where(
                     MFAFactorModel.member_id == member_id,

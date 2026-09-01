@@ -150,6 +150,7 @@ export function SpacesConsole() {
   const [spaceCountLoading, setSpaceCountLoading] = useState(true);
   const accessDialogTitleId = useId();
   const accessDialogReturnFocusRef = useRef<HTMLButtonElement | null>(null);
+  const accessActionReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const createNameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -381,11 +382,11 @@ export function SpacesConsole() {
           <form className="list-filter-bar space-filter-bar" onSubmit={(event) => { event.preventDefault(); setAppliedSpaceSearch(spaceSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={15} /><input aria-label="Search spaces" onChange={(event) => setSpaceSearch(event.target.value)} placeholder="Search name or ID" type="search" value={spaceSearch} /></label><button className="secondary-button" type="submit">Apply</button>{appliedSpaceSearch ? <button className="filter-clear-button" onClick={() => { setSpaceSearch(""); setAppliedSpaceSearch(""); }} type="button">Clear</button> : null}</form>
           {selectedSpace ? (
             <>
-            <ModalDialog ariaLabelledBy={accessDialogTitleId} className="space-access-dialog" onClose={closeAccessManager} open={!pendingRemoval && !pendingOwnership && !confirmSpaceArchive} returnFocusTarget={accessDialogReturnFocusRef.current}>
+            <ModalDialog ariaLabelledBy={accessDialogTitleId} className="space-access-dialog" onClose={closeAccessManager} open returnFocusTarget={accessDialogReturnFocusRef.current}>
               <div className="space-access-heading">
                 <div><span>Owner controls</span><h2 id={accessDialogTitleId}>{selectedSpace.name} access</h2></div>
                 <div className="space-access-actions">
-                  {selectedSpace.id !== "global" ? <button aria-label={`Archive ${selectedSpace.name}`} className="archive-button compact" onClick={() => setConfirmSpaceArchive(true)} type="button"><Archive size={14} /> Archive space</button> : null}
+                  {selectedSpace.id !== "global" ? <button aria-label={`Archive ${selectedSpace.name}`} className="archive-button compact" onClick={(event) => { accessActionReturnFocusRef.current = event.currentTarget; setAccessError(null); setConfirmSpaceArchive(true); }} type="button"><Archive size={14} /> Archive space</button> : null}
                   <button aria-label="Close access manager" className="icon-button" disabled={accessSaving} onClick={closeAccessManager} type="button"><X size={16} /></button>
                 </div>
               </div>
@@ -417,7 +418,7 @@ export function SpacesConsole() {
                   <article className="membership-row" key={spaceMember.member_id}>
                     <span className="profile-avatar">{spaceMember.display_name.slice(0, 2).toUpperCase()}</span>
                     <div className="row-copy"><h3>{spaceMember.display_name}</h3><p>@{spaceMember.username}</p></div>
-                    {spaceMember.role === "owner" ? <span className="role-pill role-owner">owner</span> : <><label className="visually-hidden" htmlFor={`role-${spaceMember.member_id}`}>Role for {spaceMember.display_name}</label><select disabled={accessSaving} id={`role-${spaceMember.member_id}`} onChange={(event) => void changeRole(spaceMember, event.target.value as "editor" | "reader")} value={spaceMember.role}><option value="reader">Reader</option><option value="editor">Editor</option></select><button aria-label={`Transfer ownership to ${spaceMember.display_name}`} className="ownership-transfer-button" disabled={accessSaving} onClick={() => setPendingOwnership(spaceMember)} type="button"><KeyRound size={14} /></button><button aria-label={`Remove ${spaceMember.display_name}`} className="membership-remove-button" disabled={accessSaving} onClick={() => setPendingRemoval(spaceMember)} type="button"><UserMinus size={15} /></button></>}
+                    {spaceMember.role === "owner" ? <span className="role-pill role-owner">owner</span> : <><label className="visually-hidden" htmlFor={`role-${spaceMember.member_id}`}>Role for {spaceMember.display_name}</label><select disabled={accessSaving} id={`role-${spaceMember.member_id}`} onChange={(event) => void changeRole(spaceMember, event.target.value as "editor" | "reader")} value={spaceMember.role}><option value="reader">Reader</option><option value="editor">Editor</option></select><button aria-label={`Transfer ownership to ${spaceMember.display_name}`} className="ownership-transfer-button" disabled={accessSaving} onClick={(event) => { accessActionReturnFocusRef.current = event.currentTarget; setAccessError(null); setPendingOwnership(spaceMember); }} type="button"><KeyRound size={14} /></button><button aria-label={`Remove ${spaceMember.display_name}`} className="membership-remove-button" disabled={accessSaving} onClick={(event) => { accessActionReturnFocusRef.current = event.currentTarget; setAccessError(null); setPendingRemoval(spaceMember); }} type="button"><UserMinus size={15} /></button></>}
                   </article>
                 ))}
               </div>
@@ -426,9 +427,9 @@ export function SpacesConsole() {
               {candidatePages.totalPages > 1 ? <div className="access-pagination-group"><p className="access-pagination-label">Members available to add</p><PaginationControls loading={candidatePages.loading} loadingPage={candidatePages.loadingPage} onPageChange={(nextPage) => void candidatePages.goToPage(nextPage)} page={candidatePages.page} pageSize={candidatePages.pageSize} totalItems={candidatePages.totalItems} totalPages={candidatePages.totalPages} /></div> : null}
               </>}
             </ModalDialog>
-              <ConfirmationDialog busy={accessSaving} busyLabel="Removing member…" cancelLabel="Keep member" confirmLabel="Confirm removal" description="They will immediately lose access to this space and its search results." onCancel={() => setPendingRemoval(null)} onConfirm={() => void removeMember()} open={Boolean(pendingRemoval)} title={pendingRemoval ? `Remove ${pendingRemoval.display_name} from ${selectedSpace.name}` : "Remove member"} tone="danger" />
-              <ConfirmationDialog busy={accessSaving} busyLabel="Transferring ownership…" cancelLabel="Keep ownership" confirmLabel="Confirm ownership transfer" description="You will become an editor. A recent identity verification is required, and the blocked action is never replayed automatically." onCancel={() => setPendingOwnership(null)} onConfirm={() => void transferOwnership()} open={Boolean(pendingOwnership)} title={pendingOwnership ? `Transfer ownership to ${pendingOwnership.display_name}` : "Transfer ownership"} tone="danger" />
-              <ConfirmationDialog busy={accessSaving} busyLabel="Archiving space…" cancelLabel="Keep space" confirmLabel="Confirm archive space" description="Its knowledge will leave unified search immediately, while history remains preserved." onCancel={() => setConfirmSpaceArchive(false)} onConfirm={() => void archiveSelectedSpace()} open={confirmSpaceArchive} title={`Archive ${selectedSpace.name}`} tone="danger" />
+              <ConfirmationDialog busy={accessSaving} busyLabel="Removing member…" cancelLabel="Keep member" confirmLabel="Confirm removal" description="They will immediately lose access to this space and its search results." error={accessError} onCancel={() => setPendingRemoval(null)} onConfirm={() => void removeMember()} open={Boolean(pendingRemoval)} returnFocusTarget={accessActionReturnFocusRef.current} title={pendingRemoval ? `Remove ${pendingRemoval.display_name} from ${selectedSpace.name}` : "Remove member"} tone="danger" />
+              <ConfirmationDialog busy={accessSaving} busyLabel="Transferring ownership…" cancelLabel="Keep ownership" confirmLabel="Confirm ownership transfer" description="You will become an editor. A recent identity verification is required, and the blocked action is never replayed automatically." error={accessError} onCancel={() => setPendingOwnership(null)} onConfirm={() => void transferOwnership()} open={Boolean(pendingOwnership)} returnFocusTarget={accessActionReturnFocusRef.current} title={pendingOwnership ? `Transfer ownership to ${pendingOwnership.display_name}` : "Transfer ownership"} tone="danger" />
+              <ConfirmationDialog busy={accessSaving} busyLabel="Archiving space…" cancelLabel="Keep space" confirmLabel="Confirm archive space" description="Its knowledge will leave unified search immediately, while history remains preserved." error={accessError} onCancel={() => setConfirmSpaceArchive(false)} onConfirm={() => void archiveSelectedSpace()} open={confirmSpaceArchive} returnFocusTarget={accessActionReturnFocusRef.current} title={`Archive ${selectedSpace.name}`} tone="danger" />
             </>
           ) : null}
           {spacePages.initialLoading || (spacePages.loading && spaces.length === 0) ? <ListSkeleton /> : null}
@@ -1237,7 +1238,7 @@ export function PeopleConsole() {
     }
   };
 
-  const updateSelectedMember = async (status = selectedMember?.status, closeOnSuccess = false) => {
+  const updateSelectedMember = async (status = selectedMember?.status, closeOnSuccess = false, saveDraft = true) => {
     if (!selectedMember || !memberDraft || !status || memberSaving) {
       return;
     }
@@ -1246,9 +1247,9 @@ export function PeopleConsole() {
     try {
       const response = await contractData(contractClient.PATCH("/api/v1/members/{member_id}", {
         body: {
-          display_name: memberDraft.displayName.trim(),
+          display_name: saveDraft ? memberDraft.displayName.trim() : selectedMember.display_name,
           status,
-          system_role: memberDraft.systemRole,
+          system_role: saveDraft ? memberDraft.systemRole : selectedMember.system_role,
         },
         params: { header: { "Idempotency-Key": idempotencyKey() }, path: { member_id: selectedMember.id } },
       }));
@@ -1258,7 +1259,11 @@ export function PeopleConsole() {
         setMemberDraft(null);
       } else {
         setSelectedMember(response);
-        setMemberDraft({ displayName: response.display_name, systemRole: response.system_role });
+        if (saveDraft) {
+          setMemberDraft({ displayName: response.display_name, systemRole: response.system_role });
+        } else if (response.status !== "active" && response.system_role !== "super_admin" && memberDraft.systemRole === "super_admin") {
+          setMemberDraft({ ...memberDraft, systemRole: response.system_role });
+        }
       }
       memberPages.reload();
     } catch (updateError) {
@@ -1389,7 +1394,7 @@ export function PeopleConsole() {
             {memberPages.totalPages > 1 ? <PaginationControls loading={memberPages.loading} loadingPage={memberPages.loadingPage} onPageChange={(nextPage) => void memberPages.goToPage(nextPage)} page={memberPages.page} pageSize={memberPages.pageSize} totalItems={memberPages.totalItems} totalPages={memberPages.totalPages} /> : null}
             {selectedMember && memberDraft ? (
               <>
-              <ModalDialog ariaLabelledBy={memberEditorTitleId} className="member-editor-dialog" onClose={closeMemberEditor} open={pendingMemberAction === null} returnFocusTarget={memberEditorReturnFocusRef.current}>
+              <ModalDialog ariaLabelledBy={memberEditorTitleId} className="member-editor-dialog" onClose={closeMemberEditor} open returnFocusTarget={memberEditorReturnFocusRef.current}>
                 <div className="member-editor-header"><div><span>Account controls</span><h2 id={memberEditorTitleId}>Edit {selectedMember.display_name}</h2><p>@{selectedMember.username}</p></div><button aria-label="Close member editor" className="icon-button" disabled={memberSaving} onClick={closeMemberEditor} type="button"><X size={16} /></button></div>
                 <div className="member-readiness">
                   <div><span>Account status</span><strong className={`status-pill status-${selectedMember.status}`}>{selectedMember.status}</strong></div>
@@ -1398,19 +1403,19 @@ export function PeopleConsole() {
                 <div className="member-admin-form">
                   <div><label htmlFor="member-admin-display-name">Display name</label><input id="member-admin-display-name" maxLength={255} onChange={(event) => setMemberDraft({ ...memberDraft, displayName: event.target.value })} value={memberDraft.displayName} /></div>
                   <div><label htmlFor="member-admin-system-role">System role</label><select id="member-admin-system-role" onChange={(event) => setMemberDraft({ ...memberDraft, systemRole: event.target.value as MemberSummary["system_role"] })} value={memberDraft.systemRole}><option value="member">Member</option><option disabled={selectedMember.system_role !== "super_admin" && (!selectedMember.mfa_enabled || selectedMember.status !== "active")} value="super_admin">Super admin</option></select></div>
-                  {selectedMember.system_role !== "super_admin" && (!selectedMember.mfa_enabled || selectedMember.status !== "active") ? <p className="member-promotion-guidance"><LockKeyhole aria-hidden="true" size={15} /> This member must set up MFA in Settings → Security before promotion to Super admin.</p> : null}
-                  <div className="member-editor-actions"><button className="secondary-button" disabled={memberSaving} onClick={closeMemberEditor} type="button">Cancel</button><button className="primary-button" disabled={memberSaving || !memberDraft.displayName.trim()} onClick={() => void updateSelectedMember(undefined, true)} type="button">{memberSaving ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <Save aria-hidden="true" size={14} />} Save account</button></div>
+                  {selectedMember.system_role !== "super_admin" && (!selectedMember.mfa_enabled || selectedMember.status !== "active") ? <p className="member-promotion-guidance"><LockKeyhole aria-hidden="true" size={15} /> {selectedMember.status !== "active" && !selectedMember.mfa_enabled ? "Enable this member and ask them to set up MFA in Settings → Security before promotion to Super admin." : selectedMember.status !== "active" ? "Enable this member before promotion to Super admin." : "This member must set up MFA in Settings → Security before promotion to Super admin."}</p> : null}
+                  <div className="member-editor-actions"><button className="secondary-button" disabled={memberSaving} onClick={closeMemberEditor} type="button">Cancel</button><button className="primary-button" disabled={memberSaving || !memberDraft.displayName.trim() || (memberDraft.systemRole === "super_admin" && selectedMember.system_role !== "super_admin" && selectedMember.status !== "active")} onClick={() => void updateSelectedMember(undefined, true)} type="button">{memberSaving ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <Save aria-hidden="true" size={14} />} Save account</button></div>
                 </div>
                 <div className="member-security-actions">
-                  <button className="secondary-button" disabled={memberSaving} onClick={() => { setResetPassword(null); setPendingMemberAction("reset"); }} type="button"><KeyRound size={14} /> Reset {selectedMember.display_name} password</button>
-                  {selectedMember.status === "disabled" ? <button className="secondary-button" disabled={memberSaving} onClick={() => setPendingMemberAction("enable")} type="button">Enable {selectedMember.display_name}</button> : <button className="archive-button compact" disabled={memberSaving} onClick={() => setPendingMemberAction("disable")} type="button">Disable {selectedMember.display_name}</button>}
+                  <button className="secondary-button" disabled={memberSaving} onClick={() => { setManageError(null); setResetPassword(null); setPendingMemberAction("reset"); }} type="button"><KeyRound size={14} /> Reset {selectedMember.display_name} password</button>
+                  {selectedMember.status === "disabled" ? <button className="secondary-button" disabled={memberSaving} onClick={() => { setManageError(null); setPendingMemberAction("enable"); }} type="button">Enable {selectedMember.display_name}</button> : <button className="archive-button compact" disabled={memberSaving} onClick={() => { setManageError(null); setPendingMemberAction("disable"); }} type="button">Disable {selectedMember.display_name}</button>}
                 </div>
                 {manageError ? <p className="inline-error" role="alert">{manageError}</p> : null}
                 {resetPassword ? <div className="member-reset-secret"><p>This temporary password is shown only once.</p><div className="secret-value"><code>{resetPassword.temporary_password}</code><CopyButton label="Copy reset password" value={resetPassword.temporary_password} /></div></div> : null}
               </ModalDialog>
-              <ConfirmationDialog busy={memberSaving} busyLabel="Resetting password…" cancelLabel="Keep password" confirmLabel="Confirm password reset" description="This signs out every session, revokes active API keys, and creates a one-time password." onCancel={() => setPendingMemberAction(null)} onConfirm={() => void resetSelectedMemberPassword()} open={pendingMemberAction === "reset"} title={`Reset ${selectedMember.display_name} password`} tone="danger" />
-              <ConfirmationDialog busy={memberSaving} busyLabel="Disabling member…" cancelLabel="Keep active" confirmLabel="Confirm disable member" description="This immediately revokes sessions and API keys. Space history remains preserved." onCancel={() => setPendingMemberAction(null)} onConfirm={() => void updateSelectedMember("disabled")} open={pendingMemberAction === "disable"} title={`Disable ${selectedMember.display_name}`} tone="danger" />
-              <ConfirmationDialog busy={memberSaving} busyLabel="Enabling member…" cancelLabel="Keep disabled" confirmLabel="Confirm enable member" description="The member can authenticate again, but revoked sessions and keys remain revoked." onCancel={() => setPendingMemberAction(null)} onConfirm={() => void updateSelectedMember("active")} open={pendingMemberAction === "enable"} title={`Enable ${selectedMember.display_name}`} tone="primary" />
+              <ConfirmationDialog busy={memberSaving} busyLabel="Resetting password…" cancelLabel="Keep password" confirmLabel="Confirm password reset" description="This signs out every session, revokes active API keys, and creates a one-time password." error={manageError} onCancel={() => setPendingMemberAction(null)} onConfirm={() => void resetSelectedMemberPassword()} open={pendingMemberAction === "reset"} title={`Reset ${selectedMember.display_name} password`} tone="danger" />
+              <ConfirmationDialog busy={memberSaving} busyLabel="Disabling member…" cancelLabel="Keep active" confirmLabel="Confirm disable member" description="This immediately revokes sessions and API keys. Space history remains preserved." error={manageError} onCancel={() => setPendingMemberAction(null)} onConfirm={() => void updateSelectedMember("disabled", false, false)} open={pendingMemberAction === "disable"} title={`Disable ${selectedMember.display_name}`} tone="danger" />
+              <ConfirmationDialog busy={memberSaving} busyLabel="Enabling member…" cancelLabel="Keep disabled" confirmLabel="Confirm enable member" description="The member can authenticate again, but revoked sessions and keys remain revoked." error={manageError} onCancel={() => setPendingMemberAction(null)} onConfirm={() => void updateSelectedMember("active", false, false)} open={pendingMemberAction === "enable"} title={`Enable ${selectedMember.display_name}`} tone="primary" />
               </>
             ) : null}
           </section>

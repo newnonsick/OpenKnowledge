@@ -54,7 +54,7 @@ async def test_fresh_database_upgrade_and_schema_check():
         status = await get_schema_status_async(isolated_url, expected_embedding_dimension=1024)
 
         assert status.compatible is True
-        assert status.current_revision == "020"
+        assert status.current_revision == "021"
         assert status.embedding_dimensions == (1024, 1024)
         assert status.vector_extension_version is not None
         assert status.trigram_extension_available is True
@@ -134,7 +134,7 @@ async def test_fresh_database_upgrade_and_schema_check():
                 isolated_url,
                 expected_embedding_dimension=1024,
             )
-        ).current_revision == "020"
+        ).current_revision == "021"
     finally:
         if created:
             async with admin_engine.connect() as connection:
@@ -213,7 +213,7 @@ async def test_non_superuser_migration_owner_can_upgrade_downgrade_and_upgrade_a
         )
         await run_migrations_async(migration_url)
         status = await get_schema_status_async(migration_url, expected_embedding_dimension=1024)
-        assert status.current_revision == "020"
+        assert status.current_revision == "021"
         migration_engine = create_async_engine(migration_url, poolclass=NullPool)
         try:
             async with migration_engine.connect() as connection:
@@ -236,7 +236,7 @@ async def test_non_superuser_migration_owner_can_upgrade_downgrade_and_upgrade_a
         await run_migrations_async(migration_url)
         assert (
             await get_schema_status_async(migration_url, expected_embedding_dimension=1024)
-        ).current_revision == "020"
+        ).current_revision == "021"
     finally:
         async with admin_engine.connect() as connection:
             connection = await connection.execution_options(isolation_level="AUTOCOMMIT")

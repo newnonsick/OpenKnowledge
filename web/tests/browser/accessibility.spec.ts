@@ -96,7 +96,7 @@ async function mockGateway(page: Page, systemRole: "member" | "super_admin" = "m
       return route.fulfill(json(listPage([{ display_name: "Family procedures and emergency contacts", id: "source-1", original_filename: "family-procedures-and-emergency-contacts.pdf", revision: 3, size_bytes: 524288, space_id: "global", status: "active", updated_at: "2026-08-20T12:00:00Z" }])));
     }
     if (pathname === "/api/v1/ingestion-jobs") {
-      return route.fulfill(json(listPage([{ attempt_count: 1, created_at: "2026-08-20T12:00:00Z", document_id: "source-1", id: "job-with-a-deliberately-long-identifier-123456789", max_attempts: 5, progress: 0, space_id: "global", state: "queued", updated_at: "2026-08-20T12:00:00Z" }])));
+      return route.fulfill(json(listPage([{ attempt_count: 5, created_at: "2026-08-20T12:00:00Z", document_id: "source-1", id: "job-with-a-deliberately-long-identifier-123456789", last_error_code: "provider_connection_timeout_with_a_deliberately_unbroken_error_code_123456789", max_attempts: 5, progress: 37, space_id: "global", state: "failed", updated_at: "2026-08-20T12:00:00Z" }])));
     }
     if (pathname === "/api/v1/audit-events") {
       return route.fulfill(json(listPage([{ action: "knowledge.create.with.a.deliberately.long.action.name", actor_kind: "member", actor_member_id: "member-1", id: "audit-1", occurred_at: "2026-08-20T12:00:00Z", outcome: "success", request_id: "request-123456789", resource_id: "knowledge-1", resource_type: "knowledge" }])));
@@ -120,7 +120,7 @@ async function mockGateway(page: Page, systemRole: "member" | "super_admin" = "m
       return route.fulfill(json({ items: [{ description: "Archive a private family space after an explicit confirmation.", name: "spaces.archive.v1", risk: "high" }] }));
     }
     if (pathname === "/api/v1/members") {
-      return route.fulfill(json(listPage([{ display_name: "Nana Arun with a long family display name", id: "member-2", requires_password_change: false, status: "active", system_role: "member", username: "nana-with-a-long-username" }])));
+      return route.fulfill(json(listPage([{ display_name: "Nana Arun with a long family display name", id: "member-2", mfa_enabled: false, requires_password_change: false, status: "active", system_role: "member", username: "nana-with-a-long-username" }])));
     }
     if (pathname === "/api/v1/admin/spaces") {
       return route.fulfill(json(listPage([{ created_at: "2026-08-20T12:00:00Z", id: "private", name: "Private records with a very long household name", owner_display_name: "Nana Arun", owner_member_id: "member-2", owner_username: "nana", revision: 4 }])));
@@ -191,6 +191,64 @@ test("keeps dashboard navigation discoverable on a mobile viewport", async ({ pa
   await expect(opener).toBeFocused();
   await expect(opener).toHaveAttribute("aria-expanded", "false");
   await expectAccessible(page);
+});
+
+test("keeps API keys, theme, and sign out in the upward account menu", async ({ page }) => {
+  await mockGateway(page);
+  await page.goto("/");
+
+  await expect(page.getByRole("link", { name: "API keys" })).toHaveCount(0);
+  const trigger = page.getByRole("button", { name: "Open account menu" });
+  await trigger.click();
+  await expect(page.getByRole("menu", { name: "Account" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "API keys" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Switch to dark theme" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Sign out" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Security settings" })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("menuitem", { name: "API keys" })).toBeFocused();
+  await expectAccessible(page);
+  await page.getByRole("menuitem", { name: "Switch to dark theme" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+  await expect(page.getByRole("menu", { name: "Account" })).toBeHidden();
+});
+
+test("edits members in a modal and explains the MFA promotion gate", async ({ page }) => {
+  await mockGateway(page, "super_admin");
+  await page.goto("/people");
+
+  const trigger = page.getByRole("button", { name: "Edit Nana Arun with a long family display name" });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "Edit Nana Arun with a long family display name" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("option", { name: "Super admin" })).toBeDisabled();
+  await expect(dialog.getByText(/set up MFA in Settings.*Security/i)).toBeVisible();
+  await dialog.getByRole("button", { name: "Close member editor" }).click();
+  await expect(trigger).toBeFocused();
+});
+
+test("lets a member start proactive MFA setup from Settings Security", async ({ page }) => {
+  await mockGateway(page);
+  await page.goto("/settings");
+
+  await page.getByRole("tab", { name: "Security" }).click();
+  await expect(page.getByRole("heading", { name: "Multi-factor authentication" })).toBeVisible();
+  await page.getByLabel("Current password").fill("browser-test-password");
+  await page.getByRole("button", { name: "Start MFA setup" }).click();
+  await expect(page.getByText("Manual setup key")).toBeVisible();
+  await expect(page.getByText("JBSWY3DPEHPK3PXP")).toBeVisible();
+});
+
+test("shows every Settings section without horizontal clipping on mobile", async ({ page }) => {
+  await page.setViewportSize({ height: 812, width: 375 });
+  await mockGateway(page);
+  await page.goto("/settings");
+
+  const tabs = page.getByRole("tablist", { name: "Settings sections" });
+  await expect(page.getByRole("tab", { name: "Runtime" })).toBeInViewport();
+  await expect(tabs).toHaveJSProperty("scrollWidth", await tabs.evaluate((element) => element.clientWidth));
 });
 
 test("opens discovery with the advertised keyboard shortcut", async ({ page }) => {

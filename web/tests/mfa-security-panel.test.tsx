@@ -67,6 +67,7 @@ describe("MfaSecurityPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start MFA setup" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("MFA setup could not start");
+    expect(screen.getByLabelText("Current password")).toHaveValue("password");
     expect(screen.getByRole("button", { name: "Start MFA setup" })).toBeEnabled();
   });
 });

@@ -6,6 +6,55 @@ import type { Dispatch, SetStateAction } from "react";
 const focusableSelector = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
 const modalReturnTargets = new WeakMap<Event, HTMLElement>();
 let activeModalReturnTarget: HTMLElement | null = null;
+type ModalStackEntry = {
+  dialogRef: { current: HTMLElement | null };
+  returnTarget: HTMLElement | null;
+  token: symbol;
+};
+const modalStack: ModalStackEntry[] = [];
+let backgroundInertState: Map<HTMLElement, boolean> | null = null;
+let bodyOverflowBeforeModal = "";
+
+function refreshModalStack() {
+  const top = modalStack.at(-1);
+  modalStack.forEach((entry) => {
+    const backdrop = entry.dialogRef.current?.parentElement;
+    if (!backdrop) {
+      return;
+    }
+    if (entry === top) {
+      delete backdrop.dataset.modalSuspended;
+      entry.dialogRef.current!.inert = false;
+    } else {
+      backdrop.dataset.modalSuspended = "";
+      entry.dialogRef.current!.inert = true;
+    }
+  });
+  activeModalReturnTarget = top?.returnTarget?.isConnected ? top.returnTarget : null;
+}
+
+function lockModalBackground() {
+  if (backgroundInertState) {
+    return;
+  }
+  const background = Array.from(document.body.children).filter((element) => !element.hasAttribute("data-modal-root")) as HTMLElement[];
+  backgroundInertState = new Map(background.map((element) => [element, element.inert]));
+  background.forEach((element) => {
+    element.inert = true;
+  });
+  bodyOverflowBeforeModal = document.body.style.overflow;
+  document.body.style.overflow = "hidden";
+}
+
+function unlockModalBackground() {
+  backgroundInertState?.forEach((inert, element) => {
+    if (element.isConnected) {
+      element.inert = inert;
+    }
+  });
+  backgroundInertState = null;
+  document.body.style.overflow = bodyOverflowBeforeModal;
+}
 
 export function modalReturnTargetFor(event: Event): HTMLElement | null {
   const mappedTarget = modalReturnTargets.get(event);
@@ -17,6 +66,22 @@ export function modalReturnTargetFor(event: Event): HTMLElement | null {
     return activeModalReturnTarget;
   }
   return null;
+}
+
+export function focusModalReturnTarget(target: HTMLElement | null): boolean {
+  if (!target) {
+    return false;
+  }
+  const connectedTarget = target.isConnected
+    ? target
+    : target.id
+      ? document.getElementById(target.id)
+      : Array.from(document.querySelectorAll<HTMLElement>("[aria-label]")).find((candidate) => candidate.getAttribute("aria-label") === target.getAttribute("aria-label"));
+  if (!connectedTarget || connectedTarget.closest("[inert], [data-modal-suspended]")) {
+    return false;
+  }
+  connectedTarget.focus();
+  return document.activeElement === connectedTarget;
 }
 
 function focusableElements(root: HTMLElement): HTMLElement[] {
@@ -100,14 +165,10 @@ export function useModalFocus(open: boolean, onClose: () => void, explicitReturn
 
     const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     returnRef.current = explicitReturnTarget?.isConnected ? explicitReturnTarget : activeElement;
-    activeModalReturnTarget = returnRef.current;
-    const modalReturnTarget = returnRef.current;
-    const background = Array.from(document.body.children).filter((element) => !element.hasAttribute("data-modal-root")) as HTMLElement[];
-    const priorOverflow = document.body.style.overflow;
-    background.forEach((element) => {
-      element.inert = true;
-    });
-    document.body.style.overflow = "hidden";
+    const stackEntry: ModalStackEntry = { dialogRef, returnTarget: returnRef.current, token: Symbol("modal") };
+    lockModalBackground();
+    modalStack.push(stackEntry);
+    refreshModalStack();
 
     queueMicrotask(() => {
       const dialog = dialogRef.current;
@@ -123,6 +184,9 @@ export function useModalFocus(open: boolean, onClose: () => void, explicitReturn
     });
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (modalStack.at(-1)?.token !== stackEntry.token) {
+        return;
+      }
       if (event.key === "Escape") {
         event.preventDefault();
         closeRef.current();
@@ -143,18 +207,19 @@ export function useModalFocus(open: boolean, onClose: () => void, explicitReturn
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("aigw-step-up-required", preserveReturnTarget, { capture: true });
-      if (returnRef.current?.isConnected) {
+      const stackIndex = modalStack.findIndex((entry) => entry.token === stackEntry.token);
+      if (stackIndex >= 0) {
+        modalStack.splice(stackIndex, 1);
+      }
+      refreshModalStack();
+      if (returnRef.current) {
         const target = returnRef.current;
-        queueMicrotask(() => target.focus());
+        queueMicrotask(() => focusModalReturnTarget(target));
       }
       returnRef.current = null;
-      if (activeModalReturnTarget === modalReturnTarget) {
-        activeModalReturnTarget = null;
+      if (modalStack.length === 0) {
+        unlockModalBackground();
       }
-      background.forEach((element) => {
-        element.inert = false;
-      });
-      document.body.style.overflow = priorOverflow;
     };
   }, [explicitReturnTarget, open]);
 

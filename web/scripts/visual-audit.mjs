@@ -18,6 +18,7 @@ const PAGES = [
   { path: "/ai-actions", name: "ai-actions" },
   { path: "/people", name: "people" },
   { path: "/activity", name: "activity" },
+  { path: "/settings?section=security", name: "settings-security" },
   { path: "/settings?section=api-keys", name: "settings-api-keys" },
   { path: "/settings?section=sessions", name: "settings-sessions" },
   { path: "/settings?section=runtime", name: "settings-runtime" },

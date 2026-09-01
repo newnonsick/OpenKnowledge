@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -54,7 +54,10 @@ function HandoffHarness() {
 
   return (
     <>
-      <button onClick={() => setConfirmationOpen(true)} type="button">Transfer owner</button>
+      <ModalDialog ariaLabelledBy="access-title" onClose={vi.fn()} open>
+        <h2 id="access-title">Space access</h2>
+        <button onClick={() => setConfirmationOpen(true)} type="button">Transfer owner</button>
+      </ModalDialog>
       <ConfirmationDialog
         cancelLabel="Keep owner"
         confirmLabel="Transfer ownership"
@@ -127,6 +130,24 @@ describe("ConfirmationDialog", () => {
     expect(screen.getByRole("button", { name: "Keep item" })).toBeDisabled();
   });
 
+  it("announces a mutation error inside the active confirmation", () => {
+    render(
+      <ConfirmationDialog
+        cancelLabel="Keep item"
+        confirmLabel="Archive item"
+        description="The item will be archived."
+        error="The archive service is unavailable."
+        onCancel={vi.fn()}
+        onConfirm={vi.fn()}
+        open
+        title="Archive item"
+      />,
+    );
+
+    const dialog = screen.getByRole("alertdialog", { name: "Archive item" });
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("The archive service is unavailable.");
+  });
+
   it("can disable confirmation without blocking cancellation", () => {
     render(
       <ConfirmationDialog
@@ -165,6 +186,7 @@ describe("ConfirmationDialog", () => {
     window.dispatchEvent(stepUpEvent);
     expect(modalReturnTargetFor(stepUpEvent)).toBe(trigger);
     await waitFor(() => expect(screen.getByRole("dialog", { name: "Verify identity" })).toBeInTheDocument());
+    expect(screen.getByRole("dialog", { name: "Space access", hidden: true }).parentElement).toHaveAttribute("data-modal-suspended");
     fireEvent.click(screen.getByRole("button", { name: "Finish verification" }));
 
     await waitFor(() => expect(trigger).toHaveFocus());

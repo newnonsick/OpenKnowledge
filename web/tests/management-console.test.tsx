@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ActivityConsole, AiActionsConsole, ExploreConsole, IngestionConsole, KnowledgeConsole, PeopleConsole, SettingsConsole, SourcesConsole, SpacesConsole } from "@/components/management-console";
@@ -317,6 +317,39 @@ describe("management console", () => {
 
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/spaces/travel", { idempotent: true, method: "DELETE" }));
     await waitFor(() => expect(screen.queryByText("Travel plans")).not.toBeInTheDocument());
+  });
+
+  it.each([
+    ["Remove Nana", "Confirm removal", "Remove Nana from Travel plans"],
+    ["Transfer ownership to Nana", "Confirm ownership transfer", "Transfer ownership to Nana"],
+    ["Archive Travel plans", "Confirm archive space", "Archive Travel plans"],
+  ])("keeps a failed %s action visible in its confirmation", async (actionName, confirmName, dialogName) => {
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path === "/api/v1/spaces?limit=25") {
+        return { items: [{ id: "travel", name: "Travel plans", role: "owner", revision: 2 }] } as never;
+      }
+      if (path === "/api/v1/spaces/travel/member-candidates?limit=25") {
+        return { items: [] } as never;
+      }
+      if (path === "/api/v1/spaces/travel/members?limit=25") {
+        return { items: [
+          { member_id: "member-1", username: "mai", display_name: "Mai", status: "active", role: "owner" },
+          { member_id: "member-2", username: "nana", display_name: "Nana", status: "active", role: "editor" },
+        ] } as never;
+      }
+      if (options?.method === "DELETE" || options?.method === "PUT") {
+        throw new Error("The requested space change could not be saved.");
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<SpacesConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Manage access for Travel plans" }));
+    fireEvent.click(await screen.findByRole("button", { name: actionName }));
+    fireEvent.click(screen.getByRole("button", { name: confirmName }));
+
+    const dialog = screen.getByRole("alertdialog", { name: dialogName });
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("The request could not be completed.");
   });
 
   it("captures a versioned knowledge item in the selected space", async () => {
@@ -733,7 +766,7 @@ describe("management console", () => {
         return { items: [{ id: "global", name: "Family Shared", role: "owner", revision: 1 }] } as never;
       }
       if (path === "/api/v1/members?limit=25") {
-        return { items: [{ id: "member-1", username: "nana", display_name: "Nana", mfa_enabled: false, status: disabled ? "disabled" : "active", system_role: "member", requires_password_change: false }] } as never;
+        return { items: [{ id: "member-1", username: "nana", display_name: "Nana", mfa_enabled: true, status: disabled ? "disabled" : "active", system_role: "member", requires_password_change: false }] } as never;
       }
       if (path === "/api/v1/members/member-1/password-reset" && options?.method === "POST") {
         return { id: "member-1", temporary_password: "Reset-Only-Once!42", temporary_password_expires_at: "2026-08-21T12:00:00Z", requires_password_change: true } as never;
@@ -754,6 +787,9 @@ describe("management console", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm password reset" }));
     expect(await screen.findByText("Reset-Only-Once!42")).toBeInTheDocument();
 
+    const memberDialog = screen.getByRole("dialog", { name: "Edit Nana" });
+    fireEvent.change(within(memberDialog).getByLabelText("Display name"), { target: { value: "Unsaved Nana" } });
+    fireEvent.change(within(memberDialog).getByLabelText("System role"), { target: { value: "super_admin" } });
     fireEvent.click(screen.getByRole("button", { name: "Disable Nana" }));
     expect(screen.getByRole("alertdialog", { name: "Disable Nana" })).toHaveAttribute("aria-modal", "true");
     expect(screen.getByText(/immediately revokes sessions and api keys/i)).toBeInTheDocument();
@@ -764,6 +800,46 @@ describe("management console", () => {
       method: "PATCH",
     }));
     await waitFor(() => expect(screen.getAllByText("disabled").length).toBeGreaterThan(0));
+    expect(within(memberDialog).getByLabelText("Display name")).toHaveValue("Unsaved Nana");
+    expect(within(memberDialog).getByLabelText("System role")).toHaveValue("member");
+    fireEvent.click(within(memberDialog).getByRole("button", { name: "Save account" }));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/members/member-1", {
+      body: { display_name: "Unsaved Nana", status: "disabled", system_role: "member" },
+      idempotent: true,
+      method: "PATCH",
+    }));
+    const disabledPromotionCalls = vi.mocked(apiRequest).mock.calls.filter(([, options]) => {
+      const body = options?.body as { status?: string; system_role?: string } | undefined;
+      return options?.method === "PATCH" && body?.status === "disabled" && body.system_role === "super_admin";
+    });
+    expect(disabledPromotionCalls).toHaveLength(0);
+  });
+
+  it.each([
+    ["Reset Nana password", "Confirm password reset", "Reset Nana password"],
+    ["Disable Nana", "Confirm disable member", "Disable Nana"],
+  ])("keeps a failed %s action visible in its confirmation", async (actionName, confirmName, dialogName) => {
+    currentMember.system_role = "super_admin";
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Family Shared", role: "owner", revision: 1 }] } as never;
+      }
+      if (path === "/api/v1/members?limit=25") {
+        return { items: [{ id: "member-1", username: "nana", display_name: "Nana", mfa_enabled: false, status: "active", system_role: "member", requires_password_change: false }] } as never;
+      }
+      if (options?.method === "POST" || options?.method === "PATCH") {
+        throw new Error("The requested member change could not be saved.");
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<PeopleConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Nana" }));
+    fireEvent.click(screen.getByRole("button", { name: actionName }));
+    fireEvent.click(screen.getByRole("button", { name: confirmName }));
+
+    const dialog = screen.getByRole("alertdialog", { name: dialogName });
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("The request could not be completed.");
   });
 
   it("gates super-admin promotion on confirmed member MFA inside the edit dialog", async () => {

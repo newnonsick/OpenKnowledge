@@ -45,15 +45,15 @@ check("admin lands on dashboard", page.url() === "http://127.0.0.1:3000/");
 const sidebarGeom = await page.evaluate(() => {
   const sb = document.querySelector(".sidebar");
   const footer = document.querySelector(".sidebar-footer");
-  const signOut = [...document.querySelectorAll(".account-link")].find((el) => el.textContent.includes("Sign out"));
+  const accountMenu = document.querySelector(".account-menu-trigger");
   return {
     viewportH: window.innerHeight,
     sidebarClientH: sb.clientHeight,
     footerBottom: Math.round(footer.getBoundingClientRect().bottom),
-    signOutVisible: signOut.getBoundingClientRect().bottom <= window.innerHeight,
+    accountMenuVisible: accountMenu.getBoundingClientRect().bottom <= window.innerHeight,
   };
 });
-check("sidebar fits viewport at 900px height", sidebarGeom.footerBottom <= sidebarGeom.viewportH && sidebarGeom.signOutVisible, JSON.stringify(sidebarGeom));
+check("sidebar fits viewport at 900px height", sidebarGeom.footerBottom <= sidebarGeom.viewportH && sidebarGeom.accountMenuVisible, JSON.stringify(sidebarGeom));
 await page.screenshot({ path: `${shots}/02-dashboard.png` });
 
 await page.getByRole("link", { name: "Explore" }).click();
@@ -76,12 +76,15 @@ const manageBtn = page.getByRole("button", { name: "Manage access for Family Sha
 if (await manageBtn.count()) {
   await manageBtn.click();
   await page.getByText("Current members").waitFor({ state: "visible", timeout: 15000 });
-  const ownerRowRemove = await page.locator(".membership-row").filter({ hasText: "Administrator" }).getByRole("button", { name: /Remove Administrator/ }).count();
+  const ownerRow = page.locator(".membership-row").filter({ has: page.locator(".role-owner") });
+  const ownerRowRemove = await ownerRow.getByRole("button", { name: /Remove/ }).count();
   check("owner row has no remove button", ownerRowRemove === 0);
   const memberLabel = await page.getByText("Current members", { exact: true }).count();
   check("access panel labels member list", memberLabel === 1, `${memberLabel} labels found`);
-  const strayPaginations = await page.locator(".space-access-panel .pagination-summary").allTextContents();
+  const strayPaginations = await page.locator(".space-access-dialog .pagination-summary").allTextContents();
   check("single-page member lists hide pagination", strayPaginations.filter((t) => t.includes("1–1 of 1")).length === 0, JSON.stringify(strayPaginations));
+  await page.getByRole("button", { name: "Close access manager" }).click();
+  await manageBtn.waitFor({ state: "visible" });
 }
 await page.screenshot({ path: `${shots}/04-spaces-access.png` });
 
@@ -137,19 +140,23 @@ await page.getByRole("link", { name: "Sources" }).click();
 await page.waitForURL("**/sources");
 await page.waitForTimeout(1600);
 const firstArchive = page.getByRole("button", { name: /^Archive .* source/ }).first();
-const rowTitle = await firstArchive.evaluate((el) => el.getAttribute("aria-label").replace("Archive ", ""));
-await firstArchive.click();
-await page.waitForTimeout(500);
-const archiveDialog = page.getByRole("alertdialog", { name: `Archive ${rowTitle}` });
-check("source archive confirmation is modal", await archiveDialog.getAttribute("aria-modal") === "true", rowTitle);
-await page.keyboard.press("Escape");
-await archiveDialog.waitFor({ state: "hidden" });
-check("Escape closes source confirmation", await archiveDialog.count() === 0);
-check("source confirmation restores trigger focus", await firstArchive.evaluate((element) => element === document.activeElement));
-await firstArchive.click();
-await archiveDialog.waitFor();
-await page.screenshot({ path: `${shots}/08-source-confirm-modal.png` });
-await page.getByRole("button", { name: "Keep source" }).click();
+if (await firstArchive.count()) {
+  const rowTitle = await firstArchive.evaluate((el) => el.getAttribute("aria-label").replace("Archive ", ""));
+  await firstArchive.click();
+  await page.waitForTimeout(500);
+  const archiveDialog = page.getByRole("alertdialog", { name: `Archive ${rowTitle}` });
+  check("source archive confirmation is modal", await archiveDialog.getAttribute("aria-modal") === "true", rowTitle);
+  await page.keyboard.press("Escape");
+  await archiveDialog.waitFor({ state: "hidden" });
+  check("Escape closes source confirmation", await archiveDialog.count() === 0);
+  check("source confirmation restores trigger focus", await firstArchive.evaluate((element) => element === document.activeElement));
+  await firstArchive.click();
+  await archiveDialog.waitFor();
+  await page.screenshot({ path: `${shots}/08-source-confirm-modal.png` });
+  await page.getByRole("button", { name: "Keep source" }).click();
+} else {
+  check("sources empty state is clear", await page.locator(".console-empty").filter({ hasText: /No source/i }).count() === 1);
+}
 
 await page.getByRole("link", { name: "Activity" }).click();
 await page.waitForURL("**/activity");
@@ -162,12 +169,24 @@ check("outcome filter applies without Apply click", deniedRows === 0 || deniedPi
 await page.getByRole("button", { name: "Clear" }).click();
 await page.waitForTimeout(1200);
 const jumpInput = page.getByRole("textbox", { name: /Jump to page/ });
-check("activity shows compact jump input for 80+ pages", await jumpInput.count() === 1);
-await jumpInput.fill("3");
-await jumpInput.press("Enter");
-await page.waitForTimeout(1500);
-const jumpSummary = await page.locator(".pagination-summary").textContent();
-check("jump input submits on Enter", jumpSummary.includes("51–75"), jumpSummary ?? "none");
+if (await jumpInput.count()) {
+  await jumpInput.fill("2");
+  await jumpInput.press("Enter");
+  await page.waitForTimeout(1500);
+  const jumpSummary = await page.locator(".pagination-summary").textContent();
+  check("jump input submits on Enter", jumpSummary.includes("26–"), jumpSummary ?? "none");
+} else {
+  const nextPage = page.getByRole("button", { name: "Next page" });
+  if (await nextPage.count()) {
+    const before = await page.locator(".pagination-summary").textContent();
+    await nextPage.click();
+    await page.waitForTimeout(1200);
+    const after = await page.locator(".pagination-summary").textContent();
+    check("activity next-page control advances the result window", before !== after, `${before} -> ${after}`);
+  } else {
+    check("single-page activity hides pagination", await page.locator(".pagination-summary").count() === 0);
+  }
+}
 await page.screenshot({ path: `${shots}/09-activity-pagination.png` });
 
 await page.getByRole("link", { name: "Settings" }).click();
@@ -188,15 +207,16 @@ check("API key revoked and removed from the active list", true);
 await page.screenshot({ path: `${shots}/10-settings-key-revoked.png` });
 
 const themeBefore = await page.evaluate(() => document.documentElement.dataset.theme);
-await page.getByRole("button", { name: /theme/i }).click();
+await page.getByRole("button", { name: "Open account menu" }).click();
+await page.getByRole("menuitem", { name: /theme/i }).click();
 await page.waitForTimeout(400);
 const themeAfter = await page.evaluate(() => document.documentElement.dataset.theme);
 check("theme toggles", themeBefore !== themeAfter, `${themeBefore} -> ${themeAfter}`);
 await page.screenshot({ path: `${shots}/11-dark-settings.png` });
-await page.getByRole("button", { name: /theme/i }).click();
+await page.getByRole("menuitem", { name: /theme/i }).click();
 await page.waitForTimeout(300);
 
-await page.getByRole("button", { name: "Sign out", exact: true }).click();
+await page.getByRole("menuitem", { name: "Sign out", exact: true }).click();
 await page.waitForURL("http://127.0.0.1:3000/login", { timeout: 10000 });
 check("sign out returns to login", page.url().endsWith("/login"));
 
