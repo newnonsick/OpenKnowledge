@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import { useCurrentMember } from "@/components/auth/session-gate";
 import { MfaSecurityPanel } from "@/components/auth/mfa-security-panel";
+import { PasswordSecurityPanel } from "@/components/auth/password-security-panel";
 import { ConfirmationDialog, ModalDialog } from "@/components/confirmation-dialog";
 import { ConsoleShell } from "@/components/console-shell";
 import { CopyButton } from "@/components/copy-button";
@@ -1752,7 +1753,14 @@ export function SettingsConsole() {
         <button aria-controls="settings-panel-runtime" aria-selected={activeSection === "runtime"} className={activeSection === "runtime" ? "is-active" : ""} id="settings-tab-runtime" onClick={() => selectSettingsSection("runtime")} onKeyDown={(event) => moveSettingsSection(event, "runtime")} role="tab" tabIndex={activeSection === "runtime" ? 0 : -1} type="button"><Settings2 size={16} /> Runtime</button>
       </div>
       <div className="settings-layout">
-        {activeSection === "security" ? <section aria-labelledby="settings-tab-security" className="console-panel settings-section" id="settings-panel-security" role="tabpanel"><MfaSecurityPanel enabled={mfaEnabled} onEnabled={() => setMfaEnabled(true)} /></section> : null}
+        {activeSection === "security" ? (
+          <section aria-labelledby="settings-tab-security" className="console-panel settings-section" id="settings-panel-security" role="tabpanel">
+            <div className="security-settings-stack">
+              <PasswordSecurityPanel systemRole={member.system_role} />
+              <MfaSecurityPanel enabled={mfaEnabled} onEnabled={() => setMfaEnabled(true)} />
+            </div>
+          </section>
+        ) : null}
 
         {activeSection === "api-keys" ? <section aria-labelledby="settings-tab-api-keys" className="console-panel settings-section" id="settings-panel-api-keys" role="tabpanel">
           <div className="panel-heading"><div><span>Personal credentials</span><h2>API keys</h2></div><KeyRound size={20} /></div>

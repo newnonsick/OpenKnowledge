@@ -1010,7 +1010,11 @@ describe("management console", () => {
     expect(screen.queryByRole("heading", { name: "Sessions" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Safe runtime settings" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Security" }));
-    expect(screen.getByRole("heading", { name: "Multi-factor authentication" })).toBeInTheDocument();
+    const passwordHeading = screen.getByRole("heading", { name: "Password" });
+    const mfaHeading = screen.getByRole("heading", { name: "Multi-factor authentication" });
+    expect(passwordHeading).toBeInTheDocument();
+    expect(mfaHeading).toBeInTheDocument();
+    expect(passwordHeading.compareDocumentPosition(mfaHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(navigation.replace).toHaveBeenCalledWith("/settings?section=security", { scroll: false });
     fireEvent.click(screen.getByRole("tab", { name: "Sessions" }));
     expect(screen.getByRole("heading", { name: "Sessions" })).toBeInTheDocument();
