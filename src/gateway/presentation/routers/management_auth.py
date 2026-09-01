@@ -282,7 +282,7 @@ async def login(
         requires_password_change = bool(member.force_password_change)
         is_super_admin = member.system_role == SystemRole.SUPER_ADMIN.value
         has_active_factor = is_super_admin and await identity.has_active_totp_factor(member_id)
-        if has_active_factor and not requires_password_change:
+        if has_active_factor:
             if payload.totp_code:
                 second_factor_valid = await identity.verify_totp_login(member_id, payload.totp_code)
             elif payload.recovery_code:

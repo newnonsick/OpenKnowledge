@@ -308,6 +308,59 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                 assert stepped_up.status_code == 200
                 assert stepped_up.json()["status"] == "reauthenticated"
 
+                previous_access = client.cookies.get("__Host-aigw-access")
+                csrf = client.cookies.get("aigw-csrf")
+                password_change_without_mfa = await client.post(
+                    "/api/v1/auth/password",
+                    headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
+                    json={
+                        "current_password": "Permanent-Password-934!",
+                        "password": "Marble-Comet-735!",
+                        "confirmation": "Marble-Comet-735!",
+                    },
+                )
+                assert password_change_without_mfa.status_code == 401
+
+                password_change = await client.post(
+                    "/api/v1/auth/password",
+                    headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
+                    json={
+                        "current_password": "Permanent-Password-934!",
+                        "current_totp_code": pyotp.TOTP(secret).now(),
+                        "password": "Marble-Comet-735!",
+                        "confirmation": "Marble-Comet-735!",
+                    },
+                )
+                assert password_change.status_code == 200
+                assert password_change.json()["requires_password_change"] is False
+                assert password_change.json()["requires_mfa_enrollment"] is False
+                assert "initial_api_key" not in password_change.json()
+                assert client.cookies.get("__Host-aigw-access") != previous_access
+
+                current_session_response = await client.get("/private-activity")
+                assert current_session_response.status_code == 200
+
+                previous_transport = httpx.ASGITransport(app=app)
+                async with httpx.AsyncClient(
+                    transport=previous_transport,
+                    base_url="https://gateway.test",
+                    cookies={"__Host-aigw-access": previous_access},
+                ) as previous_client:
+                    previous_session_response = await previous_client.get("/private-activity")
+                    assert previous_session_response.status_code == 401
+
+                async with factory() as key_verification_session:
+                    stored_keys = list(
+                        await key_verification_session.scalars(
+                            select(PersonalAPIKeyModel).where(
+                                PersonalAPIKeyModel.member_id == bootstrap.member_id
+                            )
+                        )
+                    )
+                    assert len(stored_keys) == 1
+                    assert stored_keys[0].status == "active"
+                    assert stored_keys[0].revoked_at is None
+
             recovery_transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(
                 transport=recovery_transport,
@@ -317,7 +370,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                     "/api/v1/auth/login",
                     json={
                         "username": "admin",
-                        "password": "Permanent-Password-934!",
+                        "password": "Marble-Comet-735!",
                         "recovery_code": recovery_codes[0],
                     },
                 )
@@ -332,11 +385,43 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                     "/api/v1/auth/login",
                     json={
                         "username": "admin",
-                        "password": "Permanent-Password-934!",
+                        "password": "Marble-Comet-735!",
                         "recovery_code": recovery_codes[0],
                     },
                 )
                 assert replay.status_code == 401
+
+            async with factory.begin() as reset_session:
+                member = await reset_session.get(MemberModel, bootstrap.member_id)
+                assert member is not None
+                member.force_password_change = True
+
+            reset_transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=reset_transport,
+                base_url="https://gateway.test",
+            ) as reset_client:
+                reset_login_without_mfa = await reset_client.post(
+                    "/api/v1/auth/login",
+                    json={
+                        "username": "admin",
+                        "password": "Marble-Comet-735!",
+                    },
+                )
+                assert reset_login_without_mfa.status_code == 401
+                assert reset_login_without_mfa.json()["error"]["code"] == "mfa_code_required"
+
+                reset_login = await reset_client.post(
+                    "/api/v1/auth/login",
+                    json={
+                        "username": "admin",
+                        "password": "Marble-Comet-735!",
+                        "totp_code": pyotp.TOTP(secret).now(),
+                    },
+                )
+                assert reset_login.status_code == 200
+                assert reset_login.json()["requires_password_change"] is True
+                assert reset_login.json()["requires_mfa_enrollment"] is False
 
             async with factory() as verification_session:
                 credential = await verification_session.scalar(
