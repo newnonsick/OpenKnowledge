@@ -1939,9 +1939,13 @@ export function IngestionConsole() {
         <div aria-busy={loading} className={`job-list${loading && jobs.length > 0 ? " is-page-loading" : ""}`}>
           {jobs.map((job) => (
             <div className="job-card-group" key={job.id}>
-              <article className="job-card">
-                <div className="job-topline"><div><span className={`state-dot state-${job.state}`} /><code>{job.id}</code></div><span className={`status-pill status-${job.state}`}>{job.state}</span></div>
-                <div className="job-context"><strong>{spaceLabel(spaces, job.space_id)}</strong><span>document {job.document_id}</span><span>attempt {job.attempt_count}/{job.max_attempts}</span></div>
+              <article aria-label={`Ingestion job ${job.id}`} className="job-card">
+                <div className="job-topline"><div><span className={`state-dot state-${job.state}`} /><code aria-label={`Job ID ${job.id}`} title={job.id}>{job.id}</code></div><span className={`status-pill status-${job.state}`}>{job.state}</span></div>
+                <div className="job-context">
+                  <div><span>Space</span><strong title={spaceLabel(spaces, job.space_id)}>{spaceLabel(spaces, job.space_id)}</strong></div>
+                  <div><span>Document</span><code aria-label={`Document ID ${job.document_id}`} title={job.document_id}>{job.document_id}</code></div>
+                  <div><span>Attempt</span><strong>{job.attempt_count} of {job.max_attempts}</strong></div>
+                </div>
                 <div className="progress-row"><progress max={100} value={Math.max(0, Math.min(100, job.progress))} /><strong>{Math.round(job.progress)}%</strong></div>
                 {job.last_error_code ? <p className="job-error">{job.last_error_code}</p> : null}
                 {!['succeeded', 'failed', 'cancelled'].includes(job.state) ? <button aria-label={`Cancel job ${job.id}`} className="archive-button compact" disabled={jobSaving || loading} onClick={() => setPendingJobAction({ job, operation: "cancel" })} type="button">Cancel job</button> : null}
@@ -2045,7 +2049,20 @@ export function ActivityConsole() {
           {initialLoading || (loading && events.length === 0) ? <ListSkeleton /> : null}
           {paginationError ? <ListUnavailable label="audit events" onRetry={() => void reloadAuditEvents()} /> : null}
           <div aria-busy={loading} className={`audit-list${loading && events.length > 0 ? " is-page-loading" : ""}`}>
-            {events.map((event) => <article className="audit-row" key={event.id}><span className={`audit-outcome outcome-${event.outcome}`} /><time dateTime={event.occurred_at}>{formatDateTime(event.occurred_at)}</time><div><h3>{event.action}</h3><p>{event.resource_type}{event.resource_id ? ` · ${event.resource_id}` : ""}</p></div><code>{event.request_id}</code><span className="status-pill">{event.outcome}</span></article>)}
+            {events.map((event) => (
+              <article className="audit-row" key={event.id}>
+                <span aria-hidden="true" className={`audit-outcome outcome-${event.outcome}`} />
+                <div className="audit-event-content">
+                  <div className="audit-event-heading"><h3>{event.action}</h3><span className={`status-pill status-${event.outcome}`}>{event.outcome}</span></div>
+                  <p aria-label={`Resource ${event.resource_type}${event.resource_id ? ` ${event.resource_id}` : ""}`} className="audit-resource" title={event.resource_id || event.resource_type}>{event.resource_type}{event.resource_id ? ` · ${event.resource_id}` : ""}</p>
+                  <dl className="audit-meta">
+                    <div><dt>Occurred</dt><dd><time dateTime={event.occurred_at}>{formatDateTime(event.occurred_at)}</time></dd></div>
+                    <div><dt>Actor</dt><dd>{event.actor_kind}{event.actor_member_id ? ` · ${event.actor_member_id}` : ""}</dd></div>
+                    <div><dt>Request ID</dt><dd><code aria-label={`Request ID ${event.request_id}`} title={event.request_id}>{event.request_id}</code></dd></div>
+                  </dl>
+                </div>
+              </article>
+            ))}
             {!initialLoading && !loading && !paginationError && events.length === 0 ? <div className="console-empty"><Activity size={23} /><strong>No audit events returned</strong><span>{appliedFilters.action || appliedFilters.outcome || appliedFilters.q || appliedFilters.resourceType ? "Try a broader filter or clear the filters." : "Security-sensitive actions will appear here as they happen."}</span></div> : null}
           </div>
           {auditTotalPages > 1 ? <PaginationControls loading={loading} loadingPage={auditLoadingPage} onPageChange={(nextPage) => void goToAuditPage(nextPage)} page={auditPage} pageSize={auditPageSize} totalItems={auditTotalItems} totalPages={auditTotalPages} /> : null}

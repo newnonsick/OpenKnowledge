@@ -1103,18 +1103,21 @@ describe("management console", () => {
   });
 
   it("shows durable ingestion state without inventing progress", async () => {
+    const jobId = "job-1-with-a-very-long-durable-identifier-that-must-not-overflow";
+    const documentId = "doc-1-with-a-very-long-document-identifier-that-must-not-overflow";
     vi.mocked(apiRequest).mockImplementation(async (path) => {
       if (path.startsWith("/api/v1/spaces")) {
         return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] } as never;
       }
       if (path.startsWith("/api/v1/ingestion-jobs")) {
-        return { items: [{ id: "job-1", space_id: "global", document_id: "doc-1", state: "queued", progress: 0, attempt_count: 0, max_attempts: 5, created_at: "2026-08-20T12:00:00Z", updated_at: "2026-08-20T12:00:00Z" }] } as never;
+        return { items: [{ id: jobId, space_id: "global", document_id: documentId, state: "queued", progress: 0, attempt_count: 0, max_attempts: 5, created_at: "2026-08-20T12:00:00Z", updated_at: "2026-08-20T12:00:00Z" }] } as never;
       }
       throw new Error(`Unexpected path ${path}`);
     });
     render(<IngestionConsole />);
 
-    expect(await screen.findByText("job-1")).toBeInTheDocument();
+    expect(await screen.findByLabelText(`Job ID ${jobId}`)).toHaveAttribute("title", jobId);
+    expect(screen.getByLabelText(`Document ID ${documentId}`)).toHaveAttribute("title", documentId);
     expect(screen.getByText("0%")) .toBeInTheDocument();
     expect(screen.getByText("queued")).toBeInTheDocument();
   });
@@ -1155,19 +1158,23 @@ describe("management console", () => {
 
   it("shows immutable audit activity to super admins", async () => {
     currentMember.system_role = "super_admin";
+    const requestId = "request-1-with-a-very-long-correlation-identifier-that-must-not-overflow";
+    const resourceId = "note-1-with-a-very-long-resource-identifier-that-must-not-overflow";
     vi.mocked(apiRequest).mockImplementation(async (path) => {
       if (path.startsWith("/api/v1/spaces")) {
         return { items: [] } as never;
       }
       if (path.startsWith("/api/v1/audit-events")) {
-        return { items: [{ id: "event-1", occurred_at: "2026-08-20T12:00:00Z", actor_kind: "session", action: "knowledge.create", resource_type: "knowledge_item", resource_id: "note-1", outcome: "success", request_id: "request-1" }] } as never;
+        return { items: [{ id: "event-1", occurred_at: "2026-08-20T12:00:00Z", actor_kind: "session", actor_member_id: "member-1", action: "knowledge.create", resource_type: "knowledge_item", resource_id: resourceId, outcome: "success", request_id: requestId }] } as never;
       }
       throw new Error(`Unexpected path ${path}`);
     });
     render(<ActivityConsole />);
 
     expect(await screen.findByText("knowledge.create")).toBeInTheDocument();
-    expect(screen.getByText("request-1")).toBeInTheDocument();
+    expect(screen.getByLabelText(`Request ID ${requestId}`)).toHaveAttribute("title", requestId);
+    expect(screen.getByLabelText(`Resource knowledge_item ${resourceId}`)).toHaveAttribute("title", `${resourceId}`);
+    expect(screen.getByText("session · member-1")).toBeInTheDocument();
   });
 
   it("presents AI management tools as deliberate actions without a chat surface", async () => {
