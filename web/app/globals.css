@@ -457,6 +457,7 @@ html[data-theme="dark"] .console-eyebrow { color: var(--accent); }
 .console-panel {
   border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface);
   box-shadow: 0 1px 2px rgba(27, 30, 28, 0.04);
+  padding: 24px;
 }
 .console-grid > .console-panel:first-child { padding: 22px 24px; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
@@ -487,7 +488,7 @@ html[data-theme="dark"] .action-panel-icon.mint { color: var(--accent); }
 .action-panel > p:not(.console-eyebrow):not(.inline-error):not(.inline-success),
 .secret-reveal > p:not(.console-eyebrow) { margin: 8px 0 18px; color: var(--ink-soft); font-size: 12.5px; line-height: 1.55; }
 
-.console-form { display: grid; }
+.console-form { display: grid; gap: 12px;}
 .console-form label, .inline-create-form label, .ownership-recovery-form label,
 .membership-add-form label, .member-admin-form label, .runtime-settings-form label, .api-key-scopes legend {
   margin: 13px 0 6px; color: var(--ink); font-size: 12.5px; font-weight: 600;
@@ -529,7 +530,7 @@ html[data-theme="dark"] .action-panel-icon.mint { color: var(--accent); }
 }
 .primary-button:active:not(:disabled), .secondary-button:active:not(:disabled),
 .danger-button:active:not(:disabled) { transform: translateY(1px); }
-.primary-button { margin-top: 16px; border: 0; background: var(--accent); color: #fff; }
+.primary-button { border: 0; background: var(--accent); color: #fff; }
 html[data-theme="dark"] .primary-button { color: #10231c; }
 .primary-button:hover:not(:disabled) { background: var(--accent-strong); box-shadow: 0 1px 2px rgba(27, 30, 28, 0.12); }
 html[data-theme="dark"] .primary-button:hover:not(:disabled) { background: var(--accent-strong); }
@@ -789,7 +790,7 @@ html[data-theme="dark"] .metric-refresh-button:hover { color: var(--accent); }
   background: var(--accent-soft); color: var(--accent-strong); font-size: 11px; font-weight: 600;
 }
 html[data-theme="dark"] .revision-state { color: var(--accent); }
-.editor-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+.editor-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; margin-top: 16px; }
 .archive-button {
   min-height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
   padding: 0 13px; border: 1px solid color-mix(in srgb, var(--coral) 36%, transparent); border-radius: 9px;
