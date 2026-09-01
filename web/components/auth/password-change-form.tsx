@@ -1,13 +1,14 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { Check, Copy, Eye, EyeOff, KeyRound, LoaderCircle } from "lucide-react";
+import { Check, Copy, KeyRound, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 
+import { NewPasswordFields } from "@/components/auth/new-password-fields";
 import { ApiError, contractClient, contractDataWithSessionRetry } from "@/lib/api-client";
 import { resetCachedMember } from "@/components/auth/session-gate";
 import type { components } from "@/lib/generated/openapi";
-import { isPasswordValid, passwordPolicy, passwordRuleStates } from "@/lib/password-policy";
+import { isPasswordValid } from "@/lib/password-policy";
 
 type InitialAPIKey = components["schemas"]["InitialAPIKey"];
 
@@ -15,7 +16,6 @@ export function PasswordChangeForm() {
   const router = useRouter();
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
-  const [visible, setVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [initialKey, setInitialKey] = useState<InitialAPIKey | null>(null);
   const [copied, setCopied] = useState(false);
@@ -70,22 +70,14 @@ export function PasswordChangeForm() {
       <h1>Make this account yours.</h1>
       <p>Replace the one-time password before accessing family knowledge.</p>
 
-      <label className="field-label" htmlFor="new-password">New password</label>
-      <div className="password-field">
-        <input autoComplete="new-password" id="new-password" maxLength={128} minLength={15} onChange={(event) => setPassword(event.target.value)} required type={visible ? "text" : "password"} value={password} />
-        <button aria-label={visible ? "Hide passwords" : "Show passwords"} onClick={() => setVisible((value) => !value)} type="button">
-          {visible ? <EyeOff aria-hidden="true" size={18} /> : <Eye aria-hidden="true" size={18} />}
-        </button>
-      </div>
-
-      <label className="field-label" htmlFor="confirm-password">Confirm password</label>
-      <input autoComplete="new-password" className="text-field" id="confirm-password" maxLength={passwordPolicy.maxLength} minLength={passwordPolicy.minLength} onChange={(event) => setConfirmation(event.target.value)} required type={visible ? "text" : "password"} value={confirmation} />
-
-      <div className="password-rules">
-        {passwordRuleStates(password, confirmation).map((rule) => (
-          <span data-valid={password.length > 0 && rule.valid} key={rule.label}><i><Check aria-hidden="true" size={11} /></i>{rule.label}</span>
-        ))}
-      </div>
+      <NewPasswordFields
+        confirmation={confirmation}
+        disabled={submitting}
+        idPrefix="first-use"
+        onConfirmationChange={setConfirmation}
+        onPasswordChange={setPassword}
+        password={password}
+      />
 
       {error ? <div className="auth-error" role="alert">{error}</div> : null}
       <button className="auth-submit" disabled={!canSubmit} type="submit">

@@ -50,6 +50,13 @@ describe("PasswordChangeForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Set new password" }));
 
     await waitFor(() => expect(screen.getByText("aigw_v1_public-1_secret")).toBeInTheDocument());
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    const [input, init] = vi.mocked(fetch).mock.calls[0];
+    const request = new Request(input, init);
+    expect(await request.json()).toEqual({
+      confirmation: "Permanent-Password-934!",
+      password: "Permanent-Password-934!",
+    });
     expect(screen.getByText(/shown only once/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "I have saved this API key" })).toBeInTheDocument();
   });
