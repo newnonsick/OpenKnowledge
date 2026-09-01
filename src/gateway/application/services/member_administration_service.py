@@ -233,6 +233,10 @@ class MemberAdministrationService:
         )
         if member is None:
             raise AuthorizationException()
+        if member.id == actor_id:
+            raise ResourceConflictException("Change your own password in Security settings.")
+        if member.status == MemberStatus.DISABLED.value:
+            raise ResourceConflictException("Enable the member before resetting their password.")
         current_credential = await self._session.scalar(
             select(PasswordCredentialModel)
             .where(

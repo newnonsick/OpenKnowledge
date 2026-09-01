@@ -172,6 +172,99 @@ async def test_member_creation_requires_recent_super_admin_website_session_and_u
                 )
 
 
+async def test_password_reset_rejects_actor_and_disabled_target_without_mutation() -> None:
+    password_service = PasswordService(memory_cost=8192, time_cost=2, parallelism=1)
+    now = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc)
+    admin_id = uuid4()
+    disabled_id = uuid4()
+    admin_credential_id = uuid4()
+    disabled_credential_id = uuid4()
+
+    async with isolated_postgres_database() as (_, factory):
+        async with factory.begin() as session:
+            session.add_all(
+                [
+                    MemberModel(
+                        id=admin_id,
+                        username="admin",
+                        username_normalized="admin",
+                        display_name="Admin",
+                        status=MemberStatus.ACTIVE.value,
+                        system_role=SystemRole.SUPER_ADMIN.value,
+                        force_password_change=False,
+                    ),
+                    MemberModel(
+                        id=disabled_id,
+                        username="disabled",
+                        username_normalized="disabled",
+                        display_name="Disabled",
+                        status=MemberStatus.DISABLED.value,
+                        system_role=SystemRole.MEMBER.value,
+                        force_password_change=False,
+                    ),
+                ]
+            )
+            session.add_all(
+                [
+                    PasswordCredentialModel(
+                        id=admin_credential_id,
+                        member_id=admin_id,
+                        password_hash=password_service.hash(
+                            "Copper-Planet-934!",
+                            username="admin",
+                        ),
+                        temporary=False,
+                    ),
+                    PasswordCredentialModel(
+                        id=disabled_credential_id,
+                        member_id=disabled_id,
+                        password_hash=password_service.hash(
+                            "Quartz-River-934!",
+                            username="disabled",
+                        ),
+                        temporary=False,
+                    ),
+                ]
+            )
+            admin_session = await SessionService(session).issue(
+                principal(admin_id),
+                now=now,
+                step_up_at=now,
+            )
+            service = MemberAdministrationService(session, password_service)
+
+            with pytest.raises(ResourceConflictException, match="Security settings"):
+                await service.reset_password(
+                    principal(admin_id),
+                    family_id=admin_session.family_id,
+                    member_id=admin_id,
+                    request_id="self-reset",
+                    now=now,
+                )
+            with pytest.raises(ResourceConflictException, match="Enable the member"):
+                await service.reset_password(
+                    principal(admin_id),
+                    family_id=admin_session.family_id,
+                    member_id=disabled_id,
+                    request_id="disabled-reset",
+                    now=now,
+                )
+
+        async with factory() as session:
+            active_credentials = list(
+                await session.scalars(
+                    select(PasswordCredentialModel).where(
+                        PasswordCredentialModel.retired_at.is_(None)
+                    )
+                )
+            )
+            assert {credential.id for credential in active_credentials} == {
+                admin_credential_id,
+                disabled_credential_id,
+            }
+            assert all(credential.temporary is False for credential in active_credentials)
+
+
 async def test_member_lifecycle_prevents_lockout_and_revokes_credentials_with_hashed_reset() -> None:
     password_service = PasswordService(memory_cost=8192, time_cost=2, parallelism=1)
     now = datetime(2026, 8, 20, 10, 0, tzinfo=timezone.utc)

@@ -442,6 +442,16 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 )
                 assert repaired_ownership.status_code == 200
                 assert repaired_ownership.json()["member_id"] == str(repair_target_id)
+                self_reset = await admin_client.post(
+                    f"/api/v1/members/{admin_id}/password-reset",
+                    headers={
+                        "Origin": "https://gateway.test",
+                        "X-CSRF-Token": admin_session.csrf_token.reveal(),
+                        "Idempotency-Key": "reset-self",
+                    },
+                )
+                assert self_reset.status_code == 409
+                assert self_reset.json()["error"]["message"] == "Change your own password in Security settings."
                 reset_member = await admin_client.post(
                     f"/api/v1/members/{created_member_id}/password-reset",
                     headers={
@@ -470,6 +480,16 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 assert disabled_member.status_code == 200
                 assert disabled_member.json()["status"] == "disabled"
                 assert disabled_member.json()["mfa_enabled"] is False
+                disabled_reset = await admin_client.post(
+                    f"/api/v1/members/{created_member_id}/password-reset",
+                    headers={
+                        "Origin": "https://gateway.test",
+                        "X-CSRF-Token": admin_session.csrf_token.reveal(),
+                        "Idempotency-Key": "reset-disabled-member",
+                    },
+                )
+                assert disabled_reset.status_code == 409
+                assert disabled_reset.json()["error"]["message"] == "Enable the member before resetting their password."
 
                 current_settings = await admin_client.get("/api/v1/settings")
                 assert current_settings.status_code == 200
