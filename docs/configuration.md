@@ -83,7 +83,7 @@ Any OpenAI-compatible embeddings endpoint.
 | `EMBEDDING_URL` | `http://localhost:7997` | Base URL of the endpoint. |
 | `EMBEDDING_MODEL_ID` | `default` | Embedding model identifier. |
 | `EMBEDDING_API_KEY` | `EMPTY` | Backend API key when the endpoint requires one. |
-| `EMBEDDING_DIMENSION` | `1024` | Vector dimension. Frozen by the current schema; readiness fails closed if it does not match. |
+| `EMBEDDING_DIMENSION` | `1024` | Vector dimension of the pgvector columns. Changing it requires `python -m src.gateway.cli set-embedding-dimension`; readiness fails closed until the schema matches. |
 | `EMBEDDING_BATCH_SIZE` | `32` | Batch size for embedding requests. |
 | `EMBEDDING_TIMEOUT_SECONDS` | `30.0` | HTTP timeout for embedding calls. |
 | `EMBEDDING_RETRY_ATTEMPTS` | `3` | Maximum attempts (1 to 5) for transient failures. |
@@ -145,6 +145,7 @@ Retention executes only when `RETENTION_PURGE_ENABLED` is true, and the database
 | `RETENTION_OPERATIONAL_DAYS` | `30` | at least 30 | Minimum age before expired operational records are purged. |
 | `RETENTION_BATCH_SIZE` | `100` | 1 to 1000 | Rows per database batch. |
 | `RETENTION_MAX_BATCHES_PER_CYCLE` | `100` | 1 to 1000 | Batches per cycle; remaining work continues in the next cycle. |
+| `EMBEDDING_REEMBED_BATCH_SIZE` | `64` | 1 to 512 | Rows re-embedded per batch after an embedding dimension change. |
 
 ## Compose-level variables
 

@@ -135,6 +135,10 @@ python -m src.gateway.cli migrate
 python -m src.gateway.cli ensure-embedding-generation
 python -m src.gateway.cli check
 
+# 3b. Only when the embedding model dimension changes (re-run to resume)
+python -m src.gateway.cli set-embedding-dimension --dimension 768 --reembed
+python -m src.gateway.cli reembed-status
+
 # 4. First administrator (prints a temporary password)
 python -m src.gateway.cli bootstrap-super-admin --username admin --display-name "Admin"
 

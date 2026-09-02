@@ -18,7 +18,7 @@ The schema is versioned through Alembic migrations `001` through `018` under `al
 Search structures:
 
 - Lexical search uses generated `tsvector` columns with GIN indexes, ranked by `ts_rank_cd`. Migration 015 maintains multilingual index variants.
-- Vector search uses a pgvector column with cosine distance over HNSW indexes. The dimension is fixed by the current schema at 1024, and readiness fails closed when `EMBEDDING_DIMENSION` disagrees.
+- Vector search uses a pgvector column with cosine distance over HNSW indexes. The dimension is fixed by the current schema at 1024 until it is changed with `set-embedding-dimension`, and readiness fails closed when `EMBEDDING_DIMENSION` disagrees.
 
 ## Database roles
 
@@ -53,6 +53,21 @@ Behavior details:
 - Migration procedures in production (backup, quiesce writers, migrate, verify readiness, restart) are described in [operations.md](operations.md).
 
 Alembic itself is configured by `alembic.ini` with `script_location = alembic`; the application uses the programmatic runner rather than the `alembic` CLI, and tests verify migration determinism and release flow (`tests/unit/test_migration_determinism.py`, `tests/integration/test_migration_release_flow.py`).
+
+### Changing the embedding dimension
+
+Historical revisions are frozen and never read runtime configuration, so the vector dimension is changed by an explicit command rather than by editing `EMBEDDING_DIMENSION` alone:
+
+```bash
+python -m src.gateway.cli set-embedding-dimension --dimension 768 --reembed
+python -m src.gateway.cli reembed-status
+```
+
+The command refuses to run unless `--dimension` matches the configured `EMBEDDING_DIMENSION`, refuses to resize a database that is not at the head revision, and without `--allow-embedding-loss` or `--reembed` refuses to clear stored embeddings.
+
+`--reembed` regenerates embeddings for `knowledge_revisions`, `document_chunks` and `retrieval_units` from the content stored beside each row, retires the previous embedding generation, and repoints `retrieval_units` at the new one. Because retrieval filters on the active generation, vectors are not searchable until the re-embed reaches them.
+
+Progress is recorded in `migration_backfill_runs`, so an interrupted run resumes where it stopped when the command is re-run. `--max-batches` bounds how much one invocation does. The work runs on the privileged migration URL, because the runtime and worker roles deliberately cannot rewrite embedding columns.
 
 ## Retention
 

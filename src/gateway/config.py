@@ -493,6 +493,16 @@ class GatewaySettings(BaseSettings):
             "retention_max_batches_per_cycle",
         ),
     )
+    embedding_reembed_batch_size: int = Field(
+        default=64,
+        ge=1,
+        le=512,
+        validation_alias=AliasChoices(
+            "EMBEDDING_REEMBED_BATCH_SIZE",
+            "embedding_reembed_batch_size",
+        ),
+        description="Rows re-embedded per batch after an embedding dimension change",
+    )
     default_workspace_id: str = Field(
         default="global",
         validation_alias=AliasChoices("DEFAULT_WORKSPACE_ID", "default_workspace_id"),

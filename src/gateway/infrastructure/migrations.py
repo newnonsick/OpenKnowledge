@@ -5,13 +5,13 @@ from dataclasses import dataclass
 import logging
 from pathlib import Path
 import re
-from typing import Optional
+from typing import Any, Optional
 
 from alembic import command
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import text
+from sqlalchemy import column, func, select, table, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -19,6 +19,26 @@ from src.gateway.config import get_settings
 from src.gateway.infrastructure.database import normalize_database_url
 
 logger = logging.getLogger(__name__)
+
+VECTOR_COLUMN = "embedding"
+VECTOR_INDEXES: dict[str, str] = {
+    "document_chunks": "ix_document_chunks_embedding",
+    "knowledge_revisions": "ix_knowledge_revisions_embedding",
+    "retrieval_units": "ix_retrieval_units_embedding",
+}
+HNSW_INDEX_OPTIONS = "WITH (m = 16, ef_construction = 64)"
+
+_EMBEDDING_DIMENSION_SQL = (
+    "SELECT c.relname, format_type(a.atttypid, a.atttypmod) "
+    "FROM pg_attribute a "
+    "JOIN pg_class c ON c.oid = a.attrelid "
+    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE c.relname = ANY(:tables) "
+    "AND a.attname = :column "
+    "AND n.nspname = current_schema() "
+    "AND NOT a.attisdropped "
+    "ORDER BY c.relname"
+)
 
 
 @dataclass(frozen=True)
@@ -31,6 +51,24 @@ class SchemaStatus:
     trigram_extension_available: bool = False
 
 
+@dataclass(frozen=True)
+class EmbeddingDimensionStatus:
+    configured: int
+    current: dict[str, Optional[int]]
+    stored: dict[str, int]
+    cleared: int = 0
+
+    @property
+    def aligned(self) -> bool:
+        return bool(self.current) and all(
+            dimension == self.configured for dimension in self.current.values()
+        )
+
+    @property
+    def stored_total(self) -> int:
+        return sum(self.stored.values())
+
+
 def _version_tuple(value: Optional[str]) -> tuple[int, ...]:
     if not value:
         return ()
@@ -38,6 +76,43 @@ def _version_tuple(value: Optional[str]) -> tuple[int, ...]:
     if match is None:
         return ()
     return tuple(int(part or 0) for part in match.groups())
+
+
+def _parse_vector_dimension(value: Optional[str]) -> Optional[int]:
+    match = re.fullmatch(r"vector\((\d+)\)", value or "")
+    return int(match.group(1)) if match else None
+
+
+def _vector_tables() -> list[str]:
+    return sorted(VECTOR_INDEXES)
+
+
+async def _read_embedding_dimensions(connection: Any) -> dict[str, Optional[int]]:
+    rows = (
+        await connection.execute(
+            text(_EMBEDDING_DIMENSION_SQL),
+            {"tables": _vector_tables(), "column": VECTOR_COLUMN},
+        )
+    ).tuples().all()
+    return {name: _parse_vector_dimension(formatted) for name, formatted in rows}
+
+
+async def _count_stored_embeddings(connection: Any) -> dict[str, int]:
+    stored: dict[str, int] = {}
+    for name in _vector_tables():
+        count = await connection.scalar(
+            select(func.count())
+            .select_from(table(name))
+            .where(column(VECTOR_COLUMN).is_not(None))
+        )
+        stored[name] = int(count or 0)
+    return stored
+
+
+def _privileged_database_url(db_url: Optional[str] = None) -> str:
+    database = get_settings().database
+    return normalize_database_url(db_url or database.migration_url or database.url)
+
 
 def get_alembic_config(db_url: Optional[str] = None) -> Config:
 
@@ -91,22 +166,9 @@ async def get_schema_status_async(
                     sync_connection
                 ).get_current_revision()
             )
-            dimension_rows = await connection.execute(
-                text(
-                    "SELECT format_type(a.atttypid, a.atttypmod) "
-                    "FROM pg_attribute a "
-                    "JOIN pg_class c ON c.oid = a.attrelid "
-                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                    "WHERE c.relname IN ('knowledge_revisions', 'document_chunks') "
-                    "AND a.attname = 'embedding' "
-                    "AND n.nspname = current_schema() "
-                    "ORDER BY c.relname"
-                )
-            )
+            dimension_map = await _read_embedding_dimensions(connection)
             dimensions = tuple(
-                int(match.group(1))
-                for value in dimension_rows.scalars().all()
-                if (match := re.fullmatch(r"vector\((\d+)\)", value or ""))
+                dimension for dimension in dimension_map.values() if dimension is not None
             )
             extension_result = await connection.execute(
                 text(
@@ -119,7 +181,7 @@ async def get_schema_status_async(
         await engine.dispose()
     revision_compatible = current is not None and current in heads
     dimension_compatible = (
-        len(dimensions) == 2
+        len(dimensions) == len(VECTOR_INDEXES)
         and all(dimension == expected_dimension for dimension in dimensions)
     )
     vector_version = extension_rows.get("vector")
@@ -147,3 +209,95 @@ async def rollback_migrations_async(revision: str = "base", db_url: Optional[str
 
     cfg = get_alembic_config(db_url)
     await asyncio.to_thread(rollback_migrations_sync, revision, cfg)
+
+
+async def get_embedding_dimension_status(
+    db_url: Optional[str] = None,
+    *,
+    count_stored: bool = True,
+) -> EmbeddingDimensionStatus:
+    engine = create_async_engine(_privileged_database_url(db_url), poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            current = await _read_embedding_dimensions(connection)
+            stored = await _count_stored_embeddings(connection) if count_stored else {}
+    finally:
+        await engine.dispose()
+    return EmbeddingDimensionStatus(
+        configured=get_settings().embedding.dimension,
+        current=current,
+        stored=stored,
+    )
+
+
+async def _stored_embedding_counts(db_url: Optional[str] = None) -> dict[str, int]:
+    engine = create_async_engine(_privileged_database_url(db_url), poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            return await _count_stored_embeddings(connection)
+    finally:
+        await engine.dispose()
+
+
+async def set_embedding_dimension(
+    dimension: int,
+    *,
+    allow_embedding_loss: bool = False,
+    db_url: Optional[str] = None,
+) -> EmbeddingDimensionStatus:
+    target = int(dimension)
+    if target <= 0:
+        raise RuntimeError(f"Embedding dimension must be a positive integer, got {dimension}.")
+
+    status = await get_schema_status_async(db_url, expected_embedding_dimension=target)
+    if status.current_revision not in status.head_revisions:
+        raise RuntimeError(
+            f"Database schema is at revision {status.current_revision or 'unversioned'} "
+            f"instead of {', '.join(status.head_revisions)}; "
+            "run 'python -m src.gateway.cli migrate' first."
+        )
+
+    pending = await get_embedding_dimension_status(db_url, count_stored=False)
+    if not pending.current:
+        raise RuntimeError("No pgvector embedding columns were found in the current schema.")
+    if all(existing == target for existing in pending.current.values()):
+        return pending
+
+    stored = await _stored_embedding_counts(db_url)
+    cleared = sum(stored.values())
+    if cleared and not allow_embedding_loss:
+        populated = ", ".join(
+            f"{name}={count}" for name, count in sorted(stored.items()) if count
+        )
+        raise RuntimeError(
+            f"Resizing clears {cleared} stored embeddings ({populated}). "
+            "Re-run with --allow-embedding-loss once they have been re-ingested or are expendable."
+        )
+
+    logger.info(f"Resizing pgvector embedding columns to {target} dimensions.")
+    engine = create_async_engine(_privileged_database_url(db_url), poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            for name, index_name in sorted(VECTOR_INDEXES.items()):
+                await connection.execute(text(f"DROP INDEX IF EXISTS {index_name}"))
+                await connection.execute(
+                    text(
+                        f"ALTER TABLE {name} ALTER COLUMN {VECTOR_COLUMN} "
+                        f"TYPE vector({target}) USING NULL"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        f"CREATE INDEX {index_name} ON {name} "
+                        f"USING hnsw ({VECTOR_COLUMN} vector_cosine_ops) {HNSW_INDEX_OPTIONS}"
+                    )
+                )
+    finally:
+        await engine.dispose()
+    resized = await get_embedding_dimension_status(db_url, count_stored=False)
+    return EmbeddingDimensionStatus(
+        configured=resized.configured,
+        current=resized.current,
+        stored=resized.stored,
+        cleared=cleared,
+    )

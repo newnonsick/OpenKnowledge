@@ -55,7 +55,7 @@ async def test_fresh_database_upgrade_and_schema_check():
 
         assert status.compatible is True
         assert status.current_revision == "021"
-        assert status.embedding_dimensions == (1024, 1024)
+        assert status.embedding_dimensions == (1024, 1024, 1024)
         assert status.vector_extension_version is not None
         assert status.trigram_extension_available is True
 

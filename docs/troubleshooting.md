@@ -27,7 +27,7 @@ python -m src.gateway.cli migrate   # apply
 python -m src.gateway.cli check     # verify
 ```
 
-The same check runs against `EMBEDDING_DIMENSION`; the schema is fixed at 1024, so a changed value must be reverted rather than migrated.
+The same check runs against `EMBEDDING_DIMENSION`. To adopt a new value, run `python -m src.gateway.cli set-embedding-dimension --dimension <value> --reembed` and re-run it until `reembed-status` reports complete; otherwise revert `EMBEDDING_DIMENSION` to the dimension the schema already uses.
 
 ### Gateway cannot reach PostgreSQL
 
