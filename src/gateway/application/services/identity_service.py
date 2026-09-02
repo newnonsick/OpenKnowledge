@@ -28,6 +28,7 @@ class PasswordAuthentication:
 class TotpEnrollment:
     factor_id: UUID
     secret: SecretValue
+    provisioning_uri: str
 
 
 class IdentityService:
@@ -190,7 +191,11 @@ class IdentityService:
             details={"encryption_key_version": encryption_key_version},
         )
         await self._session.flush()
-        return TotpEnrollment(factor.id, secret)
+        return TotpEnrollment(
+            factor.id,
+            secret,
+            self._mfa.provisioning_uri(secret, account_name=member.username),
+        )
 
     async def confirm_totp_enrollment(
         self,

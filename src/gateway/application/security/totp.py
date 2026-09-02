@@ -10,6 +10,8 @@ import pyotp
 
 from src.gateway.application.security.tokens import SecretValue
 
+TOTP_ISSUER = "OpenKnowledge"
+
 
 class MFASecretService:
     def __init__(
@@ -39,6 +41,9 @@ class MFASecretService:
 
     def new_totp_secret(self) -> SecretValue:
         return SecretValue(pyotp.random_base32(length=32))
+
+    def provisioning_uri(self, secret: SecretValue, account_name: str) -> str:
+        return pyotp.TOTP(secret.reveal()).provisioning_uri(name=account_name, issuer_name=TOTP_ISSUER)
 
     def encrypt_secret(self, secret: SecretValue, *, key_version: int | None = None) -> bytes:
         version = key_version or self._active_key_version

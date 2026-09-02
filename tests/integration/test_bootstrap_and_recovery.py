@@ -107,6 +107,8 @@ async def test_bootstrap_first_login_totp_and_recovery_state_machine() -> None:
                 now=now,
                 request_id="mfa-begin",
             )
+            assert enrollment.provisioning_uri.startswith("otpauth://totp/OpenKnowledge:")
+            assert enrollment.secret.reveal() in enrollment.provisioning_uri
             code = pyotp.TOTP(enrollment.secret.reveal()).now()
             recovery_codes = await identity.confirm_totp_enrollment(
                 issued.member_id,

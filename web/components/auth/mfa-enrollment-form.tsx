@@ -1,9 +1,10 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Check, Copy, KeySquare, LoaderCircle, ShieldCheck } from "lucide-react";
+import { Check, Copy, LoaderCircle, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 
+import { MfaEnrollmentSecret } from "@/components/auth/mfa-enrollment-secret";
 import { ApiError, contractClient, contractDataWithSessionRetry } from "@/lib/api-client";
 import { resetCachedMember } from "@/components/auth/session-gate";
 import type { components } from "@/lib/generated/openapi";
@@ -84,15 +85,10 @@ export function MfaEnrollmentForm() {
       <span className="first-use-step">Step 2 of 2</span>
       <span className="first-use-icon"><ShieldCheck aria-hidden="true" size={22} /></span>
       <h1>Protect admin access.</h1>
-      <p>Add this account to any TOTP-compatible authenticator, then enter its current code.</p>
+      <p>Scan this code with any TOTP-compatible authenticator, then enter its current code.</p>
 
       {loading ? <div className="enrollment-loading"><LoaderCircle aria-hidden="true" className="spin" size={18} />Creating a private setup key…</div> : null}
-      {enrollment ? (
-        <div className="enrollment-secret">
-          <span><KeySquare aria-hidden="true" size={16} />Manual setup key</span>
-          <code>{enrollment.secret}</code>
-        </div>
-      ) : null}
+      {enrollment ? <MfaEnrollmentSecret provisioningUri={enrollment.provisioning_uri} secret={enrollment.secret} /> : null}
 
       <label className="field-label" htmlFor="mfa-code">6-digit authentication code</label>
       <input autoComplete="one-time-code" className="text-field code-field" disabled={!enrollment} id="mfa-code" inputMode="numeric" maxLength={8} onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))} pattern="[0-9]{6,8}" required value={code} />

@@ -473,6 +473,7 @@ async def enroll_totp(
     return TotpEnrollment(
         factor_id=str(enrollment.factor_id),
         secret=enrollment.secret.reveal(),
+        provisioning_uri=enrollment.provisioning_uri,
     )
 
 

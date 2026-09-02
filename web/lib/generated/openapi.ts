@@ -2658,6 +2658,8 @@ export interface components {
         TotpEnrollment: {
             /** Factor Id */
             factor_id: string;
+            /** Provisioning Uri */
+            provisioning_uri: string;
             /** Secret */
             secret: string;
         };

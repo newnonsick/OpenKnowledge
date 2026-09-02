@@ -4858,6 +4858,10 @@
             "title": "Factor Id",
             "type": "string"
           },
+          "provisioning_uri": {
+            "title": "Provisioning Uri",
+            "type": "string"
+          },
           "secret": {
             "title": "Secret",
             "type": "string"
@@ -4865,7 +4869,8 @@
         },
         "required": [
           "factor_id",
-          "secret"
+          "secret",
+          "provisioning_uri"
         ],
         "title": "TotpEnrollment",
         "type": "object"

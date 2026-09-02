@@ -1,8 +1,9 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Check, KeySquare, LoaderCircle, ShieldCheck } from "lucide-react";
+import { Check, LoaderCircle, ShieldCheck } from "lucide-react";
 
+import { MfaEnrollmentSecret } from "@/components/auth/mfa-enrollment-secret";
 import { CopyButton } from "@/components/copy-button";
 import { ApiError, contractClient, contractDataWithSessionRetry } from "@/lib/api-client";
 import type { components } from "@/lib/generated/openapi";
@@ -107,8 +108,8 @@ export function MfaSecurityPanel({ enabled, onEnabled }: { enabled: boolean; onE
         </div>
       ) : enrollment ? (
         <form className="mfa-setup-form" onSubmit={confirm}>
-          <p>Add this setup key to a TOTP-compatible authenticator, then enter the current code.</p>
-          <div className="enrollment-secret"><span><KeySquare aria-hidden="true" size={16} />Manual setup key</span><code>{enrollment.secret}</code></div>
+          <p>Scan this code with a TOTP-compatible authenticator, then enter the current code.</p>
+          <MfaEnrollmentSecret provisioningUri={enrollment.provisioning_uri} secret={enrollment.secret} />
           <label htmlFor="security-mfa-code">Authentication code</label>
           <input autoComplete="one-time-code" className="code-field" id="security-mfa-code" inputMode="numeric" maxLength={8} onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))} pattern="[0-9]{6,8}" required value={code} />
           {error ? <p className="inline-error" role="alert">{error}</p> : null}

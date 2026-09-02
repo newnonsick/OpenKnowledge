@@ -148,6 +148,7 @@ class SessionStepUp(ContractModel):
 class TotpEnrollment(ContractModel):
     factor_id: str
     secret: str
+    provisioning_uri: str
 
 
 class TotpConfirmation(SessionAuthentication):

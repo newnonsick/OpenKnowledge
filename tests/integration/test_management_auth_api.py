@@ -210,6 +210,9 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                 assert enrollment.headers["Cache-Control"] == "no-store"
                 factor_id = enrollment.json()["factor_id"]
                 secret = enrollment.json()["secret"]
+                provisioning_uri = enrollment.json()["provisioning_uri"]
+                assert provisioning_uri.startswith("otpauth://totp/OpenKnowledge:admin?")
+                assert secret in provisioning_uri
 
                 confirmation = await client.post(
                     "/api/v1/auth/mfa/totp/confirm",

@@ -12,7 +12,16 @@ describe("MfaEnrollmentForm", () => {
       "fetch",
       vi
         .fn()
-        .mockResolvedValueOnce(new Response(JSON.stringify({ factor_id: "factor-1", secret: "ABCDEFGHIJKLMNOP" }), { status: 200 }))
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              factor_id: "factor-1",
+              secret: "ABCDEFGHIJKLMNOP",
+              provisioning_uri: "otpauth://totp/OpenKnowledge:admin?secret=ABCDEFGHIJKLMNOP&issuer=OpenKnowledge",
+            }),
+            { status: 200 },
+          ),
+        )
         .mockResolvedValueOnce(
           new Response(
             JSON.stringify({
@@ -37,6 +46,7 @@ describe("MfaEnrollmentForm", () => {
     render(<MfaEnrollmentForm />);
 
     await screen.findByText("ABCDEFGHIJKLMNOP");
+    expect(screen.getByRole("img", { name: "Authenticator setup QR code" })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("6-digit authentication code"), { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "Verify and continue" }));
 

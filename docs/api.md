@@ -102,7 +102,7 @@ Returns the registered models. The `default` alias resolves to the configured ba
 | POST | `/api/v1/auth/refresh` | empty | Rotates the refresh token (CSRF header `X-CSRF-Token` required, Origin verified) and issues a new access cookie. |
 | POST | `/api/v1/auth/step-up` | `password` plus optional second factor | Re-authenticates and extends step-up authorization for 10 minutes. Required before sensitive operations such as activating settings drafts. |
 | POST | `/api/v1/auth/password` | current credentials plus new `password` and `confirmation` | Changes the authenticated member's password and issues replacement session cookies. An unrestricted member supplies `current_password`; an unrestricted super admin also supplies `current_totp_code` or `recovery_code`. A restricted first-use session supplies only the new `password` and `confirmation`. Prior website sessions are revoked while personal API keys are preserved. |
-| POST | `/api/v1/auth/mfa/totp/enroll` | current credentials | Starts TOTP enrollment, returns the shared secret. |
+| POST | `/api/v1/auth/mfa/totp/enroll` | current credentials | Starts TOTP enrollment, returns the shared secret and an `otpauth://` provisioning URI that the console renders as a QR code. |
 | POST | `/api/v1/auth/mfa/confirm` | `factor_id`, `code`, current credentials | Completes enrollment, returns recovery codes and the first personal API key. |
 | POST | `/api/v1/auth/logout` | empty | Revokes the session family and clears cookies. |
 

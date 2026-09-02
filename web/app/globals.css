@@ -1306,6 +1306,9 @@ html[data-theme="dark"] .password-rules span[data-valid="true"] i { color: var(-
 .first-use-icon.mint { background: var(--accent-soft); color: var(--accent-strong); }
 html[data-theme="dark"] .first-use-icon.mint { color: var(--accent); }
 .enrollment-loading { display: flex; align-items: center; gap: 9px; padding: 14px; border-radius: 10px; background: var(--surface-soft); color: var(--ink-soft); font-size: 12.5px; }
+.enrollment-provisioning { display: grid; justify-items: center; gap: 14px; }
+.enrollment-qr { display: grid; place-items: center; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: #ffffff; }
+.enrollment-provisioning .enrollment-secret { width: 100%; }
 .enrollment-secret { padding: 14px; border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent); border-radius: var(--radius-md); background: var(--accent-softer); }
 .enrollment-secret span { display: flex; align-items: center; gap: 7px; color: var(--accent-strong); font-size: 12px; font-weight: 600; }
 html[data-theme="dark"] .enrollment-secret span { color: var(--accent); }

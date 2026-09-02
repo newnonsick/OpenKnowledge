@@ -1,6 +1,7 @@
 from dataclasses import asdict
 import json
 
+import pyotp
 import pytest
 
 from src.gateway.application.security.passwords import PasswordPolicy, PasswordService, normalize_password
@@ -126,6 +127,18 @@ def test_totp_secrets_encrypt_and_recovery_codes_are_one_way() -> None:
     digest = service.hash_recovery_code(recovery.reveal())
     assert recovery.reveal() not in digest
     assert service.verify_recovery_code(recovery.reveal(), digest) is True
+
+
+def test_totp_provisioning_uri_carries_the_issuer_and_account() -> None:
+    service = MFASecretService.generate()
+    secret = service.new_totp_secret()
+    uri = service.provisioning_uri(secret, account_name="admin")
+    assert uri.startswith("otpauth://totp/OpenKnowledge:admin?")
+    assert f"secret={secret.reveal()}" in uri
+    assert "issuer=OpenKnowledge" in uri
+    parsed = pyotp.parse_uri(uri)
+    assert parsed.secret == secret.reveal()
+    assert parsed.verify(pyotp.TOTP(secret.reveal()).now()) is True
 
 
 def test_totp_keyring_preserves_old_factors_during_rotation() -> None:

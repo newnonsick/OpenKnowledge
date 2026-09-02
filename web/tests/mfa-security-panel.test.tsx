@@ -29,7 +29,13 @@ describe("MfaSecurityPanel", () => {
   it("verifies the current password before setup and reveals recovery codes after confirmation", async () => {
     vi.mocked(contractClient.POST).mockImplementation((path) => {
       if (path === "/api/v1/auth/mfa/totp/enroll") {
-        return Promise.resolve({ data: { factor_id: "factor-1", secret: "ABCDEFGHIJKLMNOP" } }) as never;
+        return Promise.resolve({
+          data: {
+            factor_id: "factor-1",
+            secret: "ABCDEFGHIJKLMNOP",
+            provisioning_uri: "otpauth://totp/OpenKnowledge:admin?secret=ABCDEFGHIJKLMNOP&issuer=OpenKnowledge",
+          },
+        }) as never;
       }
       if (path === "/api/v1/auth/mfa/totp/confirm") {
         return Promise.resolve({ data: { recovery_codes: ["code-one", "code-two"], initial_api_key: null } }) as never;
@@ -43,6 +49,7 @@ describe("MfaSecurityPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start MFA setup" }));
 
     expect(await screen.findByText("ABCDEFGHIJKLMNOP")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Authenticator setup QR code" })).toBeInTheDocument();
     expect(contractClient.POST).toHaveBeenCalledWith("/api/v1/auth/mfa/totp/enroll", {
       body: { current_password: "correct horse battery staple" },
     });
