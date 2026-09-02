@@ -1,5 +1,5 @@
 """
-Mock HTTP Server Harness for Local AI Gateway E2E Test Suite.
+Mock HTTP Server Harness for OpenKnowledge E2E Test Suite.
 
 Provides standalone and in-process emulation for:
 - Upstream LLM Server (OpenAI / vLLM / Ollama chat completions in JSON and SSE modes).

@@ -112,7 +112,7 @@ CI verifies that `web/lib/generated/openapi.ts` matches a fresh generation from 
 
 ```bash
 GATEWAY_BASE_URL=https://target.example \
-GATEWAY_API_KEY=aigw_v.loadtest \
+GATEWAY_API_KEY=openknowledge_v.loadtest \
 k6 run tests/load/k6.js
 ```
 

@@ -201,7 +201,7 @@ async def test_multilingual_retrieval_is_authorized_bounded_and_vector_exactness
         assert hidden == []
         assert {item.canonical_id for item in approximate} == {semantic_item_id}
         assert {item.unit_id for item in approximate} == {item.unit_id for item in exact}
-        assert approximate[0].citation_uri.startswith("aigw://spaces/family/knowledge/")
+        assert approximate[0].citation_uri.startswith("openknowledge://spaces/family/knowledge/")
         assert coverage == 1.0 / 3.0
 
         projected_item_id = uuid4()

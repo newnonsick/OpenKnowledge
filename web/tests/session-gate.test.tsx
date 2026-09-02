@@ -29,7 +29,7 @@ describe("SessionGate", () => {
 
   it("keeps an active website session alive without exposing refresh credentials", async () => {
     vi.useFakeTimers();
-    document.cookie = "aigw-csrf=test-csrf; path=/";
+    document.cookie = "openknowledge-csrf=test-csrf; path=/";
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
@@ -214,7 +214,7 @@ describe("SessionGate", () => {
     await apiRequest("/private-activity");
 
     const options = fetchMock.mock.calls[1][1];
-    expect(new Headers(options?.headers).get("X-AIGW-Meaningful-Activity")).toBe("1");
+    expect(new Headers(options?.headers).get("X-OpenKnowledge-Meaningful-Activity")).toBe("1");
   });
 
   it("offers in-context reauthentication without replaying the blocked action", async () => {
@@ -239,7 +239,7 @@ describe("SessionGate", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    window.dispatchEvent(new CustomEvent("aigw-step-up-required"));
+    window.dispatchEvent(new CustomEvent("openknowledge-step-up-required"));
     fireEvent.change(await screen.findByLabelText("Current password"), { target: { value: "family-password" } });
     fireEvent.click(screen.getByRole("button", { name: "Verify identity" }));
 
@@ -280,7 +280,7 @@ describe("SessionGate", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    window.dispatchEvent(new CustomEvent("aigw-step-up-required"));
+    window.dispatchEvent(new CustomEvent("openknowledge-step-up-required"));
     fireEvent.change(await screen.findByLabelText("Current password"), { target: { value: "family-password" } });
     fireEvent.click(screen.getByRole("button", { name: "Verify identity" }));
 

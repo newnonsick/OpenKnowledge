@@ -7,6 +7,7 @@ if (!["http:", "https:"].includes(gatewayUrl.protocol)) {
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1", "localhost"],
+  devIndicators: false,
   output: "standalone",
   poweredByHeader: false,
   reactStrictMode: true,

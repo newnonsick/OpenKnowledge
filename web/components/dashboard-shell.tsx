@@ -174,7 +174,7 @@ export function DashboardShell({
       <main aria-busy={loading} className="main-canvas">
         <header className="console-mobile-bar">
           <button aria-controls="dashboard-navigation" aria-expanded={menuOpen} aria-label="Open navigation" className="mobile-menu-button" onClick={() => setMenuOpen(true)} ref={triggerRef} type="button"><Menu aria-hidden="true" size={19} /></button>
-          <span><Boxes aria-hidden="true" size={17} /> Kinbase</span>
+          <span><Boxes aria-hidden="true" size={17} /> OpenKnowledge</span>
           <div className="mobile-top-actions">
             <Link aria-label="Search knowledge" className="icon-button" href="/explore"><Search aria-hidden="true" size={19} /></Link>
             <Link aria-label="Open profile" className="icon-button" href="/settings"><CircleUserRound aria-hidden="true" size={20} /></Link>

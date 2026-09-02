@@ -283,7 +283,7 @@ def test_orm_models_instantiation():
 def test_fastapi_app_initialization():
     """Verify FastAPI application instance creation and routes."""
     app = create_app()
-    assert app.title == "Local AI Gateway with Internal Shared Knowledge"
+    assert app.title == "OpenKnowledge"
     paths = []
     for route in app.routes:
         if hasattr(route, "path"):
@@ -293,6 +293,5 @@ def test_fastapi_app_initialization():
                 if hasattr(r, "path"):
                     paths.append(r.path)
     assert "/health" in paths
-
 
 

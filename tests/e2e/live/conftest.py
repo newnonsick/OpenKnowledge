@@ -20,8 +20,8 @@ pytestmark = pytest.mark.live_e2e
 
 
 def _skip_without_live_server() -> None:
-    if os.environ.get("AIGW_LIVE_E2E") != "1":
-        pytest.skip("Live E2E disabled; set AIGW_LIVE_E2E=1")
+    if os.environ.get("OPENKNOWLEDGE_LIVE_E2E") != "1":
+        pytest.skip("Live E2E disabled; set OPENKNOWLEDGE_LIVE_E2E=1")
 
 
 @pytest.fixture(scope="session")

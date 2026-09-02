@@ -39,7 +39,7 @@ describe("PasswordChangeForm", () => {
         id: "key-1",
         public_id: "public-1",
         name: "First device",
-        secret: "aigw_v1_public-1_secret",
+        secret: "openknowledge_v1_public-1_secret",
         scopes: ["chat:write", "knowledge:read"],
       },
     }), { status: 200 })));
@@ -49,7 +49,7 @@ describe("PasswordChangeForm", () => {
     fireEvent.change(screen.getByLabelText("Confirm password"), { target: { value: "Permanent-Password-934!" } });
     fireEvent.click(screen.getByRole("button", { name: "Set new password" }));
 
-    await waitFor(() => expect(screen.getByText("aigw_v1_public-1_secret")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("openknowledge_v1_public-1_secret")).toBeInTheDocument());
     await waitFor(() => expect(fetch).toHaveBeenCalled());
     const [input, init] = vi.mocked(fetch).mock.calls[0];
     const request = new Request(input, init);

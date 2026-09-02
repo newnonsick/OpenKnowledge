@@ -241,7 +241,7 @@ class LegacyBackfillService:
         if len(content) != expected_size:
             raise ValidationException("A legacy document size does not match its database record.")
         checksum = hashlib.sha256(content).hexdigest()
-        revision_id = uuid5(NAMESPACE_URL, f"aigw:legacy-document:{document_id}:1")
+        revision_id = uuid5(NAMESPACE_URL, f"openknowledge:legacy-document:{document_id}:1")
         final_key = f"objects/{space_id}/{document_id}/{revision_id}"
         if await self._versioned_storage.exists(final_key):
             existing = await self._versioned_storage.read(final_key)
@@ -340,7 +340,7 @@ class LegacyBackfillService:
                 for chunk in chunks:
                     session.add(
                         RetrievalUnitModel(
-                            id=uuid5(NAMESPACE_URL, f"aigw:legacy-retrieval:{chunk.id}:{generation.id}"),
+                            id=uuid5(NAMESPACE_URL, f"openknowledge:legacy-retrieval:{chunk.id}:{generation.id}"),
                             space_id=legacy.workspace_id,
                             source_type="document_chunk",
                             document_revision_chunk_id=chunk.id,

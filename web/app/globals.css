@@ -1340,6 +1340,8 @@ html[data-theme="dark"] .auth-story { background: radial-gradient(circle at 85% 
   .tool-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .audit-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .audit-meta > div:last-child { grid-column: 1 / -1; }
+  .audit-filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .audit-filter-bar .secondary-button { grid-column: 1 / -1; }
 }
 
 @media (max-width: 980px) {
@@ -1355,8 +1357,8 @@ html[data-theme="dark"] .auth-story { background: radial-gradient(circle at 85% 
   .dashboard-grid { grid-template-columns: 1fr; }
   .content-wrap { width: min(100% - 48px, 860px); }
   .console-content { width: min(100% - 48px, 900px); }
-  .audit-filter-bar, .member-filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .audit-filter-bar .secondary-button, .member-filter-bar .secondary-button { grid-column: 1 / -1; }
+  .member-filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .member-filter-bar .secondary-button { grid-column: 1 / -1; }
   .api-key-create-form { grid-template-columns: minmax(0, 1fr); }
   .api-key-create-form .primary-button { width: 100%; }
   .auth-page { grid-template-columns: 1fr; align-content: start; }

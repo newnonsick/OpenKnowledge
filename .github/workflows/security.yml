@@ -50,33 +50,33 @@ jobs:
         with:
           context: .
           load: true
-          tags: kinbase-gateway:scan
+          tags: openknowledge-gateway:scan
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: web
           load: true
-          tags: kinbase-web:scan
+          tags: openknowledge-web:scan
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
-          image-ref: kinbase-gateway:scan
+          image-ref: openknowledge-gateway:scan
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
-          image-ref: kinbase-web:scan
+          image-ref: openknowledge-web:scan
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
       - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
         with:
-          image: kinbase-gateway:scan
+          image: openknowledge-gateway:scan
           format: spdx-json
           output-file: gateway.spdx.json
           artifact-name: gateway-sbom
       - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
         with:
-          image: kinbase-web:scan
+          image: openknowledge-web:scan
           format: spdx-json
           output-file: web.spdx.json
           artifact-name: web-sbom

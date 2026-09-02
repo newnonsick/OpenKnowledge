@@ -76,7 +76,7 @@ async def bootstrap_global_workspace(
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     settings_token = set_runtime_settings(app.state.settings)
-    logger.info("Starting AI Gateway infrastructure initialization...")
+    logger.info("Starting OpenKnowledge infrastructure initialization...")
     try:
         status = await get_schema_status_async(
             app.state.settings.database.url,
@@ -104,16 +104,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 extra={"exception_class": type(exc).__name__},
             )
 
-    logger.info("AI Gateway startup completed successfully.")
+    logger.info("OpenKnowledge startup completed successfully.")
     try:
         yield
     finally:
-        logger.info("Shutting down AI Gateway...")
+        logger.info("Shutting down OpenKnowledge...")
         await close_db_engine()
         await HttpLLMClient.close_shared_client()
         await HTTPEmbeddingClient.close_shared_client()
         reset_runtime_settings(settings_token)
-        logger.info("AI Gateway shutdown complete.")
+        logger.info("OpenKnowledge shutdown complete.")
 
 def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
 
@@ -127,9 +127,9 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
         )
 
     app = FastAPI(
-        title="Local AI Gateway with Internal Shared Knowledge",
+        title="OpenKnowledge",
         version="0.1.0",
-        description="Production-grade API-first Local AI Gateway with hybrid retrieval and shared knowledge",
+        description="OpenKnowledge is a production-grade API-first gateway with hybrid retrieval and shared knowledge",
         lifespan=lifespan,
     )
     app.state.settings = current_settings
@@ -214,7 +214,7 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
             "cookieAuth": {
                 "type": "apiKey",
                 "in": "cookie",
-                "name": "__Host-aigw-access",
+                "name": "__Host-openknowledge-access",
             },
             "bearerAuth": {
                 "type": "http",

@@ -105,7 +105,7 @@ async def test_first_login_change_password_accepts_local_console_origin_behind_p
                     "/api/v1/auth/password",
                     headers={
                         "Origin": "http://localhost:3000",
-                        "X-CSRF-Token": client.cookies.get("aigw-csrf"),
+                        "X-CSRF-Token": client.cookies.get("openknowledge-csrf"),
                     },
                     json={
                         "password": "Permanent-Password-934!",
@@ -173,9 +173,9 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                 assert first_login.json()["requires_password_change"] is True
                 assert first_login.headers["Cache-Control"] == "no-store"
                 set_cookies = first_login.headers.get_list("set-cookie")
-                assert any("__Host-aigw-access=" in value and "HttpOnly" in value and "Secure" in value and "Path=/" in value for value in set_cookies)
-                assert any("__Secure-aigw-refresh=" in value and "HttpOnly" in value and "Secure" in value and "Path=/api/v1/auth/refresh" in value for value in set_cookies)
-                csrf = client.cookies.get("aigw-csrf")
+                assert any("__Host-openknowledge-access=" in value and "HttpOnly" in value and "Secure" in value and "Path=/" in value for value in set_cookies)
+                assert any("__Secure-openknowledge-refresh=" in value and "HttpOnly" in value and "Secure" in value and "Path=/api/v1/auth/refresh" in value for value in set_cookies)
+                csrf = client.cookies.get("openknowledge-csrf")
                 assert csrf
 
                 weak_password_change = await client.post(
@@ -200,7 +200,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                 assert password_change.status_code == 200
                 assert password_change.json()["requires_mfa_enrollment"] is True
 
-                csrf = client.cookies.get("aigw-csrf")
+                csrf = client.cookies.get("openknowledge-csrf")
                 enrollment = await client.post(
                     "/api/v1/auth/mfa/totp/enroll",
                     headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
@@ -223,7 +223,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                 assert len(confirmation.json()["recovery_codes"]) == 10
                 recovery_codes = confirmation.json()["recovery_codes"]
                 initial_key = confirmation.json()["initial_api_key"]
-                assert initial_key["secret"].startswith("aigw_v1_")
+                assert initial_key["secret"].startswith("openknowledge_v1_")
                 assert initial_key["name"] == "First device"
                 assert initial_key["scopes"] == ["chat:write", "knowledge:read", "knowledge:write", "spaces:read"]
                 assert confirmation.headers["Cache-Control"] == "no-store"
@@ -233,7 +233,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                     assert len(stored_keys) == 1
                     assert initial_key["secret"] not in stored_keys[0].key_digest
 
-                csrf = client.cookies.get("aigw-csrf")
+                csrf = client.cookies.get("openknowledge-csrf")
                 stolen_session_enrollment = await client.post(
                     "/api/v1/auth/mfa/totp/enroll",
                     headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
@@ -278,25 +278,25 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
 
                 activity_response = await client.get(
                     "/private-activity",
-                    headers={"X-AIGW-Meaningful-Activity": "1"},
+                    headers={"X-OpenKnowledge-Meaningful-Activity": "1"},
                 )
                 assert activity_response.status_code == 200
                 async with factory() as activity_verification:
                     active_family = await activity_verification.get(SessionFamilyModel, activity_family_id)
                     assert active_family.idle_expires_at > datetime.now(timezone.utc) + timedelta(days=6)
 
-                old_refresh = client.cookies.get("__Secure-aigw-refresh")
-                csrf = client.cookies.get("aigw-csrf")
+                old_refresh = client.cookies.get("__Secure-openknowledge-refresh")
+                csrf = client.cookies.get("openknowledge-csrf")
                 refreshed = await client.post(
                     "/api/v1/auth/refresh",
                     headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
                     json={},
                 )
                 assert refreshed.status_code == 200
-                assert client.cookies.get("__Secure-aigw-refresh") != old_refresh
-                assert client.cookies.get("aigw-csrf") != csrf
+                assert client.cookies.get("__Secure-openknowledge-refresh") != old_refresh
+                assert client.cookies.get("openknowledge-csrf") != csrf
 
-                csrf = client.cookies.get("aigw-csrf")
+                csrf = client.cookies.get("openknowledge-csrf")
                 stepped_up = await client.post(
                     "/api/v1/auth/step-up",
                     headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
@@ -308,8 +308,8 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                 assert stepped_up.status_code == 200
                 assert stepped_up.json()["status"] == "reauthenticated"
 
-                previous_access = client.cookies.get("__Host-aigw-access")
-                csrf = client.cookies.get("aigw-csrf")
+                previous_access = client.cookies.get("__Host-openknowledge-access")
+                csrf = client.cookies.get("openknowledge-csrf")
                 password_change_without_mfa = await client.post(
                     "/api/v1/auth/password",
                     headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
@@ -335,7 +335,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                 assert password_change.json()["requires_password_change"] is False
                 assert password_change.json()["requires_mfa_enrollment"] is False
                 assert "initial_api_key" not in password_change.json()
-                assert client.cookies.get("__Host-aigw-access") != previous_access
+                assert client.cookies.get("__Host-openknowledge-access") != previous_access
 
                 current_session_response = await client.get("/private-activity")
                 assert current_session_response.status_code == 200
@@ -344,7 +344,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                 async with httpx.AsyncClient(
                     transport=previous_transport,
                     base_url="https://gateway.test",
-                    cookies={"__Host-aigw-access": previous_access},
+                    cookies={"__Host-openknowledge-access": previous_access},
                 ) as previous_client:
                     previous_session_response = await previous_client.get("/private-activity")
                     assert previous_session_response.status_code == 401
@@ -490,7 +490,7 @@ async def test_member_receives_exactly_one_personal_api_key_after_first_password
                     json={"username": "member", "password": temporary_password},
                 )
                 assert login.status_code == 200
-                csrf = client.cookies.get("aigw-csrf")
+                csrf = client.cookies.get("openknowledge-csrf")
                 changed = await client.post(
                     "/api/v1/auth/password",
                     headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
@@ -501,9 +501,9 @@ async def test_member_receives_exactly_one_personal_api_key_after_first_password
                 )
                 assert changed.status_code == 200
                 assert changed.json()["requires_mfa_enrollment"] is False
-                assert changed.json()["initial_api_key"]["secret"].startswith("aigw_v1_")
+                assert changed.json()["initial_api_key"]["secret"].startswith("openknowledge_v1_")
 
-                csrf = client.cookies.get("aigw-csrf")
+                csrf = client.cookies.get("openknowledge-csrf")
                 changed_again = await client.post(
                     "/api/v1/auth/password",
                     headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
@@ -591,7 +591,7 @@ async def test_proactive_member_mfa_enrollment_does_not_create_an_extra_api_key(
                     json={"username": "mfa-ready-member", "password": password},
                 )
                 assert login.status_code == 200
-                csrf = client.cookies.get("aigw-csrf")
+                csrf = client.cookies.get("openknowledge-csrf")
                 headers = {"Origin": "https://gateway.test", "X-CSRF-Token": csrf}
                 enrollment = await client.post(
                     "/api/v1/auth/mfa/totp/enroll",

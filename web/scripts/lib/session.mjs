@@ -60,8 +60,8 @@ export async function gatewayCookies(context) {
   const state = await context.storageState();
   const cookies = Object.fromEntries(state.cookies.map((cookie) => [cookie.name, cookie.value]));
   return {
-    cookie: `__Host-aigw-access=${cookies["__Host-aigw-access"]}; aigw-csrf=${cookies["aigw-csrf"]}`,
-    csrf: cookies["aigw-csrf"],
+    cookie: `__Host-openknowledge-access=${cookies["__Host-openknowledge-access"]}; openknowledge-csrf=${cookies["openknowledge-csrf"]}`,
+    csrf: cookies["openknowledge-csrf"],
   };
 }
 

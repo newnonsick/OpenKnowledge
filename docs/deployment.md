@@ -4,7 +4,7 @@ This document describes the production deployment defined by the repository, the
 
 ## Compose topology
 
-`compose.yaml` defines the production stack (project name `kinbase`) with six long-running or one-shot services:
+`compose.yaml` defines the production stack (project name `openknowledge`) with six long-running or one-shot services:
 
 | Service | Image | Notes |
 |---|---|---|

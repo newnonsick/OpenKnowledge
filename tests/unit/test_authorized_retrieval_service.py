@@ -110,7 +110,7 @@ async def test_resolves_scope_once_fuses_branches_and_preserves_stable_citations
     assert calls == 1
     assert response.explanation.effective_space_ids == ("family",)
     assert response.hits[0].candidate.unit_id == shared.unit_id
-    assert response.hits[0].candidate.citation_uri.startswith("aigw://spaces/family/knowledge/")
+    assert response.hits[0].candidate.citation_uri.startswith("openknowledge://spaces/family/knowledge/")
     assert response.hits[0].rank_score <= 1.0
     assert response.health.semantic_status == "active"
     assert response.health.embedding_coverage == 0.75

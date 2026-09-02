@@ -12,9 +12,9 @@ The exported OpenAPI document at `/openapi.json` is the authoritative contract, 
 
 Authentication:
 
-- Protocol and management endpoints accept `Authorization: Bearer <api-key>` (personal API keys, prefix `aigw_v`).
+- Protocol and management endpoints accept `Authorization: Bearer <api-key>` (personal API keys, prefix `openknowledge_v`).
 - Protocol endpoints additionally accept `x-api-key: <api-key>`.
-- Management endpoints called from the browser use the `__Host-aigw-access` session cookie set at login.
+- Management endpoints called from the browser use the `__Host-openknowledge-access` session cookie set at login.
 - The login and refresh endpoints are public; everything else except the health endpoints, `/docs`, `/openapi.json`, `/redoc`, `/favicon.ico`, and `/metrics` requires authentication.
 
 Errors use a consistent JSON shape:
@@ -50,7 +50,7 @@ Management list endpoints use server-side numeric pagination with `page` and `pa
 ```bash
 curl https://gateway.example.com/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer aigw_v.example-key" \
+  -H "Authorization: Bearer openknowledge_v.example-key" \
   -d '{
     "model": "default",
     "messages": [
@@ -68,7 +68,7 @@ Streaming: add `"stream": true`. Events are `chat.completion.chunk` objects term
 ```bash
 curl https://gateway.example.com/v1/messages \
   -H "Content-Type: application/json" \
-  -H "x-api-key: aigw_v.example-key" \
+  -H "x-api-key: openknowledge_v.example-key" \
   -d '{
     "model": "default",
     "max_tokens": 1024,
@@ -85,7 +85,7 @@ Set `"stream": true` to receive Anthropic SSE events. Thinking blocks pass throu
 
 ```bash
 curl https://gateway.example.com/v1/models \
-  -H "Authorization: Bearer aigw_v.example-key"
+  -H "Authorization: Bearer openknowledge_v.example-key"
 ```
 
 Returns the registered models. The `default` alias resolves to the configured backend model; unregistered names fall back to it rather than failing.
@@ -112,9 +112,9 @@ Cookies set by these endpoints:
 
 | Cookie | Purpose | Lifetime |
 |---|---|---|
-| `__Host-aigw-access` | Access token for API calls | 15 minutes |
-| `__Secure-aigw-refresh` | Refresh token | 7-day idle, 30-day absolute, path-scoped to `/api/v1/auth/refresh` |
-| `aigw-csrf` | CSRF token mirrored in the `X-CSRF-Token` header | Matches the refresh lifetime |
+| `__Host-openknowledge-access` | Access token for API calls | 15 minutes |
+| `__Secure-openknowledge-refresh` | Refresh token | 7-day idle, 30-day absolute, path-scoped to `/api/v1/auth/refresh` |
+| `openknowledge-csrf` | CSRF token mirrored in the `X-CSRF-Token` header | Matches the refresh lifetime |
 
 ## Management endpoints
 
@@ -162,7 +162,7 @@ Space roles are `owner`, `editor`, and `reader`. Owners manage membership and ca
 
 ```bash
 curl https://gateway.example.com/api/v1/retrieval/search \
-  -H "Authorization: Bearer aigw_v.example-key" \
+  -H "Authorization: Bearer openknowledge_v.example-key" \
   -H "Content-Type: application/json" \
   -d '{"query": "backup procedure", "semantic_policy": "prefer", "limit": 10}'
 ```
@@ -180,7 +180,7 @@ curl https://gateway.example.com/api/v1/retrieval/search \
 
 ```bash
 curl https://gateway.example.com/api/v1/sources/upload \
-  -H "Authorization: Bearer aigw_v.example-key" \
+  -H "Authorization: Bearer openknowledge_v.example-key" \
   -H "Idempotency-Key: 8f14e45f-ea0b-4ad3-9c56-2d1b9c81f003" \
   -F "file=@./architecture-notes.md" \
   -F "space_id=project-alpha" \

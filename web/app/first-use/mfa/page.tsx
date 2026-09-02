@@ -5,7 +5,7 @@ import { MfaEnrollmentForm } from "@/components/auth/mfa-enrollment-form";
 export default function MfaEnrollmentPage() {
   return (
     <main className="first-use-page">
-      <div className="first-use-brand"><span><Boxes aria-hidden="true" size={18} /></span>Kinbase</div>
+      <div className="first-use-brand"><span><Boxes aria-hidden="true" size={18} /></span>OpenKnowledge</div>
       <section className="first-use-layout">
         <div className="first-use-context">
           <span className="first-use-kicker"><ShieldCheck aria-hidden="true" size={15} />Super admin protection</span>

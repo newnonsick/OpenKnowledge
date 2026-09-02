@@ -10,7 +10,7 @@ function currentTheme(): Theme {
     return "light";
   }
   try {
-    const stored = localStorage.getItem("aigw-theme");
+    const stored = localStorage.getItem("openknowledge-theme");
     if (stored === "dark" || stored === "light") {
       return stored;
     }
@@ -30,18 +30,18 @@ export function ThemeToggle({ menuItem = false, onFocus, tabIndex }: { menuItem?
 
   useEffect(() => {
     const sync = () => setTheme(currentTheme());
-    window.addEventListener("aigw-theme-change", sync);
-    return () => window.removeEventListener("aigw-theme-change", sync);
+    window.addEventListener("openknowledge-theme-change", sync);
+    return () => window.removeEventListener("openknowledge-theme-change", sync);
   }, []);
 
   const apply = (next: Theme) => {
     document.documentElement.dataset.theme = next;
     try {
-      localStorage.setItem("aigw-theme", next);
+      localStorage.setItem("openknowledge-theme", next);
     } catch {
     }
     setTheme(next);
-    window.dispatchEvent(new Event("aigw-theme-change"));
+    window.dispatchEvent(new Event("openknowledge-theme-change"));
   };
   const next = theme === "dark" ? "light" : "dark";
   return (

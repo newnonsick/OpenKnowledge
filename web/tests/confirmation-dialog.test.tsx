@@ -48,8 +48,8 @@ function HandoffHarness() {
       setStepUpReturnTarget(modalReturnTargetFor(event));
       setStepUpOpen(true);
     };
-    window.addEventListener("aigw-step-up-required", openStepUp);
-    return () => window.removeEventListener("aigw-step-up-required", openStepUp);
+    window.addEventListener("openknowledge-step-up-required", openStepUp);
+    return () => window.removeEventListener("openknowledge-step-up-required", openStepUp);
   }, []);
 
   return (
@@ -169,7 +169,7 @@ describe("ConfirmationDialog", () => {
   it("cancels when identity verification opens", async () => {
     render(<StepUpHarness />);
 
-    window.dispatchEvent(new CustomEvent("aigw-step-up-required"));
+    window.dispatchEvent(new CustomEvent("openknowledge-step-up-required"));
 
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
   });
@@ -181,7 +181,7 @@ describe("ConfirmationDialog", () => {
     fireEvent.click(trigger);
     await waitFor(() => expect(screen.getByRole("button", { name: "Keep owner" })).toHaveFocus());
 
-    const stepUpEvent = new CustomEvent("aigw-step-up-required");
+    const stepUpEvent = new CustomEvent("openknowledge-step-up-required");
     expect(modalReturnTargetFor(stepUpEvent)).toBe(trigger);
     window.dispatchEvent(stepUpEvent);
     expect(modalReturnTargetFor(stepUpEvent)).toBe(trigger);

@@ -23,7 +23,7 @@ export class ApiError extends Error {
     this.code = payload.error?.code || "request_failed";
     this.requestId = payload.request_id;
     if (this.code === "recent_authentication_required" && typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("aigw-step-up-required"));
+      window.dispatchEvent(new CustomEvent("openknowledge-step-up-required"));
     }
   }
 }
@@ -53,7 +53,7 @@ let refreshInFlight: Promise<RefreshResponse> | null = null;
 let meaningfulActivityAt = 0;
 const refreshCoordinationWindow = 30 * 1000;
 const meaningfulActivityWindow = 2 * 60 * 1000;
-const refreshRecordKey = "aigw-last-session-refresh";
+const refreshRecordKey = "openknowledge-last-session-refresh";
 
 type SharedRefreshRecord = RefreshResponse & { completed_at: number };
 
@@ -87,7 +87,7 @@ export function noteMeaningfulActivity(): void {
 
 function markMeaningfulActivity(headers: Headers, path: string): void {
   if (!path.startsWith("/api/v1/auth/") && Date.now() - meaningfulActivityAt <= meaningfulActivityWindow) {
-    headers.set("X-AIGW-Meaningful-Activity", "1");
+    headers.set("X-OpenKnowledge-Meaningful-Activity", "1");
   }
 }
 
@@ -98,8 +98,8 @@ function csrfToken(): string | null {
   const value = document.cookie
     .split(";")
     .map((part) => part.trim())
-    .find((part) => part.startsWith("aigw-csrf="));
-  return value ? decodeURIComponent(value.slice("aigw-csrf=".length)) : null;
+    .find((part) => part.startsWith("openknowledge-csrf="));
+  return value ? decodeURIComponent(value.slice("openknowledge-csrf=".length)) : null;
 }
 
 async function decodeResponse<T>(response: Response): Promise<T> {
@@ -179,7 +179,7 @@ export function refreshSession(): Promise<RefreshResponse> {
       },
     }));
   }
-  const coordinated = navigator.locks.request("aigw-session-refresh", rotateSession) as unknown as Promise<RefreshResponse>;
+  const coordinated = navigator.locks.request("openknowledge-session-refresh", rotateSession) as unknown as Promise<RefreshResponse>;
   const inFlight = coordinated.finally(() => {
     refreshInFlight = null;
   });

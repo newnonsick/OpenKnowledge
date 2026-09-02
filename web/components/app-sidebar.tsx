@@ -80,12 +80,12 @@ export function AppSidebar({
     <aside className={`sidebar console-sidebar${menuOpen ? " is-open" : ""}`} id={drawerId} ref={drawerRef}>
       <div className="brand-lockup">
         <span className="brand-mark"><Boxes aria-hidden="true" size={17} /></span>
-        <span>Kinbase</span>
+        <span>OpenKnowledge</span>
         <button aria-label="Close navigation" className="mobile-menu-button close" onClick={onMenuClose} ref={closeRef} type="button"><X aria-hidden="true" size={18} /></button>
       </div>
 
       <div className="family-switcher console-family-card">
-        <span className="family-avatar">K</span>
+        <span className="family-avatar">O</span>
         <span className="family-copy">
           <strong>Family knowledge</strong>
           <small>{spaceCount === null ? "Loading spaces…" : `${spaceCount} accessible ${spaceCount === 1 ? "space" : "spaces"}`}</small>

@@ -1,6 +1,6 @@
-# AI Knowledge Gateway
+# OpenKnowledge
 
-AI Knowledge Gateway is a self-hosted service that sits between coding agents and LLM inference backends and gives them a persistent, shared knowledge base. It runs as three cooperating components: a FastAPI gateway API, a background worker, and a Next.js management console, backed by one PostgreSQL database with the pgvector extension. The Compose project name is `kinbase`; the Python package is `local-ai-gateway`.
+OpenKnowledge is a self-hosted service that sits between coding agents and LLM inference backends and gives them a persistent, shared knowledge base. It runs as three cooperating components: a FastAPI gateway API, a background worker, and a Next.js management console, backed by one PostgreSQL database with the pgvector extension. The Compose project name and Python package are both `openknowledge`.
 
 On the client side the gateway speaks the OpenAI chat protocol (`/v1/chat/completions`) and the Anthropic messages protocol (`/v1/messages`), both in JSON and Server-Sent Events streaming mode. Tools such as Cursor, Continue, or Roo Code, and any custom harness, can point at it without code changes. On the backend side it forwards traffic to any OpenAI-compatible inference server, for example vLLM, Ollama, or a hosted endpoint, and to any OpenAI-compatible embeddings endpoint.
 

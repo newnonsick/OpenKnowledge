@@ -7,7 +7,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
 
 describe("MfaEnrollmentForm", () => {
   it("reveals recovery codes only after a valid authenticator confirmation", async () => {
-    document.cookie = "aigw-csrf=test-csrf; path=/";
+    document.cookie = "openknowledge-csrf=test-csrf; path=/";
     vi.stubGlobal(
       "fetch",
       vi
@@ -26,7 +26,7 @@ describe("MfaEnrollmentForm", () => {
                 id: "key-1",
                 public_id: "public-1",
                 name: "First device",
-                secret: "aigw_v1_public-1_secret",
+                secret: "openknowledge_v1_public-1_secret",
                 scopes: ["chat:write", "knowledge:read"],
               },
             }),
@@ -42,7 +42,7 @@ describe("MfaEnrollmentForm", () => {
 
     await waitFor(() => expect(screen.getByText("code-one")).toBeInTheDocument());
     expect(screen.getByText("code-two")).toBeInTheDocument();
-    expect(screen.getByText("aigw_v1_public-1_secret")).toBeInTheDocument();
+    expect(screen.getByText("openknowledge_v1_public-1_secret")).toBeInTheDocument();
     expect(screen.getByText(/shown only once/i)).toBeInTheDocument();
   });
 });

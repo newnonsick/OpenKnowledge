@@ -1,4 +1,4 @@
-name: kinbase
+name: openknowledge
 services:
   postgres:
     image: pgvector/pgvector:pg17@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f
@@ -7,7 +7,7 @@ services:
     mem_limit: 2g
     pids_limit: 256
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-kinbase}
+      POSTGRES_DB: ${POSTGRES_DB:-openknowledge}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       GATEWAY_RUNTIME_DB_PASSWORD: ${GATEWAY_RUNTIME_DB_PASSWORD:?GATEWAY_RUNTIME_DB_PASSWORD is required}
@@ -33,7 +33,7 @@ services:
     pids_limit: 128
     environment:
       ENVIRONMENT: production
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kinbase}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-openknowledge}
     env_file: ["${APP_ENV_FILE:-.env.production}"]
     command: ["sh", "-c", "python -m src.gateway.cli migrate && python -m src.gateway.cli ensure-embedding-generation"]
     depends_on:
@@ -53,7 +53,7 @@ services:
     pids_limit: 64
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-    command: ["psql", "--host=postgres", "--username=${POSTGRES_USER:-postgres}", "--dbname=${POSTGRES_DB:-kinbase}", "--file=/grant-runtime.sql"]
+    command: ["psql", "--host=postgres", "--username=${POSTGRES_USER:-postgres}", "--dbname=${POSTGRES_DB:-openknowledge}", "--file=/grant-runtime.sql"]
     volumes:
       - ./deploy/grant-runtime.sql:/grant-runtime.sql:ro
     depends_on:
@@ -74,8 +74,8 @@ services:
     pids_limit: 256
     env_file: ["${APP_ENV_FILE:-.env.production}"]
     environment:
-      DATABASE_URL: postgresql+asyncpg://gateway_runtime:${GATEWAY_RUNTIME_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-kinbase}
-      WORKER_DATABASE_URL: postgresql+asyncpg://gateway_worker:${GATEWAY_WORKER_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-kinbase}
+      DATABASE_URL: postgresql+asyncpg://gateway_runtime:${GATEWAY_RUNTIME_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-openknowledge}
+      WORKER_DATABASE_URL: postgresql+asyncpg://gateway_worker:${GATEWAY_WORKER_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-openknowledge}
       HOST: 0.0.0.0
       PORT: 8000
       STORAGE_DIR: /data/storage
@@ -104,8 +104,8 @@ services:
     command: ["python", "-m", "src.gateway.worker"]
     env_file: ["${APP_ENV_FILE:-.env.production}"]
     environment:
-      DATABASE_URL: postgresql+asyncpg://gateway_runtime:${GATEWAY_RUNTIME_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-kinbase}
-      WORKER_DATABASE_URL: postgresql+asyncpg://gateway_worker:${GATEWAY_WORKER_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-kinbase}
+      DATABASE_URL: postgresql+asyncpg://gateway_runtime:${GATEWAY_RUNTIME_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-openknowledge}
+      WORKER_DATABASE_URL: postgresql+asyncpg://gateway_worker:${GATEWAY_WORKER_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-openknowledge}
       STORAGE_DIR: /data/storage
     depends_on:
       gateway:

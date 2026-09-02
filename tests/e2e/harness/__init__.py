@@ -1,5 +1,5 @@
 """
-E2E Test Harness Package for Local AI Gateway.
+E2E Test Harness Package for OpenKnowledge.
 
 Exports core test infrastructure components:
 - Upstream Mock Server (LLM and Embeddings)

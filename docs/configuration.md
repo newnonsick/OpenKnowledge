@@ -152,7 +152,7 @@ These variables are consumed by `compose.yaml` and the deployment scripts rather
 
 | Variable | Used by | Description |
 |---|---|---|
-| `POSTGRES_DB` | Compose | Database name, default `kinbase`. |
+| `POSTGRES_DB` | Compose | Database name, default `openknowledge`. |
 | `POSTGRES_USER` | Compose | PostgreSQL admin user created by the image, default `postgres`. |
 | `POSTGRES_PASSWORD` | Compose | PostgreSQL admin password (required). |
 | `GATEWAY_RUNTIME_DB_PASSWORD` | Compose | Password of the `gateway_runtime` role created by `deploy/postgres-init.sh` (required). |

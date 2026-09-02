@@ -79,7 +79,7 @@ export function ConsoleShell({ actions, children, description, eyebrow, member, 
       <main className="main-canvas console-main">
         <header className="console-mobile-bar">
           <button aria-controls="console-navigation" aria-expanded={menuOpen} aria-label="Open navigation" className="mobile-menu-button" onClick={() => setMenuOpen(true)} ref={triggerRef} type="button"><Menu aria-hidden="true" size={19} /></button>
-          <span><Boxes aria-hidden="true" size={17} /> Kinbase</span>
+          <span><Boxes aria-hidden="true" size={17} /> OpenKnowledge</span>
         </header>
         <div className="console-content">
           <header className="console-page-header">

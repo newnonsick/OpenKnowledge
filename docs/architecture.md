@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the runtime components of AI Knowledge Gateway, how they communicate, and how data flows through the system. All statements are derived from the implementation under `src/gateway`, `web/`, and `compose.yaml`.
+This document describes the runtime components of OpenKnowledge, how they communicate, and how data flows through the system. All statements are derived from the implementation under `src/gateway`, `web/`, and `compose.yaml`.
 
 ## Components
 
@@ -101,7 +101,7 @@ Writes are versioned: the first save creates revision 1, every update appends an
 The management API under `/api/v1` and the web console share one authentication model:
 
 - Browser sessions are issued by `POST /api/v1/auth/login` after password verification (plus TOTP or recovery code for super admins) and are represented by three cookies: an access cookie, a path-scoped refresh cookie, and a CSRF cookie. Refresh tokens rotate on every use with reuse detection, and a session family has a 7-day idle and 30-day absolute lifetime.
-- Personal API keys (prefix `aigw_v`) authenticate the same management endpoints when sent as bearer tokens, and the agent-facing `/v1` endpoints exclusively. Keys are stored as peppered hashes and carry scopes.
+- Personal API keys (prefix `openknowledge_v`) authenticate the same management endpoints when sent as bearer tokens, and the agent-facing `/v1` endpoints exclusively. Keys are stored as peppered hashes and carry scopes.
 - Authorization combines a system role (`super_admin` or `member`) with per-space roles (`owner`, `editor`, `reader`). The mapping from roles to actions lives in `src/gateway/domain/authorization.py`; row-level security enforces space isolation in the database itself.
 
 Sensitive operations additionally require a recent step-up: the caller must have re-authenticated within the last 10 minutes via `POST /api/v1/auth/step-up`.

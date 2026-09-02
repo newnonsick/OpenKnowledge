@@ -108,8 +108,8 @@ export function ConfirmationDialog({
       return;
     }
     const closeForStepUp = () => onCancel();
-    window.addEventListener("aigw-step-up-required", closeForStepUp);
-    return () => window.removeEventListener("aigw-step-up-required", closeForStepUp);
+    window.addEventListener("openknowledge-step-up-required", closeForStepUp);
+    return () => window.removeEventListener("openknowledge-step-up-required", closeForStepUp);
   }, [onCancel, open]);
 
   return (

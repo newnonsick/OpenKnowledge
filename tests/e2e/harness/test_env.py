@@ -1,5 +1,5 @@
 """
-Standalone Test Environment Harness for Local AI Gateway E2E Tests.
+Standalone Test Environment Harness for OpenKnowledge E2E Tests.
 
 Provides:
 - TestEnvironment context manager

@@ -32,7 +32,7 @@ def test_openapi_document_is_served():
     live = httpx.Client(base_url=BASE_URL, timeout=30.0)
     try:
         schema = live.get("/openapi.json").json()
-        assert schema["info"]["title"].startswith("Local AI Gateway")
+        assert schema["info"]["title"] == "OpenKnowledge"
         for required in ("/v1/chat/completions", "/v1/messages", "/api/v1/knowledge"):
             assert required in schema["paths"]
     finally:
@@ -77,7 +77,7 @@ def test_models_registry_lists_configured_backend_model(api_key: str):
         models = listing.json()["data"]
         assert models, "model registry must not be empty"
 
-        default_model = os.environ.get("AIGW_LIVE_EXPECTED_MODEL")
+        default_model = os.environ.get("OPENKNOWLEDGE_LIVE_EXPECTED_MODEL")
         if default_model:
             ids = {m["id"] for m in models}
             assert default_model in ids

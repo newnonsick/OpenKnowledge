@@ -228,20 +228,20 @@ async def test_personal_key_and_website_cookie_bind_database_principal() -> None
                 session_response = await client.get(
                     "/principal",
                     cookies={
-                        "__Host-aigw-access": website_session.access_token.reveal()
+                        "__Host-openknowledge-access": website_session.access_token.reveal()
                     },
                 )
                 rejected_unsafe_response = await client.post(
                     "/principal",
                     cookies={
-                        "__Host-aigw-access": website_session.access_token.reveal()
+                        "__Host-openknowledge-access": website_session.access_token.reveal()
                     },
                     json={},
                 )
                 accepted_unsafe_response = await client.post(
                     "/principal",
                     cookies={
-                        "__Host-aigw-access": website_session.access_token.reveal()
+                        "__Host-openknowledge-access": website_session.access_token.reveal()
                     },
                     headers={
                         "Origin": "http://localhost:3000",

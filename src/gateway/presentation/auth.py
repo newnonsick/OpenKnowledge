@@ -201,7 +201,7 @@ class APIKeyAuthMiddleware:
             "authorization"
         )
         bearer_token = self._bearer_token(auth_header)
-        if bearer_token and bearer_token.startswith("aigw_v"):
+        if bearer_token and bearer_token.startswith("openknowledge_v"):
             if self._api_key_codec is None:
                 raise AuthenticationException("Invalid API key provided.")
             factory = self._session_factory or get_session_factory()
@@ -210,7 +210,7 @@ class APIKeyAuthMiddleware:
                     bearer_token
                 )
         if bearer_token is None:
-            access_token = request.cookies.get("__Host-aigw-access")
+            access_token = request.cookies.get("__Host-openknowledge-access")
             if access_token:
                 factory = self._session_factory or get_session_factory()
                 async with factory.begin() as session:
@@ -223,7 +223,7 @@ class APIKeyAuthMiddleware:
                             session,
                             principal,
                         )
-                    if request.headers.get("X-AIGW-Meaningful-Activity") == "1":
+                    if request.headers.get("X-OpenKnowledge-Meaningful-Activity") == "1":
                         await self._record_cookie_activity(service, session, principal)
                     return principal
         if not self._legacy_api_keys_enabled:

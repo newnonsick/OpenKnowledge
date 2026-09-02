@@ -21,7 +21,7 @@ const displayFont = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Kinbase — Family knowledge gateway",
+  title: "OpenKnowledge — Family knowledge gateway",
   description: "A private, shared knowledge console for your family.",
 };
 
@@ -30,7 +30,7 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-const themeBootstrap = `(function(){try{var stored=localStorage.getItem("aigw-theme");var theme=stored==="dark"||stored==="light"?stored:window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.setAttribute("data-theme",theme);}catch(e){}})();`;
+const themeBootstrap = `(function(){try{var stored=localStorage.getItem("openknowledge-theme");var theme=stored==="dark"||stored==="light"?stored:window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.setAttribute("data-theme",theme);}catch(e){}})();`;
 
 export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   await connection();

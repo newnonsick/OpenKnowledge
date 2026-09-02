@@ -1030,7 +1030,7 @@ describe("management console", () => {
       }
       if (path === "/api/v1/api-keys" && options?.method === "POST") {
         created = true;
-        return { id: "key-1", public_id: "pk_live_1", secret: "aigw_v1_once_only", scopes: ["knowledge:read"] } as never;
+        return { id: "key-1", public_id: "pk_live_1", secret: "openknowledge_v1_once_only", scopes: ["knowledge:read"] } as never;
       }
       if (path.startsWith("/api/v1/api-keys")) {
         return { items: created ? [{ id: "key-1", public_id: "pk_live_1", name: "Laptop", status: "active", scopes: ["knowledge:read"], created_at: "2026-08-20T12:00:00Z" }] : [] } as never;
@@ -1050,7 +1050,7 @@ describe("management console", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Write knowledge" }));
     fireEvent.click(screen.getByRole("button", { name: "Create API key" }));
 
-    expect(await screen.findByText("aigw_v1_once_only")).toBeInTheDocument();
+    expect(await screen.findByText("openknowledge_v1_once_only")).toBeInTheDocument();
     expect(screen.getByText(/copy this key now/i)).toBeInTheDocument();
     expect(apiRequest).toHaveBeenCalledWith("/api/v1/api-keys", {
       body: { name: "Laptop", scopes: ["knowledge:read", "knowledge:write"] },

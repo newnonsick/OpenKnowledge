@@ -70,7 +70,7 @@ def test_committed_openapi_contract_matches_application() -> None:
 def test_openapi_declares_public_and_protected_authentication_contracts() -> None:
     schema = create_app().openapi()
     schemes = schema["components"]["securitySchemes"]
-    assert schemes["cookieAuth"] == {"type": "apiKey", "in": "cookie", "name": "__Host-aigw-access"}
+    assert schemes["cookieAuth"] == {"type": "apiKey", "in": "cookie", "name": "__Host-openknowledge-access"}
     assert schemes["bearerAuth"] == {"type": "http", "scheme": "bearer"}
     assert "security" not in schema["paths"]["/api/v1/auth/login"]["post"]
     assert schema["paths"]["/api/v1/auth/step-up"]["post"]["security"] == [{"cookieAuth": []}]

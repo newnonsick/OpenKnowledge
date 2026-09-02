@@ -17,9 +17,9 @@ PYTHON = str(PROJECT_ROOT / "venv" / "Scripts" / "python.exe")
 if not Path(PYTHON).exists():
     PYTHON = sys.executable
 
-BASE_URL = os.environ.get("AIGW_LIVE_BASE_URL", "http://127.0.0.1:8000")
-ADMIN_USERNAME = os.environ.get("AIGW_LIVE_ADMIN_USERNAME", "admin")
-BROWSER_ORIGIN = os.environ.get("AIGW_LIVE_ORIGIN", "http://localhost:3000")
+BASE_URL = os.environ.get("OPENKNOWLEDGE_LIVE_BASE_URL", "http://127.0.0.1:8000")
+ADMIN_USERNAME = os.environ.get("OPENKNOWLEDGE_LIVE_ADMIN_USERNAME", "admin")
+BROWSER_ORIGIN = os.environ.get("OPENKNOWLEDGE_LIVE_ORIGIN", "http://localhost:3000")
 
 
 class LiveClient:
@@ -49,7 +49,7 @@ class LiveClient:
 
     @property
     def csrf_token(self) -> Optional[str]:
-        return self.cookies.get("aigw-csrf")
+        return self.cookies.get("openknowledge-csrf")
 
     def use_session(self, other: "LiveClient") -> None:
         self.cookies = dict(other.cookies)
@@ -263,7 +263,7 @@ def complete_admin_bootstrap(base_url: str, username: str) -> tuple[LiveClient, 
     )
     assert created_key.status_code == 201, created_key.text
     key_body = created_key.json()
-    assert key_body["secret"].startswith("aigw_v")
+    assert key_body["secret"].startswith("openknowledge_v")
 
     state = {
         "username": username,

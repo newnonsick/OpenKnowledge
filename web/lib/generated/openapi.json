@@ -4918,14 +4918,14 @@
       },
       "cookieAuth": {
         "in": "cookie",
-        "name": "__Host-aigw-access",
+        "name": "__Host-openknowledge-access",
         "type": "apiKey"
       }
     }
   },
   "info": {
-    "description": "Production-grade API-first Local AI Gateway with hybrid retrieval and shared knowledge",
-    "title": "Local AI Gateway with Internal Shared Knowledge",
+    "description": "OpenKnowledge is a production-grade API-first gateway with hybrid retrieval and shared knowledge",
+    "title": "OpenKnowledge",
     "version": "0.1.0"
   },
   "openapi": "3.1.0",

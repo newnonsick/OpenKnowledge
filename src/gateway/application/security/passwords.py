@@ -42,7 +42,7 @@ class PasswordPolicy:
             username_folded = unicodedata.normalize("NFC", username.strip()).casefold()
             if len(username_folded) >= 3 and username_folded in folded:
                 raise ValueError("Password must not contain the username")
-        if "ai knowledge gateway" in folded or "knowledgegateway" in folded:
+        if "openknowledge" in folded or "open knowledge" in folded:
             raise ValueError("Password must not contain the product name")
         if not any(character.islower() for character in normalized):
             raise ValueError("Password must include a lowercase letter")

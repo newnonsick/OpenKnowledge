@@ -1,5 +1,5 @@
 """
-Standalone E2E Test Runner for Local AI Gateway.
+Standalone E2E Test Runner for OpenKnowledge.
 
 Executes tests tier-by-tier or in aggregate, maps test cases against all 29 features,
 validates pass/fail thresholds, and produces structured terminal, JSON, and Markdown reports.
@@ -460,7 +460,7 @@ class ReportFormatter:
         )
 
         print("\n" + "=" * 80)
-        print(f"{c_bold}{c_cyan}LOCAL AI GATEWAY -- E2E TEST EXECUTION REPORT{c_reset}")
+        print(f"{c_bold}{c_cyan}OPENKNOWLEDGE -- E2E TEST EXECUTION REPORT{c_reset}")
         print("=" * 80)
         print(f"Timestamp:      {summary.timestamp}")
         print(f"Total Tests:    {summary.total_tests}")
@@ -649,7 +649,7 @@ class ReportFormatter:
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Local AI Gateway E2E Test Suite Runner",
+        description="OpenKnowledge E2E Test Suite Runner",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(

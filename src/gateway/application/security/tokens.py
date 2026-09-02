@@ -71,7 +71,7 @@ class APIKeyCodec:
         public_id = secrets.token_hex(8)
         secret_part = secrets.token_urlsafe(32)
         version = self._active_pepper_version
-        raw = f"aigw_v{version}_{public_id}_{secret_part}"
+        raw = f"openknowledge_v{version}_{public_id}_{secret_part}"
         return IssuedAPIKey(
             public_id,
             SecretValue(raw),
@@ -83,7 +83,7 @@ class APIKeyCodec:
         parts = raw.split("_", 3)
         if (
             len(parts) != 4
-            or parts[0] != "aigw"
+            or parts[0] != "openknowledge"
             or not parts[1].startswith("v")
             or not parts[1][1:].isdigit()
             or not parts[2]

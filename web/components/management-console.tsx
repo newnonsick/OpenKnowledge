@@ -780,7 +780,7 @@ export function KnowledgeConsole() {
           <span className="action-panel-icon violet"><BookOpen aria-hidden="true" size={20} /></span>
           <p className="console-eyebrow">Manual capture</p>
           <h2>Capture knowledge</h2>
-          <p>Use plain language. Kinbase keeps the revision history and makes the active version searchable.</p>
+          <p>Use plain language. OpenKnowledge keeps the revision history and makes the active version searchable.</p>
           <form className="console-form" onSubmit={create}>
             <label htmlFor="knowledge-space">Space</label>
             <select id="knowledge-space" onChange={(event) => setSpaceId(event.target.value)} required value={spaceId}>
@@ -902,7 +902,7 @@ export function ExploreConsole() {
           <input aria-label="Search query" autoFocus onChange={(event) => setQuery(event.target.value)} placeholder="Ask for a detail, process, place, or decision…" type="search" value={query} />
           <button aria-label="Search knowledge" disabled={searching} type="submit">{searching ? <LoaderCircle className="spin" size={17} /> : <ArrowUpRight size={17} />}</button>
         </form>
-        <p>Kinbase fans the query out only to authorized spaces, merges the candidates, and returns a single ranked result set.</p>
+        <p>OpenKnowledge fans the query out only to authorized spaces, merges the candidates, and returns a single ranked result set.</p>
       </section>
       {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
       <p className="visually-hidden" role="status">{searching ? "Searching…" : result ? `${result.hits.length} matches found` : ""}</p>
@@ -1448,7 +1448,7 @@ export function PeopleConsole() {
                 <span className="action-panel-icon violet"><UserPlus aria-hidden="true" size={20} /></span>
                 <p className="console-eyebrow">Super admin only</p>
                 <h2>Create a member</h2>
-                <p>Kinbase generates a strong one-time password. No social login or self-registration is exposed.</p>
+                <p>OpenKnowledge generates a strong one-time password. No social login or self-registration is exposed.</p>
                 <form className="console-form" onSubmit={create}>
                   <label htmlFor="member-username">Username</label>
                   <input autoComplete="off" id="member-username" maxLength={64} onChange={(event) => setUsername(event.target.value)} required value={username} />

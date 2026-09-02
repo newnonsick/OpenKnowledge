@@ -6,8 +6,8 @@ This document describes authentication, authorization, session handling, secrets
 
 Every authenticated request resolves to a principal of one of these kinds:
 
-- Session principal: a logged-in member, authenticated by the `__Host-aigw-access` cookie.
-- API key principal: a member or automation actor, authenticated by a personal API key (`aigw_v` prefix) in `Authorization: Bearer` or `x-api-key`.
+- Session principal: a logged-in member, authenticated by the `__Host-openknowledge-access` cookie.
+- API key principal: a member or automation actor, authenticated by a personal API key (`openknowledge_v` prefix) in `Authorization: Bearer` or `x-api-key`.
 - Legacy static key principal: development-only static keys, active only when explicitly enabled.
 
 The authentication middleware (`src/gateway/presentation/auth.py`) processes all non-public paths. Public paths are exactly:
@@ -46,7 +46,7 @@ Session issuance and rotation live in `SessionService` with these policy values:
 
 Mechanics:
 
-- Login sets three cookies: `__Host-aigw-access` (HttpOnly, Secure, SameSite=Strict), `__Secure-aigw-refresh` (HttpOnly, Secure, SameSite=Strict, path-scoped to `/api/v1/auth/refresh`), and `aigw-csrf` (readable by the console, mirrored in the `X-CSRF-Token` header).
+- Login sets three cookies: `__Host-openknowledge-access` (HttpOnly, Secure, SameSite=Strict), `__Secure-openknowledge-refresh` (HttpOnly, Secure, SameSite=Strict, path-scoped to `/api/v1/auth/refresh`), and `openknowledge-csrf` (readable by the console, mirrored in the `X-CSRF-Token` header).
 - Refresh rotation is one-time use with reuse detection. Presenting an already-rotated token fails the session; a short grace window tolerates racing tabs.
 - Authenticated session mutations verify the `Origin` header and CSRF header. Production uses the exact origin configured by `PUBLIC_BASE_URL`; non-production accepts only the two local console origins when no public URL is configured.
 - Session families group related access and refresh credentials, support revocation of a whole family (sign out a device), and are listed and revocable through the management API.

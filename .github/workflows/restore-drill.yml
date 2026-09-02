@@ -44,17 +44,17 @@ jobs:
       - run: pytest tests/integration/test_storage_consistency.py -q
       - run: |
           set -eu
-          mkdir -p /tmp/kinbase-backups /tmp/kinbase-source-storage /tmp/kinbase-restore-storage /tmp/kinbase-metrics
-          age-keygen -o /tmp/kinbase-age-key.txt
-          recipient="$(age-keygen -y /tmp/kinbase-age-key.txt)"
-          python -m scripts.restore_drill seed --database-url "$DATABASE_URL" --storage-dir /tmp/kinbase-source-storage
-          BACKUP_DIR=/tmp/kinbase-backups BACKUP_AGE_RECIPIENT="$recipient" STORAGE_DIR=/tmp/kinbase-source-storage BACKUP_WRITERS_QUIESCED=true BACKUP_METRICS_FILE=/tmp/kinbase-metrics/backup.prom sh scripts/backup.sh
+          mkdir -p /tmp/openknowledge-backups /tmp/openknowledge-source-storage /tmp/openknowledge-restore-storage /tmp/openknowledge-metrics
+          age-keygen -o /tmp/openknowledge-age-key.txt
+          recipient="$(age-keygen -y /tmp/openknowledge-age-key.txt)"
+          python -m scripts.restore_drill seed --database-url "$DATABASE_URL" --storage-dir /tmp/openknowledge-source-storage
+          BACKUP_DIR=/tmp/openknowledge-backups BACKUP_AGE_RECIPIENT="$recipient" STORAGE_DIR=/tmp/openknowledge-source-storage BACKUP_WRITERS_QUIESCED=true BACKUP_METRICS_FILE=/tmp/openknowledge-metrics/backup.prom sh scripts/backup.sh
           psql "$BACKUP_DATABASE_URL" --set=ON_ERROR_STOP=1 --command='CREATE DATABASE gateway_restore'
-          backup_file="$(find /tmp/kinbase-backups -type f -name '*.tar.age' -print -quit)"
-          BACKUP_FILE="$backup_file" RESTORE_STORAGE_DIR=/tmp/kinbase-restore-storage BACKUP_AGE_IDENTITY=/tmp/kinbase-age-key.txt RESTORE_CONFIRM_ISOLATED=true RESTORE_EXPECTED_DATABASE=gateway_restore sh scripts/restore.sh
-          python -m scripts.restore_drill verify --database-url "$RESTORE_DATABASE_URL" --storage-dir /tmp/kinbase-restore-storage
+          backup_file="$(find /tmp/openknowledge-backups -type f -name '*.tar.age' -print -quit)"
+          BACKUP_FILE="$backup_file" RESTORE_STORAGE_DIR=/tmp/openknowledge-restore-storage BACKUP_AGE_IDENTITY=/tmp/openknowledge-age-key.txt RESTORE_CONFIRM_ISOLATED=true RESTORE_EXPECTED_DATABASE=gateway_restore sh scripts/restore.sh
+          python -m scripts.restore_drill verify --database-url "$RESTORE_DATABASE_URL" --storage-dir /tmp/openknowledge-restore-storage
           test "$(psql "$RESTORE_DATABASE_URL" -AtX -c 'SELECT count(*) FROM alembic_version')" = "1"
           python -m scripts.recovery_verify --database-url "$RESTORE_DATABASE_URL"
-          python -m scripts.recovery_metric restore --output /tmp/kinbase-metrics/restore.prom
-          grep -q gateway_backup_last_success_unixtime /tmp/kinbase-metrics/backup.prom
-          grep -q gateway_restore_test_last_success_unixtime /tmp/kinbase-metrics/restore.prom
+          python -m scripts.recovery_metric restore --output /tmp/openknowledge-metrics/restore.prom
+          grep -q gateway_backup_last_success_unixtime /tmp/openknowledge-metrics/backup.prom
+          grep -q gateway_restore_test_last_success_unixtime /tmp/openknowledge-metrics/restore.prom

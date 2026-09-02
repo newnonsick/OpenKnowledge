@@ -53,7 +53,7 @@ def test_password_policy_enforces_spec_maximum_and_identity_terms() -> None:
     with pytest.raises(ValueError, match="username"):
         policy.validate("alice-is-my-password", username="Alice")
     with pytest.raises(ValueError, match="product"):
-        policy.validate("ai knowledge gateway forever")
+        policy.validate("openknowledge forever")
 
 
 def test_passwords_are_normalized_with_nfc_before_hash_and_verify() -> None:
@@ -86,7 +86,7 @@ def test_opaque_and_api_key_tokens_store_only_digests() -> None:
     issued = key_codec.issue()
     parsed = key_codec.parse(issued.secret.reveal())
     assert parsed.public_id == issued.public_id
-    assert issued.secret.reveal().startswith("aigw_v1_")
+    assert issued.secret.reveal().startswith("openknowledge_v1_")
     assert key_codec.verify(issued.secret.reveal(), issued.digest) is True
     assert key_codec.verify(issued.secret.reveal() + "x", issued.digest) is False
 
@@ -103,7 +103,7 @@ def test_api_key_codec_uses_versioned_pepper_keyring() -> None:
     assert issued.secret.reveal() not in repr(parsed)
     with pytest.raises(TypeError):
         json.dumps(asdict(parsed))
-    assert issued.secret.reveal().startswith("aigw_v2_")
+    assert issued.secret.reveal().startswith("openknowledge_v2_")
     assert codec.verify(
         issued.secret.reveal(),
         issued.digest,

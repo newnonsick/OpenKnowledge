@@ -4,7 +4,7 @@ import { ApiError, apiMultipart, apiRequest, contractClient, contractData, refre
 
 describe("apiRequest", () => {
   beforeEach(() => {
-    document.cookie = "aigw-csrf=test-csrf; path=/";
+    document.cookie = "openknowledge-csrf=test-csrf; path=/";
     localStorage.clear();
     Object.defineProperty(navigator, "locks", {
       configurable: true,
@@ -78,7 +78,7 @@ describe("apiRequest", () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: "invalid_api_key" } }), { status: 401 }))
       .mockImplementationOnce(async () => {
-        document.cookie = "aigw-csrf=rotated-csrf; path=/";
+        document.cookie = "openknowledge-csrf=rotated-csrf; path=/";
         return new Response(JSON.stringify({ status: "refreshed", access_expires_at: "2026-08-20T12:15:00Z" }), { status: 200 });
       })
       .mockResolvedValueOnce(new Response(JSON.stringify({ job_state: "queued" }), { status: 202 }));

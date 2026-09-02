@@ -133,8 +133,8 @@ export function SessionGate({ children }: { children: ReactNode }) {
         setStepUpOpen(true);
       });
     };
-    window.addEventListener("aigw-step-up-required", requireStepUp);
-    return () => window.removeEventListener("aigw-step-up-required", requireStepUp);
+    window.addEventListener("openknowledge-step-up-required", requireStepUp);
+    return () => window.removeEventListener("openknowledge-step-up-required", requireStepUp);
   }, []);
 
   const stepUpTitleId = useId();

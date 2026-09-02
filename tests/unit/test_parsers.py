@@ -111,11 +111,11 @@ def test_pdf_parser_can_parse():
 def test_json_parser_valid_object():
     """Verify parsing valid JSON object."""
     parser = JSONParser()
-    data = {"name": "AI Gateway", "version": "1.0.0", "features": ["rag", "occ", "streaming"]}
+    data = {"name": "OpenKnowledge", "version": "1.0.0", "features": ["rag", "occ", "streaming"]}
     raw_bytes = json.dumps(data).encode("utf-8")
     result = parser.parse(raw_bytes, "config.json")
     parsed_back = json.loads(result)
-    assert parsed_back["name"] == "AI Gateway"
+    assert parsed_back["name"] == "OpenKnowledge"
     assert len(parsed_back["features"]) == 3
 
 

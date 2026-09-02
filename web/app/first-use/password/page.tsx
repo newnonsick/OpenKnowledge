@@ -5,7 +5,7 @@ import { PasswordChangeForm } from "@/components/auth/password-change-form";
 export default function PasswordChangePage() {
   return (
     <main className="first-use-page">
-      <div className="first-use-brand"><span><Boxes aria-hidden="true" size={18} /></span>Kinbase</div>
+      <div className="first-use-brand"><span><Boxes aria-hidden="true" size={18} /></span>OpenKnowledge</div>
       <section className="first-use-layout">
         <div className="first-use-context">
           <span className="first-use-kicker"><ShieldCheck aria-hidden="true" size={15} />Required security setup</span>

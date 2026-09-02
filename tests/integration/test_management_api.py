@@ -173,7 +173,7 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
             async with httpx.AsyncClient(
                 transport=transport,
                 base_url="https://gateway.test",
-                cookies={"__Host-aigw-access": member_session.access_token.reveal()},
+                cookies={"__Host-openknowledge-access": member_session.access_token.reveal()},
             ) as member_client:
                 member_headers = {
                     "Origin": "https://gateway.test",
@@ -359,7 +359,7 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 )
                 assert created_key.status_code == 201
                 raw_key = created_key.json()["secret"]
-                assert raw_key.startswith("aigw_v1_")
+                assert raw_key.startswith("openknowledge_v1_")
                 assert created_key.headers["Cache-Control"] == "no-store"
 
                 keys = await member_client.get("/api/v1/api-keys")
@@ -396,7 +396,7 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
             async with httpx.AsyncClient(
                 transport=transport,
                 base_url="https://gateway.test",
-                cookies={"__Host-aigw-access": admin_session.access_token.reveal()},
+                cookies={"__Host-openknowledge-access": admin_session.access_token.reveal()},
             ) as admin_client:
                 admin_headers = {
                     "Origin": "https://gateway.test",
@@ -705,7 +705,7 @@ async def test_knowledge_listing_and_detail_are_scoped_to_effective_spaces(tmp_p
             async with httpx.AsyncClient(
                 transport=transport,
                 base_url="https://gateway.test",
-                cookies={"__Host-aigw-access": admin_session.access_token.reveal()},
+                cookies={"__Host-openknowledge-access": admin_session.access_token.reveal()},
             ) as admin_client:
                 admin_headers = {
                     "Origin": "https://gateway.test",
@@ -740,7 +740,7 @@ async def test_knowledge_listing_and_detail_are_scoped_to_effective_spaces(tmp_p
             async with httpx.AsyncClient(
                 transport=transport,
                 base_url="https://gateway.test",
-                cookies={"__Host-aigw-access": member_session.access_token.reveal()},
+                cookies={"__Host-openknowledge-access": member_session.access_token.reveal()},
             ) as limited_client:
                 listing = await limited_client.get("/api/v1/knowledge")
                 assert listing.status_code == 200

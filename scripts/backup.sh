@@ -25,7 +25,7 @@ tar -C "$STORAGE_DIR" -czf "$backup_tmp/object-storage.tar.gz" .
 pg_restore --list "$backup_tmp/database.dump" >/dev/null
 printf 'backup_started_at=%s\nalembic_revision=%s\nwriters_quiesced=true\n' "$backup_stamp" "$(psql "$BACKUP_DATABASE_URL" -AtX --set=ON_ERROR_STOP=1 --command='SELECT version_num FROM alembic_version')" > "$backup_tmp/BACKUP-METADATA"
 (cd "$backup_tmp" && sha256sum database.dump object-storage.tar.gz storage-manifest.json BACKUP-METADATA > SHA256SUMS)
-tar -C "$backup_tmp" -cf - database.dump object-storage.tar.gz storage-manifest.json BACKUP-METADATA SHA256SUMS | age --recipient "$BACKUP_AGE_RECIPIENT" --output "$BACKUP_DIR/kinbase-$backup_stamp.tar.age"
+tar -C "$backup_tmp" -cf - database.dump object-storage.tar.gz storage-manifest.json BACKUP-METADATA SHA256SUMS | age --recipient "$BACKUP_AGE_RECIPIENT" --output "$BACKUP_DIR/openknowledge-$backup_stamp.tar.age"
 if [ -n "${BACKUP_METRICS_FILE:-}" ]; then
   metrics_dir="$(dirname "$BACKUP_METRICS_FILE")"
   mkdir -p "$metrics_dir"

@@ -1,5 +1,5 @@
 groups:
-  - name: kinbase
+  - name: openknowledge
     rules:
       - alert: GatewayUpstreamCircuitOpened
         expr: increase(gateway_upstream_resilience_events_total{event="circuit_opened"}[5m]) > 0
@@ -15,7 +15,7 @@ groups:
         annotations:
           summary: Upstream concurrency capacity is saturated
       - alert: GatewayUnavailable
-        expr: up{job="kinbase-gateway"} == 0
+        expr: up{job="openknowledge-gateway"} == 0
         for: 2m
         labels:
           severity: critical

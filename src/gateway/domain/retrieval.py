@@ -37,12 +37,12 @@ class RetrievalCandidate:
     def citation_uri(self) -> str:
         if self.source_type == "knowledge_revision":
             return (
-                f"aigw://spaces/{self.space_id}/knowledge/{self.canonical_id}"
+                f"openknowledge://spaces/{self.space_id}/knowledge/{self.canonical_id}"
                 f"/revisions/{self.revision_id}"
             )
         suffix = f"/chunks/{self.chunk_id}" if self.chunk_id else ""
         return (
-            f"aigw://spaces/{self.space_id}/documents/{self.canonical_id}"
+            f"openknowledge://spaces/{self.space_id}/documents/{self.canonical_id}"
             f"/revisions/{self.revision_id}{suffix}"
         )
 

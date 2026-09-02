@@ -70,9 +70,9 @@ def test_temporary_password_login_then_forced_change_and_mfa(admin_client, membe
             login = throttled_login(client, username, temporary_password)
             assert login.status_code == 200, login.text
             assert login.json()["requires_password_change"] is True
-            assert "__Host-aigw-access" in client.cookies
-            assert "__Secure-aigw-refresh" in client.cookies
-            assert "aigw-csrf" in client.cookies
+            assert "__Host-openknowledge-access" in client.cookies
+            assert "__Secure-openknowledge-refresh" in client.cookies
+            assert "openknowledge-csrf" in client.cookies
 
             forbidden = client.get("/api/v1/members")
             assert forbidden.status_code in (401, 403, 404), forbidden.text
@@ -162,7 +162,7 @@ def test_refresh_rotation_and_reuse_detection(admin_client):
     rotated = admin_client.post("/api/v1/auth/refresh", json_body={})
     assert rotated.status_code == 200, rotated.text
     assert rotated.json()["status"] == "refreshed"
-    assert "__Host-aigw-access" in admin_client.cookies
+    assert "__Host-openknowledge-access" in admin_client.cookies
 
     me = admin_client.get("/api/v1/me")
     assert me.status_code == 200, me.text

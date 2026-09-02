@@ -203,10 +203,10 @@ export function useModalFocus(open: boolean, onClose: () => void, explicitReturn
     };
 
     document.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("aigw-step-up-required", preserveReturnTarget, { capture: true });
+    window.addEventListener("openknowledge-step-up-required", preserveReturnTarget, { capture: true });
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("aigw-step-up-required", preserveReturnTarget, { capture: true });
+      window.removeEventListener("openknowledge-step-up-required", preserveReturnTarget, { capture: true });
       const stackIndex = modalStack.findIndex((entry) => entry.token === stackEntry.token);
       if (stackIndex >= 0) {
         modalStack.splice(stackIndex, 1);

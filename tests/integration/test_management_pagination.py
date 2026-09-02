@@ -351,7 +351,7 @@ async def pagination_client(tmp_path):
             async with httpx.AsyncClient(
                 transport=transport,
                 base_url="https://gateway.test",
-                cookies={"__Host-aigw-access": issued.access_token.reveal()},
+                cookies={"__Host-openknowledge-access": issued.access_token.reveal()},
                 headers={
                     "Origin": "https://gateway.test",
                     "X-CSRF-Token": issued.csrf_token.reveal(),

@@ -293,7 +293,7 @@ test("returns focus after confirmation hands off to identity verification", asyn
   await trigger.click();
   await expect(page.getByRole("alertdialog")).toBeVisible();
 
-  await page.evaluate(() => window.dispatchEvent(new CustomEvent("aigw-step-up-required")));
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("openknowledge-step-up-required")));
   await expect(page.getByRole("dialog", { name: "Verify your identity" })).toBeVisible();
   await expect(page.locator("[aria-modal='true']:visible")).toHaveCount(1);
   await page.getByRole("button", { name: "Cancel" }).click();
@@ -461,7 +461,7 @@ test("hydrates a stored dark theme without a React mismatch", async ({ page }) =
       hydrationErrors.push(error.message);
     }
   });
-  await page.addInitScript(() => localStorage.setItem("aigw-theme", "dark"));
+  await page.addInitScript(() => localStorage.setItem("openknowledge-theme", "dark"));
   await page.goto("/login");
 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");

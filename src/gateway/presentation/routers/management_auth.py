@@ -194,7 +194,7 @@ def _apply_session_cookies(response: Response, secrets: SessionSecrets) -> None:
     access_max_age = max(0, int((secrets.access_expires_at - now).total_seconds()))
     refresh_max_age = max(0, int((secrets.idle_expires_at - now).total_seconds()))
     response.set_cookie(
-        "__Host-aigw-access",
+        "__Host-openknowledge-access",
         secrets.access_token.reveal(),
         max_age=access_max_age,
         path="/",
@@ -203,7 +203,7 @@ def _apply_session_cookies(response: Response, secrets: SessionSecrets) -> None:
         samesite="strict",
     )
     response.set_cookie(
-        "__Secure-aigw-refresh",
+        "__Secure-openknowledge-refresh",
         secrets.refresh_token.reveal(),
         max_age=refresh_max_age,
         path="/api/v1/auth/refresh",
@@ -212,7 +212,7 @@ def _apply_session_cookies(response: Response, secrets: SessionSecrets) -> None:
         samesite="strict",
     )
     response.set_cookie(
-        "aigw-csrf",
+        "openknowledge-csrf",
         secrets.csrf_token.reveal(),
         max_age=refresh_max_age,
         path="/",
@@ -326,7 +326,7 @@ async def refresh(
     session: AsyncSession = Depends(get_db_session),
 ) -> SessionRefresh:
     _verify_origin(request)
-    refresh_token = request.cookies.get("__Secure-aigw-refresh")
+    refresh_token = request.cookies.get("__Secure-openknowledge-refresh")
     if not refresh_token:
         raise AuthenticationException("Invalid session.")
     rotation = await SessionService(session).rotate_refresh(
@@ -556,8 +556,8 @@ async def logout(
             credential.family_id,
             reason="sign_out",
         )
-    response.delete_cookie("__Host-aigw-access", path="/", secure=True, httponly=True, samesite="strict")
-    response.delete_cookie("__Secure-aigw-refresh", path="/api/v1/auth/refresh", secure=True, httponly=True, samesite="strict")
-    response.delete_cookie("aigw-csrf", path="/", secure=True, httponly=False, samesite="strict")
+    response.delete_cookie("__Host-openknowledge-access", path="/", secure=True, httponly=True, samesite="strict")
+    response.delete_cookie("__Secure-openknowledge-refresh", path="/api/v1/auth/refresh", secure=True, httponly=True, samesite="strict")
+    response.delete_cookie("openknowledge-csrf", path="/", secure=True, httponly=False, samesite="strict")
     response.headers["Cache-Control"] = "no-store"
     return SignOut(status="signed_out")
