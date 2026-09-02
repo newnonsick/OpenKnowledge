@@ -101,7 +101,7 @@ Returns the registered models. The `default` alias resolves to the configured ba
 | POST | `/api/v1/auth/login` | `username`, `password`, optional `totp_code` or `recovery_code` | Authenticates and sets session cookies. Super admins must supply a second factor. Throttled per account, per IP, and globally. |
 | POST | `/api/v1/auth/refresh` | empty | Rotates the refresh token (CSRF header `X-CSRF-Token` required, Origin verified) and issues a new access cookie. |
 | POST | `/api/v1/auth/step-up` | `password` plus optional second factor | Re-authenticates and extends step-up authorization for 10 minutes. Required before sensitive operations such as activating settings drafts. |
-| POST | `/api/v1/auth/password` | current credentials plus new `password` and `confirmation` | Changes the password, reissues the session, and (when eligible) creates the first personal API key. |
+| POST | `/api/v1/auth/password` | current credentials plus new `password` and `confirmation` | Changes the authenticated member's password and issues replacement session cookies. An unrestricted member supplies `current_password`; an unrestricted super admin also supplies `current_totp_code` or `recovery_code`. A restricted first-use session supplies only the new `password` and `confirmation`. Prior website sessions are revoked while personal API keys are preserved. |
 | POST | `/api/v1/auth/mfa/totp/enroll` | current credentials | Starts TOTP enrollment, returns the shared secret. |
 | POST | `/api/v1/auth/mfa/confirm` | `factor_id`, `code`, current credentials | Completes enrollment, returns recovery codes and the first personal API key. |
 | POST | `/api/v1/auth/logout` | empty | Revokes the session family and clears cookies. |
@@ -218,7 +218,7 @@ Available scopes include `knowledge:read`, `knowledge:write`, `spaces:read`, `sp
 | GET | `/api/v1/members` | List members (super admin). |
 | POST | `/api/v1/members` | Create a member (super admin); returns a temporary password. |
 | PATCH | `/api/v1/members/{member_id}` | Change display name or status (super admin). |
-| POST | `/api/v1/members/{member_id}/password-reset` | Issue a password reset (super admin). |
+| POST | `/api/v1/members/{member_id}/password-reset` | Issues a 24-hour one-time password for another pending or active account, revokes that account's sessions and API keys, and forces password replacement. Resetting the caller or a disabled account returns `409 resource_conflict`; existing super-admin MFA remains required. |
 | GET | `/api/v1/sessions` | List active session families. |
 | DELETE | `/api/v1/sessions/{family_id}` | Revoke a session family (sign out a device). |
 | GET | `/api/v1/audit-events` | Query the audit trail. |

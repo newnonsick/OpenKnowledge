@@ -27,6 +27,10 @@ Comparisons of presented and stored key material use constant-time functions.
 - Members with the `super_admin` system role must complete TOTP enrollment before their session becomes unrestricted, and every login requires a TOTP code or a single-use recovery code.
 - TOTP secrets are encrypted at rest with versioned Fernet keys (`MFA_ENCRYPTION_KEYS`); recovery codes are issued once at enrollment confirmation.
 - Members created by a super admin and recovered super admins receive temporary passwords that force a password change on first use.
+- Authenticated members can change their own password in Settings → Security. The current password is required; super admins must also provide TOTP or a recovery code.
+- A self-service password change revokes prior website session families, issues replacement cookies to the current device, and preserves personal API keys.
+- A super admin can reset another pending or active account after recent step-up. Pending accounts remain eligible when an onboarding password expires; self-reset and reset of disabled accounts are rejected. Administrative reset revokes the target's sessions and API keys and reveals a 24-hour temporary password once.
+- A super admin with an existing MFA factor must provide it when signing in with an administratively reset password. Regular members are not required to enroll MFA.
 
 ## Sessions
 

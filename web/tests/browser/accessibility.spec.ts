@@ -77,6 +77,9 @@ async function mockGateway(page: Page, systemRole: "member" | "super_admin" = "m
     if (pathname === "/api/v1/auth/login") {
       return route.fulfill(json(loginFixture));
     }
+    if (pathname === "/api/v1/auth/password") {
+      return route.fulfill(json({ ...loginFixture, requires_password_change: false }));
+    }
     if (pathname === "/api/v1/auth/mfa/totp/enroll") {
       return route.fulfill(json({ factor_id: "factor-1", secret: "JBSWY3DPEHPK3PXP" }));
     }
@@ -235,10 +238,28 @@ test("lets a member start proactive MFA setup from Settings Security", async ({ 
 
   await page.getByRole("tab", { name: "Security" }).click();
   await expect(page.getByRole("heading", { name: "Multi-factor authentication" })).toBeVisible();
-  await page.getByLabel("Current password").fill("browser-test-password");
-  await page.getByRole("button", { name: "Start MFA setup" }).click();
+  const mfaPanel = page.locator(".mfa-security-panel");
+  await mfaPanel.getByLabel("Current password").fill("browser-test-password");
+  await mfaPanel.getByRole("button", { name: "Start MFA setup" }).click();
   await expect(page.getByText("Manual setup key")).toBeVisible();
   await expect(page.getByText("JBSWY3DPEHPK3PXP")).toBeVisible();
+});
+
+test("changes a password from Settings Security without leaving the current device", async ({ page }) => {
+  await mockGateway(page);
+  await page.goto("/settings?section=security");
+
+  const passwordPanel = page.locator(".password-security-panel");
+  await expect(passwordPanel.getByRole("heading", { name: "Password" })).toBeVisible();
+  await passwordPanel.getByLabel("Current password").fill("Browser-Current-Password-934!");
+  await passwordPanel.getByLabel("New password").fill("Browser-Replacement-Password-935!");
+  await passwordPanel.getByLabel("Confirm password").fill("Browser-Replacement-Password-935!");
+  await passwordPanel.getByRole("button", { name: "Change password" }).click();
+
+  await expect(passwordPanel.getByRole("status")).toContainText("this device remains signed in");
+  await expect(page).toHaveURL(/\/settings\?section=security$/);
+  await expect(passwordPanel.getByLabel("Current password")).toHaveValue("");
+  await expectAccessible(page);
 });
 
 test("shows every Settings section without horizontal clipping on mobile", async ({ page }) => {
