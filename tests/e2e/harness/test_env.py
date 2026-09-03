@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.schema import Computed
-from pgvector.sqlalchemy import Vector
+from pgvector.sqlalchemy import HALFVEC, Vector
 
 
 # -----------------------------------------------------------------------------
@@ -47,6 +47,7 @@ from pgvector.sqlalchemy import Vector
 # -----------------------------------------------------------------------------
 
 @compiles(Vector, "sqlite")
+@compiles(HALFVEC, "sqlite")
 def _compile_vector_sqlite(type_, compiler, **kw):
     return "TEXT"
 

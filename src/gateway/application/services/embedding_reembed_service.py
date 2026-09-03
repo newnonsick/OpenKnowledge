@@ -126,7 +126,9 @@ class EmbeddingReembedService:
             for target in REEMBED_TARGETS:
                 name = _run_name(target)
                 run = await session.get(MigrationBackfillRunModel, name)
-                high_water_id = await session.scalar(select(func.max(target.model.id)))
+                high_water_id = await session.scalar(
+                    select(target.model.id).order_by(target.model.id.desc()).limit(1)
+                )
                 if run is None:
                     session.add(
                         MigrationBackfillRunModel(

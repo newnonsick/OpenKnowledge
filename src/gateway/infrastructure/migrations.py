@@ -79,7 +79,7 @@ def _version_tuple(value: Optional[str]) -> tuple[int, ...]:
 
 
 def _parse_vector_dimension(value: Optional[str]) -> Optional[int]:
-    match = re.fullmatch(r"vector\((\d+)\)", value or "")
+    match = re.fullmatch(r"(?:vector|halfvec)\((\d+)\)", value or "")
     return int(match.group(1)) if match else None
 
 
@@ -95,6 +95,16 @@ async def _read_embedding_dimensions(connection: Any) -> dict[str, Optional[int]
         )
     ).tuples().all()
     return {name: _parse_vector_dimension(formatted) for name, formatted in rows}
+
+
+async def _read_embedding_column_types(connection: Any) -> dict[str, str]:
+    rows = (
+        await connection.execute(
+            text(_EMBEDDING_DIMENSION_SQL),
+            {"tables": _vector_tables(), "column": VECTOR_COLUMN},
+        )
+    ).tuples().all()
+    return {name: formatted or "" for name, formatted in rows}
 
 
 async def _count_stored_embeddings(connection: Any) -> dict[str, int]:
@@ -246,8 +256,10 @@ async def set_embedding_dimension(
     db_url: Optional[str] = None,
 ) -> EmbeddingDimensionStatus:
     target = int(dimension)
-    if target <= 0:
-        raise RuntimeError(f"Embedding dimension must be a positive integer, got {dimension}.")
+    if target <= 0 or target > 4000:
+        raise RuntimeError(
+            f"Embedding dimension must be between 1 and 4000 for halfvec HNSW index, got {dimension}."
+        )
 
     status = await get_schema_status_async(db_url, expected_embedding_dimension=target)
     if status.current_revision not in status.head_revisions:
@@ -260,7 +272,18 @@ async def set_embedding_dimension(
     pending = await get_embedding_dimension_status(db_url, count_stored=False)
     if not pending.current:
         raise RuntimeError("No pgvector embedding columns were found in the current schema.")
-    if all(existing == target for existing in pending.current.values()):
+
+    engine = create_async_engine(_privileged_database_url(db_url), poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            current_types = await _read_embedding_column_types(connection)
+    finally:
+        await engine.dispose()
+
+    if (
+        all(existing == target for existing in pending.current.values())
+        and all(col_type == f"halfvec({target})" for col_type in current_types.values())
+    ):
         return pending
 
     stored = await _stored_embedding_counts(db_url)
@@ -283,15 +306,17 @@ async def set_embedding_dimension(
                 await connection.execute(
                     text(
                         f"ALTER TABLE {name} ALTER COLUMN {VECTOR_COLUMN} "
-                        f"TYPE vector({target}) USING NULL"
+                        f"TYPE halfvec({target}) USING NULL"
                     )
                 )
                 await connection.execute(
                     text(
                         f"CREATE INDEX {index_name} ON {name} "
-                        f"USING hnsw ({VECTOR_COLUMN} vector_cosine_ops) {HNSW_INDEX_OPTIONS}"
+                        f"USING hnsw ({VECTOR_COLUMN} halfvec_cosine_ops) {HNSW_INDEX_OPTIONS}"
                     )
                 )
+    except Exception as exc:
+        raise RuntimeError(f"Failed to resize embedding columns: {exc}") from exc
     finally:
         await engine.dispose()
     resized = await get_embedding_dimension_status(db_url, count_stored=False)

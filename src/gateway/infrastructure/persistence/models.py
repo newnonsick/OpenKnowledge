@@ -1,10 +1,8 @@
-
-
 from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 
-from pgvector.sqlalchemy import Vector
+from pgvector.sqlalchemy import HALFVEC, Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -134,7 +132,7 @@ class KnowledgeRevision(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     tags: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False)
     change_summary: Mapped[str | None] = mapped_column(Text)
-    embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(EMBED_DIM), nullable=True)
+    embedding: Mapped[Optional[list[float]]] = mapped_column(HALFVEC(EMBED_DIM), nullable=True)
     author: Mapped[str] = mapped_column(String(255), default="system", server_default=text("'system'"), nullable=False)
     author_member_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -171,7 +169,7 @@ class KnowledgeRevision(Base):
             "embedding",
             postgresql_using="hnsw",
             postgresql_with={"m": 16, "ef_construction": 64},
-            postgresql_ops={"embedding": "vector_cosine_ops"},
+            postgresql_ops={"embedding": "halfvec_cosine_ops"},
         ),
     )
 
@@ -227,7 +225,7 @@ class DocumentChunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     is_global: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
-    embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(EMBED_DIM), nullable=True)
+    embedding: Mapped[Optional[list[float]]] = mapped_column(HALFVEC(EMBED_DIM), nullable=True)
     tsv: Mapped[Optional[str]] = mapped_column(
         TSVECTOR,
         Computed("to_tsvector('english', content)", persisted=True),
@@ -253,7 +251,7 @@ class DocumentChunk(Base):
             "embedding",
             postgresql_using="hnsw",
             postgresql_with={"m": 16, "ef_construction": 64},
-            postgresql_ops={"embedding": "vector_cosine_ops"},
+            postgresql_ops={"embedding": "halfvec_cosine_ops"},
         ),
     )
 

@@ -295,3 +295,26 @@ def test_embedding_reembed_service_requires_positive_batch_size() -> None:
             generation_service=AsyncMock(),
             batch_size=0,
         )
+
+
+def test_parse_vector_dimension_supports_vector_and_halfvec() -> None:
+    from src.gateway.infrastructure.migrations import _parse_vector_dimension
+
+    assert _parse_vector_dimension("vector(1024)") == 1024
+    assert _parse_vector_dimension("halfvec(2048)") == 2048
+    assert _parse_vector_dimension("halfvec(4000)") == 4000
+    assert _parse_vector_dimension("invalid") is None
+    assert _parse_vector_dimension(None) is None
+
+
+@pytest.mark.asyncio
+async def test_set_embedding_dimension_rejects_out_of_bounds() -> None:
+    from src.gateway.infrastructure.migrations import set_embedding_dimension
+
+    with pytest.raises(RuntimeError) as exc_zero:
+        await set_embedding_dimension(0)
+    assert "between 1 and 4000" in str(exc_zero.value)
+
+    with pytest.raises(RuntimeError) as exc_too_large:
+        await set_embedding_dimension(4001)
+    assert "between 1 and 4000" in str(exc_too_large.value)
