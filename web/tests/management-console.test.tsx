@@ -1141,14 +1141,14 @@ describe("management console", () => {
     });
     render(<SettingsConsole />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Revoke Laptop" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Revoke" }));
     expect(screen.getByRole("alertdialog", { name: "Revoke Laptop" })).toHaveAttribute("aria-modal", "true");
     fireEvent.click(screen.getByRole("button", { name: "Confirm revoke API key" }));
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/api-keys/key-1", { idempotent: true, method: "DELETE" }));
     await waitFor(() => expect(screen.queryByText("pk_live_1 · knowledge:read")).not.toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("tab", { name: "Sessions" }));
-    fireEvent.click(screen.getByRole("button", { name: "Sign out website session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
     expect(screen.getByRole("alertdialog", { name: "Sign out website session" })).toHaveAttribute("aria-modal", "true");
     fireEvent.click(screen.getByRole("button", { name: "Confirm sign out" }));
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/sessions/session-other", { idempotent: true, method: "DELETE" }));

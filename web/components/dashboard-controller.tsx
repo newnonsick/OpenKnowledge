@@ -57,7 +57,8 @@ export function DashboardController() {
       loading={loading}
       operations={operations}
       ready={ready}
-      spaceCount={spaceCount}
+      spaceCount={spacesLoaded ? spaceCount : null}
+      spaceCountFailed={!loading && !spacesLoaded}
       spacesLoaded={spacesLoaded}
       spaces={spaces}
     />

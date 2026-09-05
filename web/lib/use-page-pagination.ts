@@ -148,6 +148,7 @@ export function usePagePagination<T>({ loadPage, queryKey, initialPage = 1 }: Pa
     ...state,
     hasNext: state.totalPages > 0 && state.page < state.totalPages,
     hasPrevious: state.page > 1,
+    isRefreshing: state.loading && !state.initialLoading,
     queryReady: state.resolvedQueryKey === queryKey,
     goToPage,
     nextPage,

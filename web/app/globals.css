@@ -29,7 +29,7 @@
   --radius-md: 12px;
   --radius-lg: 18px;
   --font-ui: var(--next-font-ui, "Segoe UI"), "Segoe UI", system-ui, sans-serif;
-  --font-display: var(--next-font-display, "Fraunces"), Georgia, serif;
+  --font-display: var(--next-font-ui, "Segoe UI"), "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-mono: "Cascadia Code", ui-monospace, "SFMono-Regular", Consolas, monospace;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   color-scheme: light;
@@ -386,7 +386,7 @@ html[data-theme="dark"] .pulse-warning { color: var(--coral); }
   border: 1px solid var(--line); border-radius: 10px; background: var(--surface-subtle);
 }
 .pulse-operational-grid small { color: var(--ink-faint); font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
-.pulse-operational-grid strong { overflow: hidden; font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.pulse-operational-grid strong { font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
 
 .attention-strip {
   display: flex; align-items: center; gap: 13px; margin-top: 16px; padding: 15px 17px;

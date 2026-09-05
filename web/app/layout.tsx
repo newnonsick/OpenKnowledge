@@ -13,13 +13,6 @@ const uiFont = localFont({
   display: "swap",
 });
 
-const displayFont = localFont({
-  src: "./fonts/fraunces-latin-var.woff2",
-  variable: "--next-font-display",
-  weight: "300 700",
-  display: "swap",
-});
-
 export const metadata: Metadata = {
   title: "OpenKnowledge — Family knowledge gateway",
   description: "A private, shared knowledge console for your family.",
@@ -36,7 +29,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   await connection();
   const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
-    <html lang="en" className={`${uiFont.variable} ${displayFont.variable}`} data-theme="light" suppressHydrationWarning>
+    <html lang="en" className={uiFont.variable} data-theme="light" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} nonce={nonce} />
       </head>

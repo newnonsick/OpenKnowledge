@@ -29,6 +29,7 @@ export function AppSidebar({
   menuOpen,
   onMenuClose,
   spaceCount,
+  spaceCountFailed = false,
   workspaceGroups,
   member,
 }: {
@@ -39,6 +40,7 @@ export function AppSidebar({
   menuOpen: boolean;
   onMenuClose: () => void;
   spaceCount: number | null;
+  spaceCountFailed?: boolean;
   workspaceGroups: SidebarNavigation[];
   member: SidebarMember;
 }) {
@@ -88,7 +90,7 @@ export function AppSidebar({
         <span className="family-avatar">O</span>
         <span className="family-copy">
           <strong>Family knowledge</strong>
-          <small>{spaceCount === null ? "Loading spaces…" : `${spaceCount} accessible ${spaceCount === 1 ? "space" : "spaces"}`}</small>
+          <small>{spaceCount === null ? (spaceCountFailed ? "Spaces unavailable" : "Loading spaces…") : `${spaceCount} accessible ${spaceCount === 1 ? "space" : "spaces"}`}</small>
         </span>
       </div>
 

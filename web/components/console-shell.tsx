@@ -52,10 +52,11 @@ type ConsoleShellProps = {
   eyebrow: string;
   member: SidebarMember;
   spaceCount: number | null;
+  spaceCountFailed?: boolean;
   title: string;
 };
 
-export function ConsoleShell({ actions, children, description, eyebrow, member, spaceCount, title }: ConsoleShellProps) {
+export function ConsoleShell({ actions, children, description, eyebrow, member, spaceCount, spaceCountFailed = false, title }: ConsoleShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { closeRef, drawerRef, triggerRef } = useDrawerFocus(menuOpen, setMenuOpen);
   const visibleManageNavigation = member.systemRole === "super_admin"
@@ -73,6 +74,7 @@ export function ConsoleShell({ actions, children, description, eyebrow, member, 
         menuOpen={menuOpen}
         onMenuClose={() => setMenuOpen(false)}
         spaceCount={spaceCount}
+        spaceCountFailed={spaceCountFailed}
         workspaceGroups={workspaceNavigation}
       />
 

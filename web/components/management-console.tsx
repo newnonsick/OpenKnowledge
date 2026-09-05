@@ -117,11 +117,11 @@ export function ListSkeleton({ compact = false, rows = 5 }: { compact?: boolean;
   );
 }
 
-export function ListUnavailable({ label, onRetry }: { label: string; onRetry: () => void }) {
+export function ListUnavailable({ detail, label, onRetry }: { detail?: string | null; label: string; onRetry: () => void }) {
   return (
     <div className="console-unavailable" role="alert">
       <CircleAlert aria-hidden="true" size={22} />
-      <div><strong>Unable to load {label}</strong><span>Check your connection and try again.</span></div>
+      <div><strong>Unable to load {label}</strong><span>{detail || "Check your connection and try again."}</span></div>
       <button aria-label={`Retry ${label}`} className="secondary-button" onClick={onRetry} type="button">Retry</button>
     </div>
   );
@@ -373,6 +373,7 @@ export function SpacesConsole() {
       eyebrow="Knowledge boundaries"
       member={memberView(member)}
       spaceCount={spaceCountLoading ? null : totalSpaces}
+      spaceCountFailed={!spaceCountLoading && totalSpaces === null}
       title="Spaces"
     >
       <div className="console-grid console-grid-spaces">
@@ -424,7 +425,7 @@ export function SpacesConsole() {
                   </article>
                 ))}
               </div>
-              {memberPages.error || candidatePages.error ? <ListUnavailable label="space access" onRetry={() => { void memberPages.reload(); void candidatePages.reload(); }} /> : null}
+              {memberPages.error || candidatePages.error ? <ListUnavailable detail={memberPages.error || candidatePages.error} label="space access" onRetry={() => { void memberPages.reload(); void candidatePages.reload(); }} /> : null}
               {memberPages.totalPages > 1 ? <div className="access-pagination-group"><p className="access-pagination-label">Members</p><PaginationControls loading={memberPages.loading} loadingPage={memberPages.loadingPage} onPageChange={(nextPage) => void memberPages.goToPage(nextPage)} page={memberPages.page} pageSize={memberPages.pageSize} totalItems={memberPages.totalItems} totalPages={memberPages.totalPages} /></div> : null}
               {candidatePages.totalPages > 1 ? <div className="access-pagination-group"><p className="access-pagination-label">Members available to add</p><PaginationControls loading={candidatePages.loading} loadingPage={candidatePages.loadingPage} onPageChange={(nextPage) => void candidatePages.goToPage(nextPage)} page={candidatePages.page} pageSize={candidatePages.pageSize} totalItems={candidatePages.totalItems} totalPages={candidatePages.totalPages} /></div> : null}
               </>}
@@ -435,7 +436,7 @@ export function SpacesConsole() {
             </>
           ) : null}
           {spacePages.initialLoading || (spacePages.loading && spaces.length === 0) ? <ListSkeleton /> : null}
-          {spacePages.error ? <ListUnavailable label="spaces" onRetry={() => void spacePages.reload()} /> : null}
+          {spacePages.error ? <ListUnavailable detail={spacePages.error} label="spaces" onRetry={() => void spacePages.reload()} /> : null}
           {!spacePages.initialLoading && !spacePages.loading && !spacePages.error && spaces.length === 0 ? (
             <div className="console-empty">
               <FolderKanban size={23} />
@@ -493,6 +494,7 @@ export function KnowledgeConsole() {
   const [tags, setTags] = useState("");
   const [spacesLoading, setSpacesLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [spacesFailed, setSpacesFailed] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createdTitle, setCreatedTitle] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -566,6 +568,7 @@ export function KnowledgeConsole() {
     }).catch((loadError) => {
       if (active) {
         setCreateError(message(loadError));
+        setSpacesFailed(true);
       }
     }).finally(() => {
       if (active) {
@@ -693,7 +696,8 @@ export function KnowledgeConsole() {
       description="Capture durable notes with immutable revisions, clear provenance, and permission-aware retrieval."
       eyebrow="Canonical knowledge"
       member={memberView(member)}
-      spaceCount={spacesLoading ? null : spaces.length}
+      spaceCount={spacesLoading || spacesFailed ? null : spaces.length}
+      spaceCountFailed={spacesFailed}
       title="Knowledge"
     >
       <div className="console-grid console-grid-knowledge">
@@ -727,7 +731,7 @@ export function KnowledgeConsole() {
             }} type="button">Clear</button> : null}
           </form>
           {initialLoading || (loading && items.length === 0) ? <ListSkeleton /> : null}
-          {paginationError ? <ListUnavailable label="knowledge" onRetry={() => void reloadItems()} /> : null}
+          {paginationError ? <ListUnavailable detail={paginationError} label="knowledge" onRetry={() => void reloadItems()} /> : null}
           {!initialLoading && !loading && !paginationError && items.length === 0 ? (
             <div className="console-empty">
               <BookOpen size={23} />
@@ -811,7 +815,9 @@ export function ExploreConsole() {
   const [result, setResult] = useState<RetrievalResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
+  const [spacesFailed, setSpacesFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const autoQueryRef = useRef<string | null>(searchParams.get("q"));
   const resultsRef = useRef<HTMLElement>(null);
   const searchActiveRef = useRef(true);
@@ -819,6 +825,9 @@ export function ExploreConsole() {
 
   useEffect(() => {
     searchActiveRef.current = true;
+    if (typeof window.matchMedia === "function" && window.matchMedia("(pointer: fine)").matches) {
+      searchInputRef.current?.focus({ preventScroll: true });
+    }
     return () => {
       searchActiveRef.current = false;
     };
@@ -835,6 +844,7 @@ export function ExploreConsole() {
       .catch((loadError) => {
         if (active) {
           setError(message(loadError));
+          setSpacesFailed(true);
         }
       })
       .finally(() => {
@@ -849,7 +859,12 @@ export function ExploreConsole() {
 
   const runSearch = useCallback(async (value: string) => {
     const trimmed = value.trim();
-    if (!trimmed || searching) {
+    if (searching) {
+      return;
+    }
+    if (!trimmed) {
+      setError("Enter a search phrase to explore your knowledge.");
+      searchInputRef.current?.focus();
       return;
     }
     setSearching(true);
@@ -895,14 +910,15 @@ export function ExploreConsole() {
       description="Search once across every space you can access. Results remain permission-aware even with a large collection of spaces."
       eyebrow="Unified discovery"
       member={memberView(member)}
-      spaceCount={loading ? null : spaces.length}
+      spaceCount={loading || spacesFailed ? null : spaces.length}
+      spaceCountFailed={spacesFailed}
       title="Explore"
     >
       <section className="explore-hero console-panel">
         <div className="search-scope"><ShieldCheck size={15} /> All accessible spaces are in scope</div>
         <form className="console-search" onSubmit={(event) => { event.preventDefault(); void runSearch(query); }} role="search">
           <Search aria-hidden="true" size={21} />
-          <input aria-label="Search query" autoFocus onChange={(event) => setQuery(event.target.value)} placeholder="Ask for a detail, process, place, or decision…" type="search" value={query} />
+          <input aria-label="Search query" onChange={(event) => setQuery(event.target.value)} ref={searchInputRef} placeholder="Ask for a detail, process, place, or decision…" type="search" value={query} />
           <button aria-label="Search knowledge" disabled={searching} type="submit">{searching ? <LoaderCircle className="spin" size={17} /> : <ArrowUpRight size={17} />}</button>
         </form>
         <p>OpenKnowledge fans the query out only to authorized spaces, merges the candidates, and returns a single ranked result set.</p>
@@ -961,6 +977,7 @@ export function SourcesConsole() {
   const [file, setFile] = useState<File | null>(null);
   const [spacesLoading, setSpacesLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [spacesFailed, setSpacesFailed] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [queued, setQueued] = useState(false);
   const [pendingArchive, setPendingArchive] = useState<SourceSummary | null>(null);
@@ -968,6 +985,7 @@ export function SourcesConsole() {
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragCount = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadSourcePage = useCallback((page: number, signal: AbortSignal) => contractData(
     contractClient.GET("/api/v1/sources", {
@@ -1008,6 +1026,7 @@ export function SourcesConsole() {
     }).catch((loadError) => {
       if (active) {
         setUploadError(message(loadError));
+        setSpacesFailed(true);
       }
     }).finally(() => {
       if (active) {
@@ -1036,6 +1055,9 @@ export function SourcesConsole() {
       setQueued(true);
       setDisplayName("");
       setFile(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
       reloadSources();
     } catch (uploadError) {
       setUploadError(message(uploadError));
@@ -1072,7 +1094,8 @@ export function SourcesConsole() {
       description="Upload original files into versioned object storage and track every revision through the durable ingestion pipeline."
       eyebrow="Source library"
       member={memberView(member)}
-      spaceCount={spacesLoading ? null : spaces.length}
+      spaceCount={spacesLoading || spacesFailed ? null : spaces.length}
+      spaceCountFailed={spacesFailed}
       title="Sources"
     >
       <div className="console-grid console-grid-sources">
@@ -1091,7 +1114,7 @@ export function SourcesConsole() {
             {appliedSearch || statusFilter ? <button className="filter-clear-button" onClick={() => { setSearchText(""); setAppliedSearch(""); setStatusFilter(""); }} type="button">Clear</button> : null}
           </form>
           {initialLoading || (loading && sources.length === 0) ? <ListSkeleton /> : null}
-          {paginationError ? <ListUnavailable label="source files" onRetry={() => void reloadSources()} /> : null}
+          {paginationError ? <ListUnavailable detail={paginationError} label="source files" onRetry={() => void reloadSources()} /> : null}
           {!initialLoading && !loading && !paginationError && sources.length === 0 ? <div className="console-empty"><FileText size={23} /><strong>{appliedSearch || statusFilter ? "No matching source files" : "No source files"}</strong><span>{appliedSearch || statusFilter ? "Try a broader search or clear the status filter." : "Upload a document without changing its meaning or filtering its contents."}</span></div> : null}
           {archiveError ? <div className="console-unavailable" role="alert"><CircleAlert aria-hidden="true" size={22} /><div><strong>Unable to archive this source</strong><span>{archiveError}</span></div><button className="secondary-button" onClick={() => setArchiveError(null)} type="button">Dismiss</button></div> : null}
           <div aria-busy={loading} className={`data-list${loading && sources.length > 0 ? " is-page-loading" : ""}`}>
@@ -1136,7 +1159,7 @@ export function SourcesConsole() {
                 }
               }}
             ><FileUp size={20} /><strong>{file ? file.name : "Choose a source file or drag it here"}</strong><span>{file ? `${Math.max(1, Math.round(file.size / 1024))} KB · select a different file to replace it` : "The configured server upload limit applies"}</span></label>
-            <input aria-label="Source file" className="visually-hidden" id="source-file" onChange={(event) => { setFile(event.target.files?.[0] || null); setQueued(false); }} required type="file" />
+            <input aria-label="Source file" className="visually-hidden" id="source-file" ref={fileInputRef} onChange={(event) => { setFile(event.target.files?.[0] || null); setQueued(false); }} required type="file" />
             <button className="primary-button" disabled={uploading || spacesLoading || !file || spaces.length === 0} type="submit">{uploading ? <LoaderCircle className="spin" size={16} /> : <FileUp size={16} />} Queue source</button>
           </form>
           {queued ? <p className="inline-success"><ShieldCheck size={14} /> Queued for durable ingestion</p> : null}
@@ -1152,6 +1175,7 @@ export function PeopleConsole() {
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [spacesReady, setSpacesReady] = useState(false);
   const [memberSearch, setMemberSearch] = useState("");
+  const [spacesFailed, setSpacesFailed] = useState(false);
   const [appliedMemberSearch, setAppliedMemberSearch] = useState("");
   const [memberStatus, setMemberStatus] = useState<"" | "pending" | "active" | "disabled">("");
   const [memberRole, setMemberRole] = useState<"" | "super_admin" | "member">("");
@@ -1232,6 +1256,7 @@ export function PeopleConsole() {
     }).catch((loadError) => {
       if (active) {
         setCreateError(message(loadError));
+        setSpacesFailed(true);
         setSpacesReady(true);
       }
     });
@@ -1384,7 +1409,8 @@ export function PeopleConsole() {
       description="Super admins create family accounts. Space owners grant access separately so identity and knowledge boundaries stay explicit."
       eyebrow="Identity & access"
       member={memberView(member)}
-      spaceCount={spacesReady ? spaces.length : null}
+      spaceCount={spacesReady && !spacesFailed ? spaces.length : null}
+      spaceCountFailed={spacesFailed}
       title="People & access"
     >
       {!isAdmin ? (
@@ -1395,7 +1421,7 @@ export function PeopleConsole() {
             <div className="panel-heading"><div><span>Family directory</span><h2>Members</h2></div><span className="count-pill">{memberPages.initialLoading ? "…" : memberPages.totalItems}</span></div>
             <form className="list-filter-bar member-filter-bar" onSubmit={(event) => { event.preventDefault(); setAppliedMemberSearch(memberSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={14} /><input aria-label="Search members" onChange={(event) => setMemberSearch(event.target.value)} placeholder="Name or username" type="search" value={memberSearch} /></label><label><select aria-label="Filter member status" onChange={(event) => setMemberStatus(event.target.value as typeof memberStatus)} value={memberStatus}><option value="">All statuses</option><option value="pending">Pending</option><option value="active">Active</option><option value="disabled">Disabled</option></select></label><label><select aria-label="Filter system role" onChange={(event) => setMemberRole(event.target.value as typeof memberRole)} value={memberRole}><option value="">All roles</option><option value="super_admin">Super admin</option><option value="member">Member</option></select></label><button className="secondary-button" type="submit">Apply</button></form>
             {memberPages.initialLoading || (memberPages.loading && members.length === 0) ? <ListSkeleton rows={6} /> : null}
-            {memberPages.error ? <ListUnavailable label="members" onRetry={() => void memberPages.reload()} /> : null}
+            {memberPages.error ? <ListUnavailable detail={memberPages.error} label="members" onRetry={() => void memberPages.reload()} /> : null}
             <div aria-busy={memberPages.loading} className={`data-list${memberPages.loading && members.length > 0 ? " is-page-loading" : ""}`}>
               {members.map((person) => (
                 <button
@@ -1488,7 +1514,7 @@ export function PeopleConsole() {
                 <div className="ownership-recovery-form">
                   <p>Use only when an owner cannot recover their account. Space names and ownership metadata are visible here; content remains inaccessible.</p>
                   {adminSpacePages.initialLoading || recoveryOwnerPages.initialLoading || (adminSpacePages.loading && adminSpaces.length === 0) || (recoveryOwnerPages.loading && recoveryOwners.length === 0) ? <ListSkeleton rows={3} /> : null}
-                  {adminSpacePages.error || recoveryOwnerPages.error ? <ListUnavailable label="ownership recovery data" onRetry={() => { void adminSpacePages.reload(); void recoveryOwnerPages.reload(); }} /> : null}
+                  {adminSpacePages.error || recoveryOwnerPages.error ? <ListUnavailable detail={adminSpacePages.error || recoveryOwnerPages.error} label="ownership recovery data" onRetry={() => { void adminSpacePages.reload(); void recoveryOwnerPages.reload(); }} /> : null}
                   <form className="ownership-search-form" onSubmit={(event) => { event.preventDefault(); setAppliedRecoverySpaceSearch(recoverySpaceSearch.trim()); }} role="search">
                     <label htmlFor="recovery-space-search">Find space</label>
                     <div><input id="recovery-space-search" onChange={(event) => setRecoverySpaceSearch(event.target.value)} placeholder="Search space or owner" type="search" value={recoverySpaceSearch} /><button aria-label="Apply space search" className="secondary-button" type="submit"><Search size={14} /> Apply</button></div>
@@ -1550,6 +1576,7 @@ export function SettingsConsole() {
   const [pendingSessionRevocation, setPendingSessionRevocation] = useState<SessionSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [keySaving, setKeySaving] = useState(false);
+  const [spacesFailed, setSpacesFailed] = useState(false);
   const [sessionSaving, setSessionSaving] = useState(false);
   const [runtimeSaving, setRuntimeSaving] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
@@ -1615,6 +1642,7 @@ export function SettingsConsole() {
     }).catch((loadError) => {
       if (active) {
         setRuntimeError(message(loadError));
+        setSpacesFailed(true);
       }
     }).finally(() => {
       if (active) {
@@ -1776,7 +1804,8 @@ export function SettingsConsole() {
       description="Manage personal API credentials, active website sessions, and the safe runtime configuration boundary."
       eyebrow="Account control"
       member={memberView(member)}
-      spaceCount={loading ? null : spaces.length}
+      spaceCount={loading || spacesFailed ? null : spaces.length}
+      spaceCountFailed={spacesFailed}
       title="Settings"
     >
       <div aria-label="Settings sections" className="settings-tabs" role="tablist">
@@ -1820,9 +1849,9 @@ export function SettingsConsole() {
             <button className="secondary-button" type="submit">Apply</button>
           </form>
           {keyPages.initialLoading || (keyPages.loading && keys.length === 0) ? <ListSkeleton compact rows={3} /> : null}
-          {keyPages.error ? <ListUnavailable label="API keys" onRetry={() => void keyPages.reload()} /> : null}
+          {keyPages.error ? <ListUnavailable detail={keyPages.error} label="API keys" onRetry={() => void keyPages.reload()} /> : null}
           <div aria-busy={keyPages.loading} className={`data-list compact-list${keyPages.loading && keys.length > 0 ? " is-page-loading" : ""}`}>
-            {keys.map((key) => <article className="data-row" key={key.id}><span className="row-leading violet"><KeyRound size={17} /></span><div className="row-copy"><h3>{key.name}</h3><p>{key.public_id} · {key.scopes.join(", ")}</p></div><span className={`status-pill status-${key.status}`}>{key.status}</span>{key.status === "active" ? <button aria-label={`Revoke ${key.name}`} className="membership-remove-button" disabled={keyPages.loading} onClick={() => setPendingKeyRevocation(key)} type="button"><X size={15} /></button> : null}</article>)}
+            {keys.map((key) => <article className="data-row" key={key.id}><span className="row-leading violet"><KeyRound size={17} /></span><div className="row-copy"><h3>{key.name}</h3><p>{key.public_id} · {key.scopes.join(", ")}</p></div><span className={`status-pill status-${key.status}`}>{key.status}</span>{key.status === "active" ? <button className="row-action-button danger-action" disabled={keyPages.loading} onClick={() => setPendingKeyRevocation(key)} type="button">Revoke</button> : null}</article>)}
           </div>
           {keyPages.totalPages > 1 ? <PaginationControls loading={keyPages.loading} loadingPage={keyPages.loadingPage} onPageChange={(nextPage) => void keyPages.goToPage(nextPage)} page={keyPages.page} pageSize={keyPages.pageSize} totalItems={keyPages.totalItems} totalPages={keyPages.totalPages} /> : null}
           {keyError ? <p className="inline-error" role="alert">{keyError}</p> : null}
@@ -1833,9 +1862,9 @@ export function SettingsConsole() {
           <div className="panel-heading"><div><span>Website access</span><h2>Sessions</h2></div><MonitorSmartphone size={20} /></div>
           <div className="list-filter-bar single-filter-bar"><label><select aria-label="Filter session status" onChange={(event) => setSessionStatus(event.target.value as typeof sessionStatus)} value={sessionStatus}><option value="">All statuses</option><option value="active">Active</option><option value="expired">Expired</option><option value="revoked">Revoked</option></select></label></div>
           {sessionPages.initialLoading || (sessionPages.loading && sessions.length === 0) ? <ListSkeleton compact rows={3} /> : null}
-          {sessionPages.error ? <ListUnavailable label="sessions" onRetry={() => void sessionPages.reload()} /> : null}
+          {sessionPages.error ? <ListUnavailable detail={sessionPages.error} label="sessions" onRetry={() => void sessionPages.reload()} /> : null}
           <div aria-busy={sessionPages.loading} className={`data-list compact-list${sessionPages.loading && sessions.length > 0 ? " is-page-loading" : ""}`}>
-            {sessions.map((session) => <article className="data-row" key={session.id}><span className="row-leading cyan"><MonitorSmartphone size={17} /></span><div className="row-copy"><h3>{session.current ? "This session" : "Website session"}</h3><p>Last active {formatDateTime(session.last_activity_at)}</p></div><span className={`status-pill status-${session.status}`}>{session.status}</span>{!session.current && session.status === "active" ? <button aria-label="Sign out website session" className="membership-remove-button" disabled={sessionPages.loading} onClick={() => setPendingSessionRevocation(session)} type="button"><X size={15} /></button> : null}</article>)}
+            {sessions.map((session) => <article className="data-row" key={session.id}><span className="row-leading cyan"><MonitorSmartphone size={17} /></span><div className="row-copy"><h3>{session.current ? "This session" : "Website session"}</h3><p>Last active {formatDateTime(session.last_activity_at)}</p></div><span className={`status-pill status-${session.status}`}>{session.status}</span>{!session.current && session.status === "active" ? <button className="row-action-button danger-action" disabled={sessionPages.loading} onClick={() => setPendingSessionRevocation(session)} type="button">Sign out</button> : null}</article>)}
             {!sessionPages.initialLoading && !sessionPages.loading && !sessionPages.error && sessions.length === 0 ? <div className="console-empty small"><MonitorSmartphone size={20} /><strong>No session records returned</strong></div> : null}
           </div>
           {sessionPages.totalPages > 1 ? <PaginationControls loading={sessionPages.loading} loadingPage={sessionPages.loadingPage} onPageChange={(nextPage) => void sessionPages.goToPage(nextPage)} page={sessionPages.page} pageSize={sessionPages.pageSize} totalItems={sessionPages.totalItems} totalPages={sessionPages.totalPages} /> : null}
@@ -1846,7 +1875,7 @@ export function SettingsConsole() {
         {activeSection === "runtime" ? <section aria-labelledby="settings-tab-runtime" className="console-panel settings-section runtime-section" id="settings-panel-runtime" role="tabpanel">
           <div className="panel-heading"><div><span>Production boundary</span><h2>Safe runtime settings</h2></div><Settings2 size={20} /></div>
           {loading ? <ListSkeleton compact rows={3} /> : <>
-          <div className="runtime-summary"><div><span>Active revision</span><strong>{settings?.revision ?? 0}</strong></div><div><span>State</span><strong>{settings?.state || "active"}</strong></div><div><span>Change mode</span><strong>{member.system_role === "super_admin" ? "Draft + activate" : "Read only"}</strong></div></div>
+          <dl className="runtime-summary"><div><dt>Active revision</dt><dd>{settings?.revision ?? 0}</dd></div><div><dt>State</dt><dd>{settings?.state || "active"}</dd></div><div><dt>Change mode</dt><dd>{member.system_role === "super_admin" ? "Draft + activate" : "Read only"}</dd></div></dl>
           {settings ? <p className="runtime-active-state">Revision {settings.revision} is active</p> : null}
           {member.system_role === "super_admin" && settings ? (
             <form className="runtime-settings-form" onSubmit={createRuntimeDraft}>
@@ -1858,7 +1887,7 @@ export function SettingsConsole() {
           {runtimeDraft ? <div className="runtime-draft-review"><div><strong>Draft revision {runtimeDraft.revision} ready</strong><span>Validated against the typed safe-setting schema. Activation remains a separate audited step.</span></div><button className="primary-button" disabled={runtimeSaving} onClick={() => void activateRuntimeDraft()} type="button">Activate settings</button></div> : null}
           {member.system_role === "super_admin" ? <div className="list-filter-bar single-filter-bar"><label><select aria-label="Filter settings history state" onChange={(event) => setHistoryState(event.target.value as typeof historyState)} value={historyState}><option value="">All history</option><option value="active">Active</option><option value="superseded">Superseded</option></select></label></div> : null}
           {(historyPages.initialLoading || (historyPages.loading && settingsHistory.length === 0)) && member.system_role === "super_admin" ? <ListSkeleton compact rows={3} /> : null}
-          {historyPages.error ? <ListUnavailable label="settings history" onRetry={() => void historyPages.reload()} /> : null}
+          {historyPages.error ? <ListUnavailable detail={historyPages.error} label="settings history" onRetry={() => void historyPages.reload()} /> : null}
           {settingsHistory.length > 0 ? <div aria-busy={historyPages.loading} className={`data-list compact-list${historyPages.loading ? " is-page-loading" : ""}`}>{settingsHistory.map((revision) => <article className="data-row" key={revision.id || revision.revision}><span className="row-leading violet"><Settings2 size={16} /></span><div className="row-copy"><h3>Revision {revision.revision}</h3><p>Retrieval limit {revision.values.retrieval?.limit ?? "default"} · {revision.state}</p></div>{revision.state === "superseded" ? <button aria-label={`Restore revision ${revision.revision}`} className="row-action-button" disabled={runtimeSaving || historyPages.loading} onClick={() => setPendingSettingsRestore(revision)} type="button">Restore</button> : <span className="status-pill status-active">active</span>}</article>)}</div> : null}
           {historyPages.totalPages > 1 ? <PaginationControls loading={historyPages.loading} loadingPage={historyPages.loadingPage} onPageChange={(nextPage) => void historyPages.goToPage(nextPage)} page={historyPages.page} pageSize={historyPages.pageSize} totalItems={historyPages.totalItems} totalPages={historyPages.totalPages} /> : null}
           <ConfirmationDialog busy={runtimeSaving} busyLabel="Restoring settings…" cancelLabel="Keep current" confirmDisabled={runtimeReason.trim().length < 5} confirmLabel={`Confirm restore revision ${pendingSettingsRestore?.revision ?? ""}`} description="This creates a new active revision from the historical values. The current revision remains preserved for audit and future recovery." onCancel={() => setPendingSettingsRestore(null)} onConfirm={() => void restoreRuntimeSettings()} open={Boolean(pendingSettingsRestore)} title={pendingSettingsRestore ? `Restore revision ${pendingSettingsRestore.revision}` : "Restore settings revision"} tone="danger" />
@@ -1887,6 +1916,7 @@ export function IngestionConsole() {
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [spacesReady, setSpacesReady] = useState(false);
   const [spaceFilter, setSpaceFilter] = useState("");
+  const [spacesFailed, setSpacesFailed] = useState(false);
   const [stateFilter, setStateFilter] = useState<"" | "preparing" | "queued" | "running" | "retry_wait" | "succeeded" | "failed" | "cancelled">("");
   const [pendingJobAction, setPendingJobAction] = useState<{ job: IngestionJob; operation: "cancel" | "retry" } | null>(null);
   const [jobSaving, setJobSaving] = useState(false);
@@ -1930,6 +1960,7 @@ export function IngestionConsole() {
     }).catch((loadError) => {
       if (active) {
         setJobError(message(loadError));
+        setSpacesFailed(true);
         setSpacesReady(true);
       }
     });
@@ -1963,16 +1994,16 @@ export function IngestionConsole() {
     }
   };
 
-  const activeJobs = jobs.filter((job) => !["succeeded", "failed", "cancelled"].includes(job.state)).length;
   return (
     <ConsoleShell
       description="Follow the durable pipeline from queued source through parsing, activation, retry, or a clear terminal state."
       eyebrow="Operational pipeline"
       member={memberView(member)}
-      spaceCount={spacesReady ? spaces.length : null}
+      spaceCount={spacesReady && !spacesFailed ? spaces.length : null}
+      spaceCountFailed={spacesFailed}
       title="Ingestion"
     >
-      <div className="metric-strip metric-strip-compact"><article><span>Total jobs</span><strong>{initialLoading ? "…" : jobTotalItems}</strong></article><article><span>Active on this page</span><strong>{initialLoading || loading ? "…" : activeJobs}</strong></article></div>
+      <p className="list-context-line" role="status">{initialLoading ? "Loading ingestion jobs…" : `${jobTotalItems} ${jobTotalItems === 1 ? "job" : "jobs"} in scope`}</p>
       <section className="console-panel">
         <div className="panel-heading"><div><span>Live durable state</span><h2>Ingestion jobs</h2></div><button className="metric-refresh-button metric-refresh-inline" onClick={reloadJobs} type="button"><Layers3 size={14} /> Refresh now</button></div>
         <div className="list-filter-bar two-filter-bar">
@@ -1980,18 +2011,18 @@ export function IngestionConsole() {
           <label><span className="visually-hidden">Filter ingestion state</span><select aria-label="Filter ingestion state" onChange={(event) => setStateFilter(event.target.value as typeof stateFilter)} value={stateFilter}><option value="">All states</option><option value="preparing">Preparing</option><option value="queued">Queued</option><option value="running">Running</option><option value="retry_wait">Retry wait</option><option value="succeeded">Succeeded</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option></select></label>
         </div>
         {initialLoading || (loading && jobs.length === 0) ? <ListSkeleton /> : null}
-        {paginationError ? <ListUnavailable label="ingestion jobs" onRetry={() => void reloadJobs()} /> : null}
+        {paginationError ? <ListUnavailable detail={paginationError} label="ingestion jobs" onRetry={() => void reloadJobs()} /> : null}
         {!initialLoading && !loading && !paginationError && jobs.length === 0 ? <div className="console-empty"><Layers3 size={23} /><strong>{spaceFilter || stateFilter ? "No matching ingestion jobs" : "No ingestion jobs"}</strong><span>{spaceFilter || stateFilter ? "Choose a different space or state." : "Uploaded sources will appear here as soon as preparation begins."}</span></div> : null}
         <div aria-busy={loading} className={`job-list${loading && jobs.length > 0 ? " is-page-loading" : ""}`}>
           {jobs.map((job) => (
             <div className="job-card-group" key={job.id}>
               <article aria-label={`Ingestion job ${job.id}`} className="job-card">
                 <div className="job-topline"><div><span className={`state-dot state-${job.state}`} /><code aria-label={`Job ID ${job.id}`} title={job.id}>{job.id}</code></div><span className={`status-pill status-${job.state}`}>{job.state}</span></div>
-                <div className="job-context">
-                  <div><span>Space</span><strong title={spaceLabel(spaces, job.space_id)}>{spaceLabel(spaces, job.space_id)}</strong></div>
-                  <div><span>Document</span><code aria-label={`Document ID ${job.document_id}`} title={job.document_id}>{job.document_id}</code></div>
-                  <div><span>Attempt</span><strong>{job.attempt_count} of {job.max_attempts}</strong></div>
-                </div>
+                <dl className="job-context">
+                  <div><dt>Space</dt><dd title={spaceLabel(spaces, job.space_id)}>{spaceLabel(spaces, job.space_id)}</dd></div>
+                  <div><dt>Document</dt><dd><code aria-label={`Document ID ${job.document_id}`} title={job.document_id}>{job.document_id}</code></dd></div>
+                  <div><dt>Attempt</dt><dd>{job.attempt_count} of {job.max_attempts}</dd></div>
+                </dl>
                 <div className="progress-row"><progress max={100} value={Math.max(0, Math.min(100, job.progress))} /><strong>{Math.round(job.progress)}%</strong></div>
                 {job.last_error_code ? <p className="job-error">{job.last_error_code}</p> : null}
                 {!['succeeded', 'failed', 'cancelled'].includes(job.state) ? <button aria-label={`Cancel job ${job.id}`} className="archive-button compact" disabled={jobSaving || loading} onClick={() => setPendingJobAction({ job, operation: "cancel" })} type="button">Cancel job</button> : null}
@@ -2013,6 +2044,7 @@ export function ActivityConsole() {
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [spacesReady, setSpacesReady] = useState(false);
   const [filterQuery, setFilterQuery] = useState("");
+  const [spacesFailed, setSpacesFailed] = useState(false);
   const [actionFilter, setActionFilter] = useState("");
   const [resourceFilter, setResourceFilter] = useState("");
   const [appliedFilters, setAppliedFilters] = useState({ action: "", outcome: "" as "" | "success" | "denied" | "failed", q: "", resourceType: "" });
@@ -2062,6 +2094,7 @@ export function ActivityConsole() {
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
+        setSpacesFailed(true);
         setSpacesReady(true);
       }
     });
@@ -2075,7 +2108,8 @@ export function ActivityConsole() {
       description="Review security-sensitive mutations with actor, resource, outcome, timestamp, and request correlation."
       eyebrow="Immutable evidence"
       member={memberView(member)}
-      spaceCount={spacesReady ? spaces.length : null}
+      spaceCount={spacesReady && !spacesFailed ? spaces.length : null}
+      spaceCountFailed={spacesFailed}
       title="Activity"
     >
       {!isAdmin ? <section className="console-panel permission-panel"><LockKeyhole size={25} /><div><h2>Audit access is restricted</h2><p>Only super admins can review family-wide audit events. Space membership remains visible to each space owner.</p></div></section> : (
@@ -2093,7 +2127,7 @@ export function ActivityConsole() {
             {appliedFilters.action || appliedFilters.outcome || appliedFilters.q || appliedFilters.resourceType ? <button className="filter-clear-button" onClick={() => { setFilterQuery(""); setActionFilter(""); setResourceFilter(""); setAppliedFilters({ action: "", outcome: "", q: "", resourceType: "" }); }} type="button">Clear</button> : null}
           </form>
           {initialLoading || (loading && events.length === 0) ? <ListSkeleton /> : null}
-          {paginationError ? <ListUnavailable label="audit events" onRetry={() => void reloadAuditEvents()} /> : null}
+          {paginationError ? <ListUnavailable detail={paginationError} label="audit events" onRetry={() => void reloadAuditEvents()} /> : null}
           <div aria-busy={loading} className={`audit-list${loading && events.length > 0 ? " is-page-loading" : ""}`}>
             {events.map((event) => (
               <article className="audit-row" key={event.id}>
@@ -2146,6 +2180,7 @@ export function AiActionsConsole() {
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [spacesReady, setSpacesReady] = useState(false);
   const [tools, setTools] = useState<AIManagementTool[]>([]);
+  const [spacesFailed, setSpacesFailed] = useState(false);
   const [reviewing, setReviewing] = useState<PendingAIAction | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2171,6 +2206,7 @@ export function AiActionsConsole() {
     }).catch((loadError) => {
       if (active) {
         setError(message(loadError));
+        setSpacesFailed(true);
         setSpacesReady(true);
       }
     });
@@ -2203,7 +2239,8 @@ export function AiActionsConsole() {
       description="A typed management surface for trusted assistants. Identity, scope, idempotency, audit, and confirmations remain server-enforced."
       eyebrow="Tool contracts"
       member={memberView(member)}
-      spaceCount={spacesReady ? spaces.length : null}
+      spaceCount={spacesReady && !spacesFailed ? spaces.length : null}
+      spaceCountFailed={spacesFailed}
       title="AI actions"
     >
       <section className="tool-principle"><Sparkles size={22} /><div><strong>Plain requests in, deliberate operations out</strong><p>Read actions can run directly. High-impact writes require a short-lived confirmation before execution.</p></div></section>
@@ -2211,7 +2248,7 @@ export function AiActionsConsole() {
         {tools.map((tool, index) => <article className="tool-card" key={tool.name}><div><span className={`tool-icon accent-${index % 4}`}><Code2 size={17} /></span><span className={`mode-pill mode-${tool.confirmation === "required" ? "confirm" : "read"}`}>{tool.confirmation === "required" ? "Confirm" : "Direct"}</span></div><code>{tool.name}</code><p>{tool.description}</p></article>)}
       </div>
       {actionPages.initialLoading || (actionPages.loading && pendingActions.length === 0) ? <section className="console-panel pending-ai-panel"><ListSkeleton compact rows={3} /></section> : null}
-      {actionPages.error ? <section className="console-panel pending-ai-panel"><ListUnavailable label="pending actions" onRetry={() => void actionPages.reload()} /></section> : null}
+      {actionPages.error ? <section className="console-panel pending-ai-panel"><ListUnavailable detail={actionPages.error} label="pending actions" onRetry={() => void actionPages.reload()} /></section> : null}
       {!actionPages.initialLoading && !actionPages.error && pendingActions.length > 0 ? <section className="console-panel pending-ai-panel"><div className="panel-heading"><div><span>Human approval</span><h2>Pending confirmation</h2></div><span className="count-pill">{actionPages.totalItems}</span></div><div aria-busy={actionPages.loading} className={`data-list${actionPages.loading ? " is-page-loading" : ""}`}>{pendingActions.map((action) => <article className="data-row" key={action.id}><span className="row-leading violet"><Sparkles size={17} /></span><div className="row-copy"><h3>{action.tool_name}</h3><p>{action.target_ids.join(", ")} · revision {action.expected_revision ?? "—"}</p></div><button aria-label={`Review ${action.tool_name} for ${action.target_ids.join(", ")}`} className="row-action-button" disabled={actionPages.loading} onClick={() => setReviewing(action)} type="button">Review</button></article>)}</div>{actionPages.totalPages > 1 ? <PaginationControls loading={actionPages.loading} loadingPage={actionPages.loadingPage} onPageChange={(nextPage) => void actionPages.goToPage(nextPage)} page={actionPages.page} pageSize={actionPages.pageSize} totalItems={actionPages.totalItems} totalPages={actionPages.totalPages} /> : null}<ConfirmationDialog busy={confirming} busyLabel="Executing AI action…" cancelLabel="Not now" confirmLabel="Confirm AI action" description={reviewing ? aiActionImpact(reviewing.tool_name) : "Review this action before execution."} onCancel={() => setReviewing(null)} onConfirm={() => void confirmAction()} open={Boolean(reviewing)} title={reviewing ? `Confirm ${reviewing.tool_name}` : "Confirm AI action"} tone="danger" /></section> : null}
       {!actionPages.initialLoading && !actionPages.loading && !actionPages.error && pendingActions.length === 0 ? <section className="console-panel pending-ai-panel"><div className="console-empty small"><Sparkles size={20} /><strong>No actions need approval</strong></div></section> : null}
       {error ? <p className="inline-error wide" role="alert">{error}</p> : null}

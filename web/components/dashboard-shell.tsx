@@ -86,7 +86,8 @@ type DashboardShellProps = {
   member: SidebarMember;
   operations: DashboardOperations | null;
   ready: boolean;
-  spaceCount?: number;
+  spaceCount?: number | null;
+  spaceCountFailed?: boolean;
   spaces: DashboardSpace[];
   spacesLoaded?: boolean;
 };
@@ -116,6 +117,7 @@ export function DashboardShell({
   ready,
   spaces,
   spaceCount = spaces.length,
+  spaceCountFailed = false,
   spacesLoaded = true,
 }: DashboardShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -168,6 +170,7 @@ export function DashboardShell({
         menuOpen={menuOpen}
         onMenuClose={() => setMenuOpen(false)}
         spaceCount={loading ? null : spaceCount}
+        spaceCountFailed={spaceCountFailed}
         workspaceGroups={navigation}
       />
 
@@ -202,10 +205,10 @@ export function DashboardShell({
             </form>
 
             <div className="quick-actions" aria-label="Quick actions">
-              <Link href="/sources"><span className="action-icon violet"><Upload aria-hidden="true" size={17} /></span>Upload source</Link>
-              <Link href="/knowledge"><span className="action-icon coral"><Plus aria-hidden="true" size={17} /></span>Capture knowledge</Link>
-              <Link href="/spaces"><span className="action-icon cyan"><FolderKanban aria-hidden="true" size={17} /></span>Create space</Link>
-              <Link href="/explore"><span className="action-icon mint"><Gauge aria-hidden="true" size={17} /></span>Test retrieval</Link>
+              <Link href="/sources"><span className="action-icon"><Upload aria-hidden="true" size={17} /></span>Upload source</Link>
+              <Link href="/knowledge"><span className="action-icon"><Plus aria-hidden="true" size={17} /></span>Capture knowledge</Link>
+              <Link href="/spaces"><span className="action-icon"><FolderKanban aria-hidden="true" size={17} /></span>Create space</Link>
+              <Link href="/explore"><span className="action-icon"><Gauge aria-hidden="true" size={17} /></span>Test retrieval</Link>
             </div>
           </section>
 
@@ -218,9 +221,9 @@ export function DashboardShell({
               <div className="recent-list">
                 {loading ? <div aria-hidden="true" className="dashboard-list-skeleton">
                   {Array.from({ length: 3 }).map((_, index) => <span className="dashboard-skeleton-row" key={index}><i /><b /><em /></span>)}
-                </div> : spaces.slice(0, 3).map((space, index) => (
+                </div> : spaces.slice(0, 3).map((space) => (
                   <Link className="recent-row" href={`/knowledge?space=${encodeURIComponent(space.id)}`} key={space.id}>
-                    <span className={`document-glyph ${["violet", "cyan", "mint"][index]}`}><BookOpen aria-hidden="true" size={18} /></span>
+                    <span className="document-glyph"><BookOpen aria-hidden="true" size={18} /></span>
                     <span className="recent-copy"><strong>{space.name}</strong><small>{space.role} · available now</small></span>
                     <ArrowRight aria-hidden="true" className="row-arrow" size={17} />
                   </Link>
