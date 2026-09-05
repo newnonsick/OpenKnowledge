@@ -403,7 +403,8 @@ test("moves a management list with the direct numeric page control", async ({ pa
   await jumpInput.press("Enter");
 
   await expect(page.getByText("Second page knowledge")).toBeVisible();
-  await expect(page.getByText("26–50 of 500")).toBeVisible();
+  await expect(page.getByText("Page 2 of 20 · 500 items")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Page 2, current page" })).toBeVisible();
 });
 
 test("keeps the mobile knowledge error and retry state within the viewport", async ({ page }) => {

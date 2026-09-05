@@ -13,7 +13,22 @@ type PaginationControlsProps = {
   onPageChange: (page: number) => void;
 };
 
-const jumpMinPages = 8;
+function pageWindow(page: number, totalPages: number): (number | "gap")[] {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+  const siblings = new Set<number>([1, 2, page - 1, page, page + 1, totalPages - 1, totalPages]);
+  const ordered = [...siblings].filter((value) => value >= 1 && value <= totalPages).sort((left, right) => left - right);
+  const windowed: (number | "gap")[] = [];
+  for (const value of ordered) {
+    const last = windowed[windowed.length - 1];
+    if (typeof last === "number" && value - last > 1) {
+      windowed.push("gap");
+    }
+    windowed.push(value);
+  }
+  return windowed;
+}
 
 export function PaginationControls({
   page,
@@ -34,9 +49,6 @@ export function PaginationControls({
     return null;
   }
 
-  const firstItem = (page - 1) * pageSize + 1;
-  const lastItem = Math.min(page * pageSize, totalItems);
-
   const goToDirectPage = () => {
     if (loading) {
       return;
@@ -55,7 +67,9 @@ export function PaginationControls({
 
   return (
     <nav aria-busy={loading || undefined} aria-label="Pagination" className="pagination-controls">
-      <p aria-atomic="true" aria-live="polite" className="pagination-summary" role="status">{loading ? `Loading page ${loadingPage ?? page}…` : `${firstItem}–${lastItem} of ${totalItems}`}</p>
+      <p aria-atomic="true" aria-live="polite" className="pagination-summary" role="status">
+        {loading ? `Loading page ${loadingPage ?? page}…` : `Page ${page} of ${totalPages} · ${totalItems} items`}
+      </p>
       <div className="pagination-actions">
         <button
           aria-label="Previous page"
@@ -65,11 +79,34 @@ export function PaginationControls({
           type="button"
         >
           <ChevronLeft aria-hidden="true" size={15} />
-          <span className="pagination-step-label">Previous</span>
         </button>
-        {totalPages >= jumpMinPages ? (
-          <label className="pagination-jump-label">
-            <span>Page</span>
+        {pageWindow(page, totalPages).map((entry, index) => entry === "gap" ? (
+          <span aria-hidden="true" className="pagination-ellipsis" key={`gap-${index}`}>…</span>
+        ) : (
+          <button
+            aria-current={entry === page ? "page" : undefined}
+            aria-label={entry === page ? `Page ${entry}, current page` : `Go to page ${entry}`}
+            className={`pagination-button${entry === page ? " is-current" : ""}`}
+            disabled={loading || entry === page}
+            key={entry}
+            onClick={() => onPageChange(entry)}
+            type="button"
+          >
+            {entry}
+          </button>
+        ))}
+        <button
+          aria-label="Next page"
+          className="pagination-button pagination-step"
+          disabled={loading || page >= totalPages}
+          onClick={() => onPageChange(page + 1)}
+          type="button"
+        >
+          <ChevronRight aria-hidden="true" size={15} />
+        </button>
+        {totalPages >= 8 ? (
+          <label className="pagination-jump">
+            <span>Go to</span>
             <input
               aria-label={`Jump to page of ${totalPages}`}
               className="pagination-jump-input"
@@ -92,19 +129,8 @@ export function PaginationControls({
               type="text"
               value={directPage}
             />
-            <span>of {totalPages}</span>
           </label>
-        ) : <span aria-current="page" className="pagination-current">Page {page} of {totalPages}</span>}
-        <button
-          aria-label="Next page"
-          className="pagination-button pagination-step"
-          disabled={loading || page >= totalPages}
-          onClick={() => onPageChange(page + 1)}
-          type="button"
-        >
-          <span className="pagination-step-label">Next</span>
-          <ChevronRight aria-hidden="true" size={15} />
-        </button>
+        ) : null}
       </div>
     </nav>
   );

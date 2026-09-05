@@ -18,9 +18,9 @@ describe("PaginationControls", () => {
     );
 
     expect(screen.getByRole("navigation", { name: "Pagination" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Page 1" })).not.toBeInTheDocument();
-    expect(screen.getByText("26–50 of 300")).toBeInTheDocument();
-    expect(screen.getByText("of 12")).toBeInTheDocument();
+    expect(screen.getByText("Page 2 of 12 · 300 items")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Go to page 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Page 2, current page" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Previous page" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Next page" })).toBeEnabled();
 
@@ -47,8 +47,8 @@ describe("PaginationControls", () => {
       />,
     );
 
-    expect(screen.getByText("26–50 of 75")).toBeInTheDocument();
-    expect(screen.getByText("Page 2 of 3")).toBeInTheDocument();
+    expect(screen.getByText("Page 2 of 3 · 75 items")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Page 2, current page" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: /Jump to page/ })).not.toBeInTheDocument();
   });
 

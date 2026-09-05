@@ -815,6 +815,7 @@ export function ExploreConsole() {
   const autoQueryRef = useRef<string | null>(searchParams.get("q"));
   const resultsRef = useRef<HTMLElement>(null);
   const searchActiveRef = useRef(true);
+  const shouldScrollRef = useRef(false);
 
   useEffect(() => {
     searchActiveRef.current = true;
@@ -853,6 +854,7 @@ export function ExploreConsole() {
     }
     setSearching(true);
     setError(null);
+    shouldScrollRef.current = true;
     try {
       const response = await contractData(contractClient.POST("/api/v1/retrieval/search", {
         body: {
@@ -874,7 +876,8 @@ export function ExploreConsole() {
   }, [router, searching]);
 
   useEffect(() => {
-    if (!searching && result) {
+    if (!searching && result && shouldScrollRef.current) {
+      shouldScrollRef.current = false;
       resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }, [searching, result]);
@@ -963,6 +966,8 @@ export function SourcesConsole() {
   const [pendingArchive, setPendingArchive] = useState<SourceSummary | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const dragCount = useRef(0);
 
   const loadSourcePage = useCallback((page: number, signal: AbortSignal) => contractData(
     contractClient.GET("/api/v1/sources", {
@@ -1114,8 +1119,24 @@ export function SourcesConsole() {
             <select id="source-space" onChange={(event) => setSpaceId(event.target.value)} required value={spaceId}>{spaces.map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}</select>
             <label htmlFor="source-name">Display name</label>
             <input id="source-name" maxLength={500} onChange={(event) => setDisplayName(event.target.value)} placeholder="Defaults to filename" value={displayName} />
-            <label className="file-drop" htmlFor="source-file"><FileUp size={20} /><strong>{file ? file.name : "Choose a source file"}</strong><span>{file ? `${Math.max(1, Math.round(file.size / 1024))} KB` : "The configured server upload limit applies"}</span></label>
-            <input aria-label="Source file" className="visually-hidden" id="source-file" onChange={(event) => setFile(event.target.files?.[0] || null)} required type="file" />
+            <label
+              className={`file-drop${dragging ? " is-dragging" : ""}`}
+              htmlFor="source-file"
+              onDragEnter={(event) => { event.preventDefault(); dragCount.current += 1; setDragging(true); }}
+              onDragLeave={(event) => { event.preventDefault(); dragCount.current = Math.max(0, dragCount.current - 1); if (dragCount.current === 0) { setDragging(false); } }}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                dragCount.current = 0;
+                setDragging(false);
+                const dropped = event.dataTransfer.files?.[0];
+                if (dropped) {
+                  setFile(dropped);
+                  setQueued(false);
+                }
+              }}
+            ><FileUp size={20} /><strong>{file ? file.name : "Choose a source file or drag it here"}</strong><span>{file ? `${Math.max(1, Math.round(file.size / 1024))} KB · select a different file to replace it` : "The configured server upload limit applies"}</span></label>
+            <input aria-label="Source file" className="visually-hidden" id="source-file" onChange={(event) => { setFile(event.target.files?.[0] || null); setQueued(false); }} required type="file" />
             <button className="primary-button" disabled={uploading || spacesLoading || !file || spaces.length === 0} type="submit">{uploading ? <LoaderCircle className="spin" size={16} /> : <FileUp size={16} />} Queue source</button>
           </form>
           {queued ? <p className="inline-success"><ShieldCheck size={14} /> Queued for durable ingestion</p> : null}
