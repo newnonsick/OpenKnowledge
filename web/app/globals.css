@@ -849,13 +849,13 @@ html[data-theme="dark"] .row-leading.violet { color: var(--accent); }
 .filter-clear-button:hover { color: var(--coral); background: var(--coral-soft); }
 .two-filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .audit-filter-bar { grid-template-columns: minmax(200px, 1.2fr) repeat(3, minmax(130px, 0.75fr)) auto auto; }
-.settings-list-filter { grid-template-columns: minmax(160px, 1fr) minmax(120px, 0.5fr) auto; margin-top: 16px; }
+.settings-list-filter { grid-template-columns: minmax(160px, 1fr) minmax(120px, 0.5fr) auto auto; margin-top: 16px; }
 .single-filter-bar { grid-template-columns: minmax(0, 220px); margin-top: 14px; }
 .space-filter-bar { grid-template-columns: minmax(180px, 1fr) auto auto; }
 .source-filter-bar { grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.5fr) auto auto; }
 .access-filter-bar { grid-template-columns: minmax(180px, 1fr) auto; margin-top: 16px; }
-.access-member-filter { grid-template-columns: minmax(180px, 1fr) minmax(110px, 0.4fr) auto; margin: 14px 0 0; }
-.member-filter-bar { grid-template-columns: minmax(160px, 1fr) repeat(2, minmax(110px, 0.45fr)) auto; }
+.access-member-filter { grid-template-columns: minmax(180px, 1fr) minmax(110px, 0.4fr) auto auto; margin: 14px 0 0; }
+.member-filter-bar { grid-template-columns: minmax(160px, 1fr) repeat(2, minmax(110px, 0.45fr)) auto auto; }
 .filter-strip {
   display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 10px 14px;
   border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent); border-radius: var(--radius-md);
