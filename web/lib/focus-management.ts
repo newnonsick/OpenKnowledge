@@ -159,7 +159,20 @@ export function useDrawerFocus(open: boolean, setOpen: Dispatch<SetStateAction<b
     const overflowBefore = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const closeButton = closeRef.current || drawerRef.current?.querySelector<HTMLButtonElement>("button[aria-label='Close navigation']");
-    closeButton?.focus();
+    let frame = 0;
+    let attempts = 0;
+    const focusClose = () => {
+      const target = closeButton?.isConnected
+        ? closeButton
+        : drawerRef.current?.querySelector<HTMLButtonElement>("button[aria-label='Close navigation']");
+      target?.focus({ preventScroll: true });
+      attempts += 1;
+      const drawer = drawerRef.current;
+      if (attempts < 12 && drawer && !drawer.contains(document.activeElement)) {
+        frame = requestAnimationFrame(focusClose);
+      }
+    };
+    focusClose();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -173,6 +186,7 @@ export function useDrawerFocus(open: boolean, setOpen: Dispatch<SetStateAction<b
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => {
+      cancelAnimationFrame(frame);
       document.body.style.overflow = overflowBefore;
       document.removeEventListener("keydown", handleKeyDown);
     };

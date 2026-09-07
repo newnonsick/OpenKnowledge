@@ -1547,7 +1547,7 @@ html[data-theme="dark"] .auth-story { background: radial-gradient(circle at 85% 
   .mobile-menu-button.close { margin-left: auto; }
   .navigation-overlay { position: fixed; inset: 0; z-index: var(--z-overlay); border: 0; background: rgba(14, 18, 17, 0.45); backdrop-filter: blur(2px); }
   .menu-open .navigation-overlay { display: block; }
-  .menu-open .console-mobile-bar { z-index: var(--z-sidebar); }
+  .menu-open .console-mobile-bar { z-index: calc(var(--z-sidebar) - 1); }
   .console-mobile-bar {
     position: sticky; top: 0; z-index: var(--z-mobilebar); min-height: 56px; display: flex; align-items: center; gap: 12px;
     padding: 8px 16px; border-bottom: 1px solid var(--line);

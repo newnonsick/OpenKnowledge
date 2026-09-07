@@ -76,10 +76,14 @@ from src.gateway.presentation.schemas.management_responses import (
 from src.gateway.observability import increment_metric, set_metric_gauge
 
 
+def default_retrieval_embedding_client():
+    return HTTPEmbeddingClient()
+
+
 def _retrieval_service() -> AuthorizedRetrievalService:
     return AuthorizedRetrievalService(
         PostgresRetrievalUnitRepository(get_session_factory()),
-        HTTPEmbeddingClient(),
+        default_retrieval_embedding_client(),
         runtime_settings_provider=load_active_retrieval_settings,
     )
 
@@ -459,7 +463,7 @@ def _settings_payload(revision: RuntimeSettingsRevision) -> dict:
 
 async def _runtime_settings_dependency_probe(values: RuntimeSettingsValues) -> None:
     if values.retrieval.semantic_policy == "required":
-        await HTTPEmbeddingClient().embed_query("runtime settings readiness")
+        await default_retrieval_embedding_client().embed_query("runtime settings readiness")
 
 
 def _knowledge_payload(item: DomainKnowledgeItem, *, include_content: bool = True) -> dict:

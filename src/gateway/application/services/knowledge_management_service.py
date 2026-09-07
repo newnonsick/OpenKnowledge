@@ -21,6 +21,12 @@ from src.gateway.infrastructure.persistence.models import KnowledgeItem, Knowled
 logger = logging.getLogger(__name__)
 
 
+def default_embedding_client():
+    from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
+
+    return HTTPEmbeddingClient()
+
+
 class KnowledgeManagementService:
     def __init__(self, session: AsyncSession, embedding_client=None) -> None:
         self._session = session
@@ -275,9 +281,7 @@ class KnowledgeManagementService:
 
     async def _embed_revision(self, revision: KnowledgeRevision) -> list[float] | None:
         if self._embedding_client is None:
-            from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
-
-            self._embedding_client = HTTPEmbeddingClient()
+            self._embedding_client = default_embedding_client()
         text = f"{revision.title or ''}\n\n{revision.content}".strip()
         if not text:
             return None

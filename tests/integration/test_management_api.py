@@ -8,7 +8,9 @@ from sqlalchemy import select
 
 from src.gateway.application.security.tokens import OpaqueTokenCodec
 from src.gateway.application.services.session_service import SessionService
+from src.gateway.application.services import knowledge_management_service as knowledge_management_module
 from src.gateway.config import Settings
+from src.gateway.infrastructure.persistence import retrieval_unit_repository as retrieval_unit_repository_module
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SpaceRole, SystemRole
 from src.gateway.infrastructure.database import set_session_factory
 from src.gateway.infrastructure.persistence.identity_models import AuditEventModel, MFAFactorModel, MemberModel, PasswordCredentialModel, SpaceMembershipModel
@@ -29,6 +31,14 @@ def principal(member_id, system_role=SystemRole.MEMBER):
         system_role=system_role,
         scopes=frozenset({"*"}),
     )
+
+
+class StubEmbeddingClient:
+    async def embed_query(self, query):
+        return [0.1] * 1024
+
+    async def embed_texts(self, texts):
+        return [[0.1] * 1024 for _ in texts]
 
 
 async def test_management_resources_enforce_membership_and_one_time_secret_boundaries(tmp_path, monkeypatch) -> None:
@@ -160,14 +170,20 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
         app.include_router(router)
         set_session_factory(factory)
         try:
-            class StubEmbeddingClient:
-                async def embed_query(self, query):
-                    return [0.1] * 1024
-
+            monkeypatch.setattr(
+                knowledge_management_module,
+                "default_embedding_client",
+                lambda: StubEmbeddingClient(),
+            )
             monkeypatch.setattr(
                 management_module,
-                "HTTPEmbeddingClient",
+                "default_retrieval_embedding_client",
                 lambda: StubEmbeddingClient(),
+            )
+            monkeypatch.setattr(
+                retrieval_unit_repository_module,
+                "EMBED_DIM",
+                1024,
             )
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(
@@ -612,7 +628,9 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
             assert len(session_revoke_audits) == 1
 
 
-async def test_knowledge_listing_and_detail_are_scoped_to_effective_spaces(tmp_path) -> None:
+async def test_knowledge_listing_and_detail_are_scoped_to_effective_spaces(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(knowledge_management_module, "default_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     now = datetime.now(timezone.utc)
     admin_id = uuid4()
     member_id = uuid4()
