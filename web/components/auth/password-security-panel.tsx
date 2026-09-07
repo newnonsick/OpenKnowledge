@@ -108,7 +108,7 @@ export function PasswordSecurityPanel({ systemRole }: PasswordSecurityPanelProps
         {changed ? <p className="inline-success" role="status">Password changed. Other website sessions were signed out; this device remains signed in.</p> : null}
         <button className="primary-button" disabled={!canSubmit} type="submit">
           {busy ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : <KeyRound aria-hidden="true" size={16} />}
-          Change password
+          {busy ? "Changing…" : "Change password"}
         </button>
       </form>
     </div>

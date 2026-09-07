@@ -109,6 +109,19 @@ function spaceLabel(spaces: Space[], spaceId: string) {
   return spaces.find((space) => space.id === spaceId)?.name ?? spaceId;
 }
 
+function shortIdentifier(value: string) {
+  return value.length > 13 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
+}
+
+export function ShortIdentifier({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="short-identifier">
+      <code aria-label={`${label} ${value}`} title={value}>{shortIdentifier(value)}</code>
+      <CopyButton label={`Copy ${label.toLowerCase()}`} value={value} />
+    </span>
+  );
+}
+
 export function ListSkeleton({ compact = false, rows = 5 }: { compact?: boolean; rows?: number }) {
   return (
     <div aria-hidden="true" className={`list-skeleton${compact ? " compact" : ""}`}>
@@ -829,6 +842,7 @@ export function ExploreConsole() {
   const [searching, setSearching] = useState(false);
   const [spacesFailed, setSpacesFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const autoQueryRef = useRef<string | null>(searchParams.get("q"));
   const resultsRef = useRef<HTMLElement>(null);
@@ -877,13 +891,15 @@ export function ExploreConsole() {
       return;
     }
     if (!trimmed) {
-      setError("Enter a search phrase to explore your knowledge.");
+      setError(null);
+      setHint("Type a search phrase above to explore your knowledge.");
       searchInputRef.current?.focus();
       return;
     }
     searchingRef.current = true;
     setSearching(true);
     setError(null);
+    setHint(null);
     shouldScrollRef.current = true;
     try {
       const response = await contractData(contractClient.POST("/api/v1/retrieval/search", {
@@ -944,7 +960,8 @@ export function ExploreConsole() {
         </form>
         <p>OpenKnowledge fans the query out only to authorized spaces, merges the candidates, and returns a single ranked result set.</p>
       </section>
-      {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
+      {error ? <p className="inline-error wide" role="alert">{error}{lastQuery ? <button className="filter-clear-button" onClick={() => { setError(null); void runSearch(lastQuery); }} type="button">Retry</button> : <button className="filter-clear-button" onClick={() => setError(null)} type="button">Dismiss</button>}</p> : null}
+      {hint && !error ? <p className="filter-strip" role="status"><Search size={13} /> {hint}</p> : null}
       <p className="visually-hidden" role="status">{searching ? "Searching…" : result && lastQuery ? `${result.hits.length} matches found for ${lastQuery}` : ""}</p>
       {searching && !result ? (
         <section aria-busy="true" className="search-results-section">
@@ -2054,10 +2071,10 @@ export function IngestionConsole() {
           {jobs.map((job) => (
             <div className="job-card-group" key={job.id}>
               <article aria-label={`Ingestion job ${job.id}`} className="job-card">
-                <div className="job-topline"><div><span className={`state-dot state-${job.state}`} /><code aria-label={`Job ID ${job.id}`} title={job.id}>{job.id}</code></div><span className={`status-pill status-${job.state}`}>{job.state}</span></div>
+                <div className="job-topline"><div><span className={`state-dot state-${job.state}`} /><ShortIdentifier label="Job ID" value={job.id} /></div><span className={`status-pill status-${job.state}`}>{job.state}</span></div>
                 <dl className="job-context">
                   <div><dt>Space</dt><dd title={spaceLabel(spaces, job.space_id)}>{spaceLabel(spaces, job.space_id)}</dd></div>
-                  <div><dt>Document</dt><dd><code aria-label={`Document ID ${job.document_id}`} title={job.document_id}>{job.document_id}</code></dd></div>
+                  <div><dt>Document</dt><dd><ShortIdentifier label="Document ID" value={job.document_id} /></dd></div>
                   <div><dt>Attempt</dt><dd>{job.attempt_count} of {job.max_attempts}</dd></div>
                 </dl>
                 <div className="progress-row"><progress aria-label={`Ingestion progress ${Number.isFinite(job.progress) ? Math.max(0, Math.min(100, Math.round(job.progress))) : 0} percent`} max={100} value={Number.isFinite(job.progress) ? Math.max(0, Math.min(100, job.progress)) : 0} /><strong>{Number.isFinite(job.progress) ? `${Math.max(0, Math.min(100, Math.round(job.progress)))}%` : "—"}</strong></div>
@@ -2172,11 +2189,11 @@ export function ActivityConsole() {
                 <span aria-hidden="true" className={`audit-outcome outcome-${event.outcome}`} />
                 <div className="audit-event-content">
                   <div className="audit-event-heading"><h3>{event.action}</h3><span className={`status-pill status-${event.outcome}`}>{event.outcome}</span></div>
-                  <p aria-label={`Resource ${event.resource_type}${event.resource_id ? ` ${event.resource_id}` : ""}`} className="audit-resource" title={event.resource_id || event.resource_type}>{event.resource_type}{event.resource_id ? ` · ${event.resource_id}` : ""}</p>
+                  <p aria-label={`Resource ${event.resource_type}${event.resource_id ? ` ${event.resource_id}` : ""}`} className="audit-resource" title={event.resource_id || event.resource_type}>{event.resource_type}{event.resource_id ? <> · <ShortIdentifier label="Resource ID" value={event.resource_id} /></> : ""}</p>
                   <dl className="audit-meta">
                     <div><dt>Occurred</dt><dd><time dateTime={event.occurred_at}>{formatDateTime(event.occurred_at)}</time></dd></div>
-                    <div><dt>Actor</dt><dd>{event.actor_kind}{event.actor_member_id ? ` · ${event.actor_member_id}` : ""}</dd></div>
-                    <div><dt>Request ID</dt><dd><code aria-label={`Request ID ${event.request_id}`} title={event.request_id}>{event.request_id}</code></dd></div>
+                    <div><dt>Actor</dt><dd>{event.actor_kind}{event.actor_member_id ? <> · <ShortIdentifier label="Actor member ID" value={event.actor_member_id} /></> : ""}</dd></div>
+                    <div><dt>Request ID</dt><dd><ShortIdentifier label="Request ID" value={event.request_id} /></dd></div>
                   </dl>
                 </div>
               </article>

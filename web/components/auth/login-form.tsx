@@ -14,6 +14,7 @@ export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const codeInputRef = useRef<HTMLInputElement>(null);
@@ -30,6 +31,7 @@ export function LoginForm() {
       return;
     }
     setError(null);
+    setNotice(null);
     setSubmitting(true);
     const fields = new FormData(event.currentTarget);
     try {
@@ -53,11 +55,13 @@ export function LoginForm() {
       if (requestError instanceof ApiError && requestError.code === "mfa_code_required") {
         setStep("code");
         setFactorMode("totp");
+        setError(null);
+        setNotice("Password accepted. Enter the current code from your authenticator to finish signing in.");
       } else if (requestError instanceof ApiError && requestError.status === 429) {
         setError("Too many attempts. Please wait a moment before trying again.");
       } else if (requestError instanceof ApiError && requestError.status >= 500) {
         setError("The gateway is having trouble. Please wait a moment and try again.");
-      } else if (requestError instanceof TypeError) {
+      } else if (requestError instanceof TypeError || (requestError instanceof ApiError && requestError.code === "request_failed")) {
         setError("Could not reach the gateway. Check your connection and try again.");
       } else {
         setError(step === "code"
@@ -92,8 +96,8 @@ export function LoginForm() {
         <input autoComplete="username" hidden id="login-username-persist" name="username" readOnly type="text" value={username} />
         <input autoComplete="current-password" hidden id="login-password-persist" name="password" readOnly type="password" value={password} />
         <div className="factor-tabs" role="group" aria-label="Second factor method">
-          <button aria-pressed={factorMode === "totp"} onClick={() => setFactorMode("totp")} tabIndex={step === "code" ? 0 : -1} type="button"><ShieldCheck aria-hidden="true" size={15} /> Authenticator code</button>
-          <button aria-pressed={factorMode === "recovery"} onClick={() => setFactorMode("recovery")} tabIndex={step === "code" ? 0 : -1} type="button"><KeyRound aria-hidden="true" size={15} /> Recovery code</button>
+          <button aria-pressed={factorMode === "totp"} disabled={submitting} onClick={() => { setFactorMode("totp"); setError(null); }} tabIndex={step === "code" ? 0 : -1} type="button"><ShieldCheck aria-hidden="true" size={15} /> Authenticator code</button>
+          <button aria-pressed={factorMode === "recovery"} disabled={submitting} onClick={() => { setFactorMode("recovery"); setError(null); }} tabIndex={step === "code" ? 0 : -1} type="button"><KeyRound aria-hidden="true" size={15} /> Recovery code</button>
         </div>
         <label className="field-label" htmlFor={factorMode === "totp" ? "totp_code" : "recovery_code"}>
           {factorMode === "totp" ? "Authentication code" : "Recovery code"}
@@ -105,6 +109,7 @@ export function LoginForm() {
         )}
       </div>
 
+      {notice && !error ? <div className="auth-notice" role="status">{notice}</div> : null}
       {error ? <div className="auth-error" role="alert">{error}</div> : null}
       <button className="auth-submit" disabled={submitting} type="submit">
         {submitting ? <LoaderCircle aria-hidden="true" className="spin" size={17} /> : null}
@@ -115,7 +120,7 @@ export function LoginForm() {
             : "Sign in"}
       </button>
       {step === "code" ? (
-        <button className="auth-back-link" onClick={() => { setStep("credentials"); setError(null); }} type="button">
+        <button className="auth-back-link" onClick={() => { setStep("credentials"); setError(null); setNotice(null); }} type="button">
           <ArrowLeft aria-hidden="true" size={14} /> Back to sign in
         </button>
       ) : null}

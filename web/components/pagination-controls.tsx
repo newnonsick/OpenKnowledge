@@ -13,6 +13,8 @@ type PaginationControlsProps = {
   onPageChange: (page: number) => void;
 };
 
+const jumpThreshold = 10;
+
 function pageWindow(page: number, totalPages: number): (number | "gap")[] {
   if (totalPages <= 5) {
     return Array.from({ length: totalPages }, (_, index) => index + 1);
@@ -30,6 +32,16 @@ function pageWindow(page: number, totalPages: number): (number | "gap")[] {
   return windowed;
 }
 
+function rangeSummary(page: number, pageSize: number, totalItems: number): string {
+  if (totalItems === 0) {
+    return "No results";
+  }
+  const size = pageSize > 0 ? pageSize : totalItems;
+  const start = (page - 1) * size + 1;
+  const end = Math.min(page * size, totalItems);
+  return `${start}–${end} of ${totalItems}`;
+}
+
 export function PaginationControls({
   page,
   pageSize,
@@ -41,7 +53,6 @@ export function PaginationControls({
 }: PaginationControlsProps) {
   const [directPage, setDirectPage] = useState(String(page));
   const jumpLabelId = useId();
-  const jumpRangeId = useId();
 
   useEffect(() => {
     setDirectPage(String(page));
@@ -67,11 +78,11 @@ export function PaginationControls({
     }
   };
 
+  const summary = rangeSummary(page, pageSize, totalItems);
+
   return (
     <nav aria-busy={loading || undefined} aria-label="Pagination" className="pagination-controls">
-      <p aria-atomic="true" aria-live="polite" className="pagination-summary" role="status">
-        {loading ? `Loading page ${loadingPage ?? page}…` : `${totalItems} items`}
-      </p>
+      <p aria-live="polite" className="pagination-summary">{summary}</p>
       <div className="pagination-actions">
         <button
           aria-label="Previous page"
@@ -87,7 +98,7 @@ export function PaginationControls({
         ) : (
           <button
             aria-current={entry === page ? "page" : undefined}
-            aria-label={entry === page ? `Page ${entry}, current page` : `Go to page ${entry}`}
+            aria-label={entry === page ? `Page ${entry}` : `Go to page ${entry}`}
             className={`pagination-button${entry === page ? " is-current" : ""}`}
             disabled={loading || entry === page}
             key={entry}
@@ -106,14 +117,14 @@ export function PaginationControls({
         >
           <ChevronRight aria-hidden="true" size={15} />
         </button>
-        {totalPages >= 6 ? (
-          <label className="pagination-jump">
-            <span id={jumpLabelId}>Go to page</span>
+        {totalPages >= jumpThreshold ? (
+          <span className="pagination-jump">
+            <label htmlFor={jumpLabelId}>Page</label>
             <input
-              aria-describedby={`${jumpLabelId} ${jumpRangeId}`}
-              aria-label="Go to page number"
+              aria-label={`Page number, 1 to ${totalPages}`}
               className="pagination-jump-input"
               disabled={loading}
+              id={jumpLabelId}
               inputMode="numeric"
               max={totalPages}
               min={1}
@@ -133,10 +144,11 @@ export function PaginationControls({
               type="text"
               value={directPage}
             />
-            <span className="pagination-jump-range" id={jumpRangeId}>of {totalPages}</span>
-          </label>
+            <span aria-hidden="true" className="pagination-jump-range">of {totalPages}</span>
+          </span>
         ) : null}
       </div>
+      <span className="visually-hidden" role="status">{loading ? `Loading page ${loadingPage ?? page}` : ""}</span>
     </nav>
   );
 }

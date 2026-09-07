@@ -79,7 +79,7 @@ export function usePagePagination<T>({ loadPage, queryKey, initialPage = 1 }: Pa
         totalItems: 0,
         totalPages: 0,
       } : {}),
-      initialLoading: clearItems,
+      initialLoading: clearItems || previous.items.length === 0,
       loading: true,
       loadingPage: targetPage,
       retryPage: null,
@@ -122,7 +122,7 @@ export function usePagePagination<T>({ loadPage, queryKey, initialPage = 1 }: Pa
   }, [updateState]);
 
   useEffect(() => {
-    void fetchPage(initialPage, true);
+    void fetchPage(initialPage, false);
     return () => {
       requestIdRef.current += 1;
       controllerRef.current?.abort();

@@ -28,6 +28,22 @@ export class ApiError extends Error {
   }
 }
 
+function timeoutError(): ApiError {
+  return new ApiError(0, {
+    error: {
+      code: "request_failed",
+      message: "The request timed out. Check your connection and try again.",
+      type: "timeout_error",
+    },
+  });
+}
+
+function isTimeout(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === "AbortError" || error.name === "TimeoutError"
+    : error instanceof Error && error.name === "TimeoutError";
+}
+
 type ApiRequestOptions = {
   body?: unknown;
   headers?: HeadersInit;
@@ -136,6 +152,11 @@ async function rawRequest<T>(path: string, options: ApiRequestOptions = {}): Pro
     headers,
     method,
     signal: boundedSignal(options.signal),
+  }).catch((requestError: unknown) => {
+    if (isTimeout(requestError)) {
+      throw timeoutError();
+    }
+    throw requestError;
   });
   return decodeResponse<T>(response);
 }
@@ -228,6 +249,11 @@ export async function apiMultipart<T>(
       headers,
       method: "POST",
       signal: boundedSignal(options.signal),
+    }).catch((requestError: unknown) => {
+      if (isTimeout(requestError)) {
+        throw timeoutError();
+      }
+      throw requestError;
     }).then(decodeResponse<T>);
   };
   try {
@@ -268,12 +294,27 @@ const contractFetch: typeof fetch = async (input, init) => {
     input instanceof Request ? input : new Request(input, init),
   );
   const retry = initial.clone();
-  let response = await fetch(initial);
+  let response: Response;
+  try {
+    response = await fetch(initial);
+  } catch (requestError: unknown) {
+    if (isTimeout(requestError)) {
+      throw timeoutError();
+    }
+    throw requestError;
+  }
   const pathname = new URL(initial.url).pathname;
   const retryable = initial.method === "GET" || initial.method === "HEAD" || initial.headers.has("Idempotency-Key");
   if (response.status === 401 && retryable && !pathname.startsWith("/api/v1/auth/")) {
     await refreshSession();
-    response = await fetch(prepareContractRequest(retry));
+    try {
+      response = await fetch(prepareContractRequest(retry));
+    } catch (requestError: unknown) {
+      if (isTimeout(requestError)) {
+        throw timeoutError();
+      }
+      throw requestError;
+    }
   }
   return response;
 };

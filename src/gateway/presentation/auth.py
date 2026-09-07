@@ -22,6 +22,7 @@ from src.gateway.infrastructure.database import get_session_factory
 from src.gateway.infrastructure.persistence.identity_models import CompatibilityPrincipalModel, MemberModel, SessionCredentialModel
 from src.gateway.infrastructure.persistence.principal_context import bind_principal, reset_principal
 from src.gateway.presentation.errors import protocol_error_response
+from src.gateway.presentation.session_cookies import access_cookie_name
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +211,7 @@ class APIKeyAuthMiddleware:
                     bearer_token
                 )
         if bearer_token is None:
-            access_token = request.cookies.get("__Host-openknowledge-access")
+            access_token = request.cookies.get(access_cookie_name())
             if access_token:
                 factory = self._session_factory or get_session_factory()
                 async with factory.begin() as session:

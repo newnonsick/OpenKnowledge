@@ -346,7 +346,7 @@ class GatewaySettings(BaseSettings):
             return {f"{parsed.scheme}://{parsed.netloc}"}
         if self.environment is RuntimeEnvironment.PRODUCTION:
             return set()
-        return {"http://localhost:3000", "http://127.0.0.1:3000"}
+        return {"http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3100", "http://127.0.0.1:3100"}
     max_request_body_bytes: int = Field(
         default=16 * 1024 * 1024,
         gt=0,

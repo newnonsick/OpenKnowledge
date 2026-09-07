@@ -31,6 +31,7 @@ from src.gateway.presentation.request_context import RequestContextMiddleware
 from src.gateway.presentation.request_limits import RequestBodyLimitMiddleware
 from src.gateway.presentation.metrics import MetricsMiddleware, MetricsRegistry
 from src.gateway.presentation.security_headers import SecurityHeadersMiddleware
+from src.gateway.presentation.session_cookies import CANONICAL_ACCESS_COOKIE
 from src.gateway.presentation.settings_context import SettingsContextMiddleware
 from src.gateway.presentation.routers import (
     chat_completions_router,
@@ -214,7 +215,7 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
             "cookieAuth": {
                 "type": "apiKey",
                 "in": "cookie",
-                "name": "__Host-openknowledge-access",
+                "name": CANONICAL_ACCESS_COOKIE,
             },
             "bearerAuth": {
                 "type": "http",

@@ -1367,7 +1367,8 @@ describe("management console", () => {
     expect(await screen.findByText("knowledge.create")).toBeInTheDocument();
     expect(screen.getByLabelText(`Request ID ${requestId}`)).toHaveAttribute("title", requestId);
     expect(screen.getByLabelText(`Resource knowledge_item ${resourceId}`)).toHaveAttribute("title", `${resourceId}`);
-    expect(screen.getByText("session · member-1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Actor member ID member-1")).toHaveAttribute("title", "member-1");
+    expect(screen.getByRole("button", { name: "Copy actor member id" })).toBeInTheDocument();
   });
 
   it("presents AI management tools as deliberate actions without a chat surface", async () => {

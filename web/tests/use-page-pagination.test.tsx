@@ -39,6 +39,8 @@ describe("usePagePagination", () => {
 
     expect(result.current.items.map((item) => item.id)).toEqual(["one"]);
     expect(result.current.loading).toBe(true);
+    expect(result.current.page).toBe(1);
+    expect(result.current.loadingPage).toBe(2);
 
     await act(async () => {
       resolveSecond?.({

@@ -111,17 +111,17 @@ export function MfaSecurityPanel({ enabled, onEnabled }: { enabled: boolean; onE
           <p>Scan this code with a TOTP-compatible authenticator, then enter the current code.</p>
           <MfaEnrollmentSecret provisioningUri={enrollment.provisioning_uri} secret={enrollment.secret} />
           <label htmlFor="security-mfa-code">Authentication code</label>
-          <input autoComplete="one-time-code" className="code-field" id="security-mfa-code" inputMode="numeric" maxLength={8} onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))} pattern="[0-9]{6,8}" required value={code} />
+          <input autoComplete="one-time-code" className="code-field" disabled={busy} id="security-mfa-code" inputMode="numeric" maxLength={8} onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))} pattern="[0-9]{6,8}" required value={code} />
           {error ? <p className="inline-error" role="alert">{error}</p> : null}
-          <div className="mfa-security-actions"><button className="secondary-button" disabled={busy} onClick={cancel} type="button">Cancel setup</button><button className="primary-button" disabled={busy || !/^\d{6,8}$/.test(code)} type="submit">{busy ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : null}Confirm MFA</button></div>
+          <div className="mfa-security-actions"><button className="secondary-button" disabled={busy} onClick={cancel} type="button">Cancel setup</button><button className="primary-button" disabled={busy || !/^\d{6,8}$/.test(code)} type="submit">{busy ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : null}{busy ? "Confirming…" : "Confirm MFA"}</button></div>
         </form>
       ) : (
         <form className="mfa-start-form" onSubmit={start}>
           <p>Set up an authenticator before this account needs elevated access. Your current password verifies that the request is yours.</p>
           <label htmlFor="security-current-password">Current password</label>
-          <input autoComplete="current-password" id="security-current-password" name="current_password" required type="password" />
+          <input autoComplete="current-password" disabled={busy} id="security-current-password" name="current_password" required type="password" />
           {error ? <p className="inline-error" role="alert">{error}</p> : null}
-          <button className="primary-button" disabled={busy} type="submit">{busy ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : <ShieldCheck aria-hidden="true" size={16} />}Start MFA setup</button>
+          <button className="primary-button" disabled={busy} type="submit">{busy ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : <ShieldCheck aria-hidden="true" size={16} />}{busy ? "Starting…" : "Start MFA setup"}</button>
         </form>
       )}
     </div>

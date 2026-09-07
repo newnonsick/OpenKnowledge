@@ -20,6 +20,12 @@ from src.gateway.infrastructure.database import get_db_session, get_session_fact
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, SessionCredentialModel
 from src.gateway.presentation.api_keys import configured_api_key_codec
 from src.gateway.presentation.request_context import get_request_id
+from src.gateway.presentation.session_cookies import (
+    CSRF_COOKIE_NAME,
+    access_cookie_name,
+    cookies_secure,
+    refresh_cookie_name,
+)
 from src.gateway.presentation.schemas.management_responses import (
     MANAGEMENT_ERROR_RESPONSES,
     SessionAuthentication,
@@ -193,30 +199,31 @@ def _apply_session_cookies(response: Response, secrets: SessionSecrets) -> None:
     now = datetime.now(timezone.utc)
     access_max_age = max(0, int((secrets.access_expires_at - now).total_seconds()))
     refresh_max_age = max(0, int((secrets.idle_expires_at - now).total_seconds()))
+    secure = cookies_secure()
     response.set_cookie(
-        "__Host-openknowledge-access",
+        access_cookie_name(),
         secrets.access_token.reveal(),
         max_age=access_max_age,
         path="/",
-        secure=True,
+        secure=secure,
         httponly=True,
         samesite="strict",
     )
     response.set_cookie(
-        "__Secure-openknowledge-refresh",
+        refresh_cookie_name(),
         secrets.refresh_token.reveal(),
         max_age=refresh_max_age,
         path="/api/v1/auth/refresh",
-        secure=True,
+        secure=secure,
         httponly=True,
         samesite="strict",
     )
     response.set_cookie(
-        "openknowledge-csrf",
+        CSRF_COOKIE_NAME,
         secrets.csrf_token.reveal(),
         max_age=refresh_max_age,
         path="/",
-        secure=True,
+        secure=secure,
         httponly=False,
         samesite="strict",
     )
@@ -326,7 +333,7 @@ async def refresh(
     session: AsyncSession = Depends(get_db_session),
 ) -> SessionRefresh:
     _verify_origin(request)
-    refresh_token = request.cookies.get("__Secure-openknowledge-refresh")
+    refresh_token = request.cookies.get(refresh_cookie_name())
     if not refresh_token:
         raise AuthenticationException("Invalid session.")
     rotation = await SessionService(session).rotate_refresh(
@@ -557,8 +564,9 @@ async def logout(
             credential.family_id,
             reason="sign_out",
         )
-    response.delete_cookie("__Host-openknowledge-access", path="/", secure=True, httponly=True, samesite="strict")
-    response.delete_cookie("__Secure-openknowledge-refresh", path="/api/v1/auth/refresh", secure=True, httponly=True, samesite="strict")
-    response.delete_cookie("openknowledge-csrf", path="/", secure=True, httponly=False, samesite="strict")
+    secure = cookies_secure()
+    response.delete_cookie(access_cookie_name(), path="/", secure=secure, httponly=True, samesite="strict")
+    response.delete_cookie(refresh_cookie_name(), path="/api/v1/auth/refresh", secure=secure, httponly=True, samesite="strict")
+    response.delete_cookie(CSRF_COOKIE_NAME, path="/", secure=secure, httponly=False, samesite="strict")
     response.headers["Cache-Control"] = "no-store"
     return SignOut(status="signed_out")
