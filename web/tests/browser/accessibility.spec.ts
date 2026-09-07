@@ -285,6 +285,175 @@ test("opens discovery with the advertised keyboard shortcut", async ({ page }) =
   await expect(page.getByRole("heading", { name: "Explore" })).toBeVisible();
 });
 
+test("runs a permission-aware search and renders ranked results", async ({ page }) => {
+  await mockGateway(page);
+  await page.route("**/api/v1/retrieval/search*", (route) => route.fulfill(json({
+    explanation: [],
+    health: { degraded_reasons: [], embedding_coverage: 1, embedding_generation_id: "gen-1", semantic_status: "active" },
+    hits: [
+      { canonical_id: "knowledge-1", citation_uri: "openknowledge://knowledge/knowledge-1", content_excerpt: "Renew passports six months before expiry.", language: "en", rank: 1, rank_score: 0.92, revision_id: "rev-1", source_filename: "passports.pdf", source_type: "knowledge", space_id: "global", title: "Passport renewal checklist", version: 2 },
+      { canonical_id: "source-1", citation_uri: "openknowledge://source/source-1", content_excerpt: "Emergency contacts for every family member.", language: "en", rank: 2, rank_score: 0.71, revision_id: "rev-2", source_filename: "contacts.pdf", source_type: "source", space_id: "travel", title: "Emergency contacts", version: 1 },
+    ],
+    query: "passport renewal",
+  })));
+  await page.goto("/explore");
+
+  await page.getByLabel("Search query").fill("passport renewal");
+  await page.getByRole("button", { name: "Search knowledge" }).click();
+
+  await expect(page.getByRole("heading", { name: /2 matches for/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Passport renewal checklist" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Emergency contacts" })).toBeVisible();
+  await expect(page.getByText("Semantic + lexical retrieval active")).toBeVisible();
+  await expect(page).toHaveURL(/\/explore\?q=passport/);
+  await expectAccessible(page);
+});
+
+test("shows the search empty state and the empty-query hint", async ({ page }) => {
+  await mockGateway(page);
+  await page.route("**/api/v1/retrieval/search*", (route) => route.fulfill(json({
+    explanation: [],
+    health: { degraded_reasons: [], embedding_coverage: 1, embedding_generation_id: "gen-1", semantic_status: "active" },
+    hits: [],
+    query: "unfindable phrase xyz",
+  })));
+  await page.goto("/explore");
+
+  await page.getByRole("button", { name: "Search knowledge" }).click();
+  await expect(page.getByText("Type a search phrase above to explore your knowledge.")).toBeVisible();
+
+  await page.getByLabel("Search query").fill("unfindable phrase xyz");
+  await page.getByRole("button", { name: "Search knowledge" }).click();
+  await expect(page.getByText("No confident match")).toBeVisible();
+  await expect(page.getByText("Try a more specific phrase or add the missing knowledge.")).toBeVisible();
+});
+
+test("recovers from a search failure and refines results", async ({ page }) => {
+  await mockGateway(page);
+  let calls = 0;
+  const successBody = {
+    explanation: [],
+    health: { degraded_reasons: [], embedding_coverage: 1, embedding_generation_id: "gen-1", semantic_status: "active" },
+    hits: [{ canonical_id: "knowledge-1", citation_uri: "openknowledge://knowledge/knowledge-1", content_excerpt: "Renew passports.", language: "en", rank: 1, rank_score: 0.9, revision_id: "rev-1", source_filename: "passports.pdf", source_type: "knowledge", space_id: "global", title: "Passport renewal checklist", version: 2 }],
+    query: "passport",
+  };
+  await page.route("**/api/v1/retrieval/search*", (route) => {
+    calls += 1;
+    if (calls === 1) {
+      return route.fulfill(json({ error: { code: "upstream_error", message: "Search is unavailable right now.", type: "upstream_error" }, request_id: "x" }, 503));
+    }
+    return route.fulfill(json(successBody));
+  });
+  await page.goto("/explore");
+
+  await page.getByLabel("Search query").fill("passport");
+  await page.getByRole("button", { name: "Search knowledge" }).click();
+  await expect(page.locator("p.inline-error.wide")).toContainText("Search is unavailable right now.");
+  await page.getByLabel("Search query").fill("passport");
+  await page.getByRole("button", { name: "Search knowledge" }).click();
+  await expect(page.getByRole("heading", { name: /1 match for/ })).toBeVisible();
+});
+
+test("filters knowledge by search text and tag", async ({ page }) => {
+  await mockGateway(page);
+  await page.route("**/api/v1/knowledge*", (route) => {
+    const url = new URL(route.request().url());
+    const query = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+    const tag = (url.searchParams.get("tag") ?? "").trim().toLowerCase();
+    const all = [
+      { content: "Passport renewal instructions.", created_at: "2026-08-20T12:00:00Z", id: "knowledge-1", revision: 2, source_id: "source-1", space_id: "global", tags: ["travel"], title: "International travel document checklist", updated_at: "2026-08-21T12:00:00Z" },
+      { content: "Weekly meal plan.", created_at: "2026-08-20T12:00:00Z", id: "knowledge-2", revision: 1, source_id: "source-1", space_id: "global", tags: ["home"], title: "Meal planning notes", updated_at: "2026-08-21T12:00:00Z" },
+    ];
+    const items = all.filter((item) => (!query || `${item.title} ${item.content}`.toLowerCase().includes(query)) && (!tag || item.tags.some((value) => value.toLowerCase().includes(tag))));
+    return route.fulfill(json({ items, page: 1, page_size: 25, total_items: items.length, total_pages: items.length ? 1 : 0 }));
+  });
+  await page.goto("/knowledge");
+
+  await expect(page.getByRole("heading", { name: "International travel document checklist" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Meal planning notes" })).toBeVisible();
+
+  await page.getByLabel("Search knowledge list").fill("meal");
+  await page.getByLabel("Filter by tag").fill("home");
+  await page.getByRole("button", { name: "Apply knowledge filters" }).click();
+  await expect(page.getByRole("heading", { name: "Meal planning notes" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "International travel document checklist" })).toBeHidden();
+
+  await page.getByRole("button", { name: "Clear" }).click();
+  await expect(page.getByRole("heading", { name: "International travel document checklist" })).toBeVisible();
+});
+
+test("rejects invalid credentials with an accessible error", async ({ page }) => {
+  await mockGateway(page);
+  await page.route("**/api/v1/auth/login*", (route) => route.fulfill(json({
+    error: { code: "invalid_credentials", message: "Incorrect username or password.", type: "authentication_error" },
+    request_id: "browser-test",
+  }, 401)));
+  await page.goto("/login");
+
+  await page.getByLabel("Username").fill("mai");
+  await page.locator("#password").fill("wrong-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+
+  await expect(page.locator("div.auth-error")).toContainText("The username or password is incorrect.");
+  await expect(page).toHaveURL("/login");
+});
+
+test("signs out through the account menu and returns to login", async ({ page }) => {
+  await mockGateway(page);
+  await page.route("**/api/v1/auth/logout*", (route) => route.fulfill(json({ signed_out: true })));
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Open account menu" }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+
+  await expect(page).toHaveURL("/login");
+  await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
+});
+
+test("shows the spaces empty state when no spaces exist", async ({ page }) => {
+  await mockGateway(page);
+  await page.route("**/api/v1/spaces*", (route) => route.fulfill(json({ items: [], page: 1, page_size: 100, total_items: 0, total_pages: 0 })));
+  await page.goto("/spaces");
+
+  await expect(page.getByText("No spaces yet")).toBeVisible();
+});
+
+test("shows a loading skeleton before sources resolve", async ({ page }) => {
+  await mockGateway(page);
+  await page.route("**/api/v1/sources*", (route) => new Promise<void>((resolve) => {
+    setTimeout(() => {
+      void route.fulfill(json({ items: [], page: 1, page_size: 25, total_items: 0, total_pages: 0 })).then(resolve, resolve);
+    }, 1500);
+  }));
+  await page.goto("/sources");
+
+  await expect(page.locator(".list-skeleton .skeleton-row").first()).toBeVisible();
+  await expect(page.getByText("No source files")).toBeVisible();
+  await expect(page.locator(".list-skeleton")).toHaveCount(0);
+});
+
+test("filters sources through the status dropdown", async ({ page }) => {
+  await mockGateway(page, "super_admin");
+  await page.route("**/api/v1/sources*", (route) => {
+    const status = new URL(route.request().url()).searchParams.get("status") ?? "";
+    const all = [
+      { display_name: "Family procedures and emergency contacts", id: "source-1", original_filename: "family-procedures.pdf", revision: 3, size_bytes: 524288, space_id: "global", status: "active", updated_at: "2026-08-20T12:00:00Z" },
+      { display_name: "Failed scan batch", id: "source-2", original_filename: "scan-batch.pdf", revision: 1, size_bytes: 1024, space_id: "global", status: "failed", updated_at: "2026-08-20T12:00:00Z" },
+    ];
+    const items = status ? all.filter((item) => item.status === status) : all;
+    return route.fulfill(json({ items, page: 1, page_size: 25, total_items: items.length, total_pages: items.length ? 1 : 0 }));
+  });
+  await page.goto("/sources");
+
+  await expect(page.getByRole("heading", { name: "Family procedures and emergency contacts" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Failed scan batch" })).toBeVisible();
+
+  await page.getByLabel("Filter source status").selectOption("failed");
+  await page.getByRole("button", { name: "Apply" }).click();
+  await expect(page.getByRole("heading", { name: "Failed scan batch" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Family procedures and emergency contacts" })).toBeHidden();
+});
+
 test("returns focus after confirmation hands off to identity verification", async ({ page }) => {
   await mockGateway(page);
   await page.goto("/spaces");
