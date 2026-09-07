@@ -95,7 +95,7 @@ export function ConsoleShell({ actions, children, description, eyebrow, member, 
           {children}
         </div>
       </main>
-      <button aria-label="Close navigation overlay" className="navigation-overlay" onClick={() => setMenuOpen(false)} type="button" />
+      {menuOpen ? <button aria-label="Close navigation overlay" className="navigation-overlay" onClick={() => setMenuOpen(false)} type="button" /> : null}
     </div>
   );
 }

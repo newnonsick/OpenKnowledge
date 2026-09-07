@@ -47,7 +47,7 @@ describe("MfaEnrollmentForm", () => {
 
     await screen.findByText("ABCDEFGHIJKLMNOP");
     expect(screen.getByRole("img", { name: "Authenticator setup QR code" })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("6-digit authentication code"), { target: { value: "123456" } });
+    fireEvent.change(screen.getByLabelText("6–8 digit authentication code"), { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "Verify and continue" }));
 
     await waitFor(() => expect(screen.getByText("code-one")).toBeInTheDocument());
@@ -94,7 +94,7 @@ describe("MfaEnrollmentForm", () => {
     render(<MfaEnrollmentForm />);
 
     await screen.findByText("ABCDEFGHIJKLMNOP");
-    fireEvent.change(screen.getByLabelText("6-digit authentication code"), { target: { value: "123456" } });
+    fireEvent.change(screen.getByLabelText("6–8 digit authentication code"), { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "Verify and continue" }));
 
     const heading = await screen.findByRole("heading", { name: "Save your recovery secrets." });

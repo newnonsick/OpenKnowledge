@@ -56,6 +56,9 @@ const API_KEY_SCOPE_OPTIONS = [
 
 const DEFAULT_API_KEY_SCOPES = ["knowledge:read"];
 
+const SUPPORTED_SOURCE_EXTENSIONS = ".bash,.c,.cc,.cfg,.cjs,.conf,.cpp,.cs,.css,.csv,.cxx,.dart,.env,.erl,.ex,.exs,.geojson,.go,.gql,.graphql,.h,.hpp,.hs,.htm,.html,.hxx,.ini,.java,.js,.json,.jsonl,.jsx,.kt,.kts,.less,.log,.lua,.m,.markdown,.md,.mjs,.ndjson,.nim,.pdf,.php,.proto,.py,.pyi,.r,.rb,.rs,.rst,.sass,.scala,.scss,.sh,.sql,.svelte,.swift,.toml,.ts,.tsv,.tsx,.txt,.vue,.yaml,.yml,.zig,.zsh";
+const DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
 const SETTINGS_SECTIONS = ["security", "api-keys", "sessions", "runtime"] as const;
 type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
@@ -436,7 +439,7 @@ export function SpacesConsole() {
                 </div>
                 <button className="primary-button" disabled={!selectedCandidateId || accessSaving} type="submit"><UserPlus size={15} /> Add member</button>
               </form>
-              <form className="list-filter-bar access-member-filter" onSubmit={(event) => { event.preventDefault(); setAppliedMemberSearch(memberSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={14} /><input aria-label="Search space members" onChange={(event) => setMemberSearch(event.target.value)} placeholder="Search current members" type="search" value={memberSearch} /></label><label><select aria-label="Filter space member role" onChange={(event) => setMemberRoleFilter(event.target.value as typeof memberRoleFilter)} value={memberRoleFilter}><option value="">All roles</option><option value="owner">Owner</option><option value="editor">Editor</option><option value="reader">Reader</option></select></label><button className="secondary-button" type="submit">Apply</button></form>
+              <form className="list-filter-bar access-member-filter" onSubmit={(event) => { event.preventDefault(); setAppliedMemberSearch(memberSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={14} /><input aria-label="Search space members" onChange={(event) => setMemberSearch(event.target.value)} placeholder="Search current members" type="search" value={memberSearch} /></label><label><select aria-label="Filter space member role" onChange={(event) => setMemberRoleFilter(event.target.value as typeof memberRoleFilter)} value={memberRoleFilter}><option value="">All roles</option><option value="owner">Owner</option><option value="editor">Editor</option><option value="reader">Reader</option></select></label><button className="secondary-button" type="submit">Apply</button>{appliedMemberSearch || memberRoleFilter ? <button className="filter-clear-button" onClick={() => { setMemberSearch(""); setAppliedMemberSearch(""); setMemberRoleFilter(""); }} type="button">Clear</button> : null}</form>
               <div className="membership-list">
                 <p className="membership-list-label">Current members</p>
                 {spaceMembers.map((spaceMember) => (
@@ -471,9 +474,8 @@ export function SpacesConsole() {
             {spaces.map((space, index) => (
               <article className={`space-card${selectedSpace?.id === space.id ? " is-selected" : ""}`} key={space.id}>
                 <div className={`space-card-mark accent-${index % 4}`}><FolderKanban aria-hidden="true" size={17} /></div>
-                <div><h3 title={space.id}>{space.name}</h3><p>{space.role === "owner" ? "Owned by you" : "Shared with you"}</p></div>
-                <span className={`role-pill role-${space.role}`}>{space.role}</span>
-                <div className="space-card-footer">
+                <div className="space-card-copy"><h3 title={space.id}>{space.name}</h3><p>{space.role === "owner" ? "Owned by you" : "Shared with you"}</p></div>
+                <span className={`role-pill role-${space.role}`}>{space.role}</span>                <div className="space-card-footer">
                   <span className="space-card-meta"><ShieldCheck aria-hidden="true" size={13} /> {space.role === "owner" ? "You manage this space" : "Request access changes from the owner"}</span>
                   {space.role === "owner" ? <button aria-label={`Manage access for ${space.name}`} className="space-manage-button" onClick={(event) => loadAccess(space, event.currentTarget)} type="button"><UsersRound size={13} /> Manage access</button> : null}
                 </div>
@@ -795,9 +797,10 @@ export function KnowledgeConsole() {
                 <label htmlFor="edit-knowledge-tags">Edit tags</label>
                 <input id="edit-knowledge-tags" onChange={(event) => { setEditTags(event.target.value); setConfirmDiscard(false); }} value={editTags} />
                 <div className="editor-actions">
-                  <button className="primary-button" disabled={editorSaving} type="submit"><Save size={15} /> Save revision</button>
+                  <button aria-describedby={!editorDirty ? "save-revision-hint" : undefined} className="primary-button" disabled={editorSaving || !editorDirty} type="submit"><Save size={15} /> Save revision</button>
                   <button aria-label={`Archive ${editing.title}`} className="archive-button" disabled={editorSaving} onClick={() => setConfirmArchive(true)} type="button"><Archive size={15} /> Archive</button>
                 </div>
+                {!editorDirty ? <p className="list-context-line" id="save-revision-hint">No unsaved changes.</p> : null}
               </form>
             </ModalDialog>
             <ConfirmationDialog cancelLabel="Keep editing" confirmLabel="Discard changes" description="Closing the editor now leaves the active revision unchanged." onCancel={() => { setConfirmDiscard(false); window.setTimeout(() => editorCloseRef.current?.focus(), 0); }} onConfirm={() => { setEditing(null); setConfirmDiscard(false); }} open={confirmDiscard} returnFocusTarget={editorReturnFocusRef.current} title="Discard unsaved changes" tone="danger" />
@@ -1082,6 +1085,10 @@ export function SourcesConsole() {
     if (!file || !spaceId || uploading) {
       return;
     }
+    if (file.size > DEFAULT_MAX_UPLOAD_BYTES) {
+      setUploadError(`That file is larger than the default ${Math.round(DEFAULT_MAX_UPLOAD_BYTES / 1024 / 1024)} MB server upload limit. Choose a smaller file.`);
+      return;
+    }
     const body = new FormData();
     body.set("file", file);
     body.set("space_id", spaceId);
@@ -1166,7 +1173,7 @@ export function SourcesConsole() {
               <div className="source-row-group" key={source.id}>
                 <article className="data-row source-row">
                   <span className="row-leading cyan"><FileText aria-hidden="true" size={18} /></span>
-                  <div className="row-copy"><h3>{source.display_name}</h3><p>{source.original_filename || "Unnamed file"} · {spaceLabel(spaces, source.space_id)}</p></div>
+                  <div className="row-copy"><h3 title={source.display_name}>{source.display_name}</h3><p title={`${source.original_filename || "Unnamed file"} · ${spaceLabel(spaces, source.space_id)}`}>{source.original_filename || "Unnamed file"} · {spaceLabel(spaces, source.space_id)}</p></div>
                   <div className="row-stats"><strong>{source.size_bytes === null ? "—" : `${Math.max(1, Math.round(source.size_bytes / 1024))} KB`}</strong><span className={`status-pill status-${source.status}`}>{source.status}</span></div>
                   <button aria-label={`Archive ${source.display_name}`} className="archive-button compact" disabled={archiving} onClick={() => setPendingArchive(source)} type="button"><Archive size={14} /> Archive</button>
                 </article>
@@ -1183,6 +1190,7 @@ export function SourcesConsole() {
           <p>The website stores the original bytes first, then queues parsing and retrieval activation separately.</p>
           <form className="console-form" onSubmit={upload}>
             <label htmlFor="source-space">Space</label>
+            {spaces.length === 0 && !spacesLoading ? <p className="list-context-line">Create a space first — uploads need a destination space.</p> : null}
             <select id="source-space" onChange={(event) => setSpaceId(event.target.value)} required value={spaceId}>{spaces.map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}</select>
             <label htmlFor="source-name">Display name</label>
             <input id="source-name" maxLength={500} onChange={(event) => setDisplayName(event.target.value)} placeholder="Defaults to filename" value={displayName} />
@@ -1198,13 +1206,14 @@ export function SourcesConsole() {
                 setDragging(false);
                 const dropped = event.dataTransfer.files?.[0];
                 if (dropped) {
+                  setUploadError(dropped.size > DEFAULT_MAX_UPLOAD_BYTES ? `That file is larger than the default ${Math.round(DEFAULT_MAX_UPLOAD_BYTES / 1024 / 1024)} MB server upload limit. Choose a smaller file.` : null);
                   setFile(dropped);
                   setQueued(false);
                 }
               }}
             ><FileUp size={20} /><strong>{file ? file.name : "Choose a source file or drag it here"}</strong><span>{file ? `${Math.max(1, Math.round(file.size / 1024))} KB · select a different file to replace it` : "The configured server upload limit applies"}</span></label>
-            <input aria-label="Source file" className="visually-hidden" id="source-file" ref={fileInputRef} onChange={(event) => { setFile(event.target.files?.[0] || null); setQueued(false); }} required type="file" />
-            <button className="primary-button" disabled={uploading || spacesLoading || !file || spaces.length === 0} type="submit">{uploading ? <LoaderCircle className="spin" size={16} /> : <FileUp size={16} />} Queue source</button>
+            <input accept={SUPPORTED_SOURCE_EXTENSIONS} aria-label="Source file" className="visually-hidden" id="source-file" ref={fileInputRef} onChange={(event) => { const selected = event.target.files?.[0] || null; setUploadError(selected && selected.size > DEFAULT_MAX_UPLOAD_BYTES ? `That file is larger than the default ${Math.round(DEFAULT_MAX_UPLOAD_BYTES / 1024 / 1024)} MB server upload limit. Choose a smaller file.` : null); setFile(selected); setQueued(false); }} required type="file" />
+            <button className="primary-button" disabled={uploading || spacesLoading || !file || spaces.length === 0 || file.size > DEFAULT_MAX_UPLOAD_BYTES} type="submit">{uploading ? <LoaderCircle className="spin" size={16} /> : <FileUp size={16} />} Queue source</button>
           </form>
           {queued ? <p className="inline-success" role="status"><ShieldCheck size={14} /> Queued for durable ingestion — track it under Ingestion.</p> : null}
           {uploadError ? <p className="inline-error" role="alert">{uploadError}</p> : null}
@@ -1463,7 +1472,7 @@ export function PeopleConsole() {
         <div className="console-grid console-grid-people">
           <section className="console-panel">
             <div className="panel-heading"><div><span>Family directory</span><h2>Members</h2></div><span className="count-pill">{memberPages.initialLoading ? "…" : memberPages.totalItems}</span></div>
-            <form className="list-filter-bar member-filter-bar" onSubmit={(event) => { event.preventDefault(); setAppliedMemberSearch(memberSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={14} /><input aria-label="Search members" onChange={(event) => setMemberSearch(event.target.value)} placeholder="Name or username" type="search" value={memberSearch} /></label><label><span className="visually-hidden">Filter member status on apply</span><select aria-label="Filter member status, applied with the Apply button" onChange={(event) => setMemberStatus(event.target.value as typeof memberStatus)} value={memberStatus}><option value="">All statuses</option><option value="pending">Pending</option><option value="active">Active</option><option value="disabled">Disabled</option></select></label><label><span className="visually-hidden">Filter system role on apply</span><select aria-label="Filter system role, applied with the Apply button" onChange={(event) => setMemberRole(event.target.value as typeof memberRole)} value={memberRole}><option value="">All roles</option><option value="super_admin">Super admin</option><option value="member">Member</option></select></label><button className="secondary-button" type="submit">Apply</button></form>
+            <form className="list-filter-bar member-filter-bar" onSubmit={(event) => { event.preventDefault(); setAppliedMemberSearch(memberSearch.trim()); }} role="search"><label><Search aria-hidden="true" size={14} /><input aria-label="Search members" onChange={(event) => setMemberSearch(event.target.value)} placeholder="Name or username" type="search" value={memberSearch} /></label><label><span className="visually-hidden">Filter member status on apply</span><select aria-label="Filter member status, applied with the Apply button" onChange={(event) => setMemberStatus(event.target.value as typeof memberStatus)} value={memberStatus}><option value="">All statuses</option><option value="pending">Pending</option><option value="active">Active</option><option value="disabled">Disabled</option></select></label><label><span className="visually-hidden">Filter system role on apply</span><select aria-label="Filter system role, applied with the Apply button" onChange={(event) => setMemberRole(event.target.value as typeof memberRole)} value={memberRole}><option value="">All roles</option><option value="super_admin">Super admin</option><option value="member">Member</option></select></label><button className="secondary-button" type="submit">Apply</button>{appliedMemberSearch || memberStatus || memberRole ? <button className="filter-clear-button" onClick={() => { setMemberSearch(""); setAppliedMemberSearch(""); setMemberStatus(""); setMemberRole(""); }} type="button">Clear</button> : null}</form>
             {memberPages.initialLoading || (memberPages.loading && members.length === 0) ? <ListSkeleton rows={6} /> : null}
             {memberPages.error ? <ListUnavailable detail={memberPages.error} label="members" onRetry={() => void memberPages.reload()} /> : null}
             <div aria-busy={memberPages.loading} className={`data-list${memberPages.loading && members.length > 0 ? " is-page-loading" : ""}`}>
@@ -1610,7 +1619,7 @@ export function SettingsConsole() {
   const [historyState, setHistoryState] = useState<"" | "active" | "superseded">("");
   const [runtimeDraft, setRuntimeDraft] = useState<RuntimeSettings | null>(null);
   const [pendingSettingsRestore, setPendingSettingsRestore] = useState<RuntimeSettings | null>(null);
-  const [runtimeLimit, setRuntimeLimit] = useState(20);
+  const [runtimeLimit, setRuntimeLimit] = useState("20");
   const [runtimeReason, setRuntimeReason] = useState("");
   const [keyName, setKeyName] = useState("");
   const [selectedKeyScopes, setSelectedKeyScopes] = useState<string[]>(DEFAULT_API_KEY_SCOPES);
@@ -1691,7 +1700,7 @@ export function SettingsConsole() {
       }
       setSpaces(spaceResponse);
       setSettings(runtimeResponse);
-      setRuntimeLimit(runtimeResponse.values.retrieval?.limit ?? 20);
+      setRuntimeLimit(String(runtimeResponse.values.retrieval?.limit ?? 20));
     }).catch((loadError) => {
       if (active) {
         setRuntimeError(message(loadError));
@@ -1775,9 +1784,12 @@ export function SettingsConsole() {
     }
   };
 
+  const parsedRuntimeLimit = Number.parseInt(runtimeLimit, 10);
+  const runtimeLimitValid = Number.isInteger(parsedRuntimeLimit) && parsedRuntimeLimit >= 1 && parsedRuntimeLimit <= 100;
+
   const createRuntimeDraft = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!settings?.values.retrieval || runtimeReason.trim().length < 5 || runtimeSaving) {
+    if (!settings?.values.retrieval || runtimeReason.trim().length < 5 || runtimeSaving || !runtimeLimitValid) {
       return;
     }
     setRuntimeSaving(true);
@@ -1789,7 +1801,7 @@ export function SettingsConsole() {
           reason: runtimeReason.trim(),
           values: {
             ...settings.values,
-            retrieval: { ...settings.values.retrieval, limit: runtimeLimit },
+            retrieval: { ...settings.values.retrieval, limit: parsedRuntimeLimit },
           },
         },
         params: { header: { "Idempotency-Key": idempotencyKey() } },
@@ -1817,7 +1829,7 @@ export function SettingsConsole() {
         params: { header: { "Idempotency-Key": idempotencyKey() }, path: { draft_id: runtimeDraft.id } },
       }));
       setSettings(activated);
-      setRuntimeLimit(activated.values.retrieval?.limit ?? runtimeLimit);
+      setRuntimeLimit(String(activated.values.retrieval?.limit ?? parsedRuntimeLimit));
       setRuntimeDraft(null);
       historyPages.reload();
     } catch (activationError) {
@@ -1842,7 +1854,7 @@ export function SettingsConsole() {
         params: { header: { "Idempotency-Key": idempotencyKey() }, path: { target_revision: pendingSettingsRestore.revision } },
       }));
       setSettings(restored);
-      setRuntimeLimit(restored.values.retrieval?.limit ?? runtimeLimit);
+      setRuntimeLimit(String(restored.values.retrieval?.limit ?? parsedRuntimeLimit));
       setPendingSettingsRestore(null);
       historyPages.reload();
     } catch (restoreError) {
@@ -1880,7 +1892,7 @@ export function SettingsConsole() {
         {activeSection === "api-keys" ? <section aria-labelledby="settings-tab-api-keys" className="console-panel settings-section" id="settings-panel-api-keys" role="tabpanel">
           <div className="panel-heading"><div><span>Personal credentials</span><h2>API keys</h2></div><KeyRound size={20} /></div>
           <p className="section-intro">Every member owns separate keys. Start with the narrowest scope and create another key for a different device or automation.</p>
-          {createdKey ? <div className="secret-banner"><div><strong>Copy this key now</strong><span>It cannot be displayed again after you leave this result.</span></div><code>{createdKey.secret}</code><CopyButton label="Copy API key" value={createdKey.secret} /></div> : null}
+          {createdKey ? <div className="secret-banner"><div><strong>Copy this key now</strong><span>It cannot be displayed again after you leave this result.</span></div><code>{createdKey.secret}</code><CopyButton label="Copy API key" value={createdKey.secret} /><button className="secondary-button" onClick={() => setCreatedKey(null)} type="button">Done</button></div> : null}
           <form className="inline-create-form api-key-create-form" onSubmit={createKey}>
             <div><label htmlFor="api-key-name">Key name</label><input id="api-key-name" maxLength={120} onChange={(event) => setKeyName(event.target.value)} placeholder="e.g. Laptop" required value={keyName} /></div>
             <fieldset className="api-key-scopes">
@@ -1894,13 +1906,14 @@ export function SettingsConsole() {
                 ))}
               </div>
             </fieldset>
-            <button className="primary-button" disabled={keySaving || selectedKeyScopes.length === 0} type="submit">{keySaving ? <LoaderCircle className="spin" size={16} /> : <KeyRound size={16} />} Create API key</button>
+            {selectedKeyScopes.length === 0 ? <p className="list-context-line" id="api-key-scope-hint">Select at least one permission.</p> : null}
+            <button aria-describedby={selectedKeyScopes.length === 0 ? "api-key-scope-hint" : undefined} className="primary-button" disabled={keySaving || selectedKeyScopes.length === 0} type="submit">{keySaving ? <LoaderCircle className="spin" size={16} /> : <KeyRound size={16} />} Create API key</button>
           </form>
           <form className="list-filter-bar settings-list-filter" onSubmit={(event) => { event.preventDefault(); setAppliedKeySearch(keySearch.trim()); }} role="search">
             <label><Search aria-hidden="true" size={14} /><input aria-label="Search API keys" onChange={(event) => setKeySearch(event.target.value)} placeholder="Name or public ID" type="search" value={keySearch} /></label>
             <label><span className="visually-hidden">Filter API key status on apply</span><select aria-label="Filter API key status, applied with the Apply button" onChange={(event) => setKeyStatus(event.target.value as typeof keyStatus)} value={keyStatus}><option value="">All statuses</option><option value="active">Active</option><option value="revoked">Revoked</option><option value="expired">Expired</option></select></label>
             <button className="secondary-button" type="submit">Apply</button>
-            {appliedKeySearch || keyStatus ? <button className="filter-clear-button" onClick={() => { setKeySearch(""); setAppliedKeySearch(""); setKeyStatus("active"); }} type="button">Clear</button> : null}
+            {appliedKeySearch || keyStatus ? <button className="filter-clear-button" onClick={() => { setKeySearch(""); setAppliedKeySearch(""); setKeyStatus(""); }} type="button">Clear</button> : null}
           </form>
           {keyPages.initialLoading || (keyPages.loading && keys.length === 0) ? <ListSkeleton compact rows={3} /> : null}
           {keyPages.error ? <ListUnavailable detail={keyPages.error} label="API keys" onRetry={() => void keyPages.reload()} /> : null}
@@ -1919,7 +1932,7 @@ export function SettingsConsole() {
           {sessionPages.error ? <ListUnavailable detail={sessionPages.error} label="sessions" onRetry={() => void sessionPages.reload()} /> : null}
           <div aria-busy={sessionPages.loading} className={`data-list compact-list${sessionPages.loading && sessions.length > 0 ? " is-page-loading" : ""}`}>
             {sessions.map((session) => <article className="data-row" key={session.id}><span className="row-leading cyan"><MonitorSmartphone size={17} /></span><div className="row-copy"><h3>{session.current ? "This session" : "Website session"}</h3><p>Last active {formatDateTime(session.last_activity_at)}</p></div><span className={`status-pill status-${session.status}`}>{session.status}</span>{!session.current && session.status === "active" ? <button className="row-action-button danger-action" onClick={(event) => { sessionReturnFocusRef.current = event.currentTarget; setPendingSessionRevocation(session); }} type="button">Sign out</button> : null}</article>)}
-            {!sessionPages.initialLoading && !sessionPages.loading && !sessionPages.error && sessions.length === 0 ? <div className="console-empty small"><MonitorSmartphone size={20} /><strong>No session records returned</strong></div> : null}
+            {!sessionPages.initialLoading && !sessionPages.loading && !sessionPages.error && sessions.length === 0 ? <div className="console-empty small"><MonitorSmartphone size={20} /><strong>No session records returned</strong><span>Try a different status filter. Signing in from another browser creates a new record here.</span></div> : null}
           </div>
           {sessionPages.totalPages > 1 ? <PaginationControls loading={sessionPages.loading} loadingPage={sessionPages.loadingPage} onPageChange={(nextPage) => void sessionPages.goToPage(nextPage)} page={sessionPages.page} pageSize={sessionPages.pageSize} totalItems={sessionPages.totalItems} totalPages={sessionPages.totalPages} /> : null}
           {sessionError ? <p className="inline-error" role="alert">{sessionError}</p> : null}
@@ -1933,9 +1946,9 @@ export function SettingsConsole() {
           <p className="runtime-active-state">Revision {settings.revision} is active</p>
           {member.system_role === "super_admin" && settings ? (
             <form className="runtime-settings-form" onSubmit={createRuntimeDraft}>
-              <div><label htmlFor="runtime-retrieval-limit">Retrieval result limit</label><input id="runtime-retrieval-limit" max={100} min={1} onChange={(event) => setRuntimeLimit(Number(event.target.value))} required type="number" value={runtimeLimit} /></div>
+              <div><label htmlFor="runtime-retrieval-limit">Retrieval result limit</label><input aria-describedby="runtime-retrieval-hint" aria-invalid={!runtimeLimitValid || undefined} id="runtime-retrieval-limit" inputMode="numeric" max={100} min={1} onChange={(event) => setRuntimeLimit(event.target.value)} pattern="[0-9]*" required type="number" value={runtimeLimit} /><span className="visually-hidden" id="runtime-retrieval-hint">Whole number from 1 to 100</span></div>
               <div><label htmlFor="runtime-change-reason">Change reason</label><input id="runtime-change-reason" maxLength={500} minLength={5} onChange={(event) => setRuntimeReason(event.target.value)} required value={runtimeReason} /></div>
-              <button className="primary-button" disabled={runtimeSaving || runtimeReason.trim().length < 5} type="submit">{runtimeSaving ? <LoaderCircle className="spin" size={16} /> : null} Create validated draft</button>
+              <button className="primary-button" disabled={runtimeSaving || runtimeReason.trim().length < 5 || !runtimeLimitValid} type="submit">{runtimeSaving ? <LoaderCircle className="spin" size={16} /> : null} Create validated draft</button>
             </form>
           ) : null}
           {runtimeDraft ? <div className="runtime-draft-review"><div><strong>Draft revision {runtimeDraft.revision} ready</strong><span>Validated against the typed safe-setting schema. Review the draft values below, then activate or discard it.</span></div><div className="runtime-draft-actions"><button className="primary-button" disabled={runtimeSaving} onClick={() => void activateRuntimeDraft()} type="button">Activate settings</button><button className="secondary-button" disabled={runtimeSaving} onClick={() => setRuntimeDraft(null)} type="button">Discard draft</button></div></div> : null}
@@ -2079,8 +2092,8 @@ export function IngestionConsole() {
                 </dl>
                 <div className="progress-row"><progress aria-label={`Ingestion progress ${Number.isFinite(job.progress) ? Math.max(0, Math.min(100, Math.round(job.progress))) : 0} percent`} max={100} value={Number.isFinite(job.progress) ? Math.max(0, Math.min(100, job.progress)) : 0} /><strong>{Number.isFinite(job.progress) ? `${Math.max(0, Math.min(100, Math.round(job.progress)))}%` : "—"}</strong></div>
                 {job.last_error_code ? <p className="job-error">{job.last_error_code}</p> : null}
-                {!['succeeded', 'failed', 'cancelled'].includes(job.state) ? <button aria-label={`Cancel job ${job.id}`} className="archive-button compact" disabled={jobSaving} onClick={() => setPendingJobAction({ job, operation: "cancel" })} type="button">Cancel job</button> : null}
-                {['failed', 'cancelled'].includes(job.state) ? <button aria-label={`Retry job ${job.id}`} className="secondary-button" disabled={jobSaving} onClick={() => setPendingJobAction({ job, operation: "retry" })} type="button">Retry job</button> : null}
+                {!['succeeded', 'failed', 'cancelled'].includes(job.state) ? <button aria-label={`Cancel job ${job.id}`} className="archive-button compact" disabled={jobSaving && pendingJobAction?.job.id === job.id} onClick={() => setPendingJobAction({ job, operation: "cancel" })} type="button">{jobSaving && pendingJobAction?.job.id === job.id && pendingJobAction.operation === "cancel" ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}Cancel job</button> : null}
+                {['failed', 'cancelled'].includes(job.state) ? <button aria-label={`Retry job ${job.id}`} className="secondary-button" disabled={jobSaving && pendingJobAction?.job.id === job.id} onClick={() => setPendingJobAction({ job, operation: "retry" })} type="button">{jobSaving && pendingJobAction?.job.id === job.id && pendingJobAction.operation === "retry" ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}Retry job</button> : null}
               </article>
               <ConfirmationDialog busy={jobSaving} busyLabel={pendingJobAction?.operation === "cancel" ? "Cancelling job…" : "Requesting retry…"} cancelLabel="Not now" confirmLabel={`Confirm ${pendingJobAction?.operation ?? "retry"} job`} description={pendingJobAction?.operation === "cancel" ? "The worker will stop at a safe boundary; completed durable stages and audit history remain preserved." : "This starts a new durable attempt from the preserved original source and records the request in the audit trail."} onCancel={() => setPendingJobAction(null)} onConfirm={() => void mutateJob()} open={pendingJobAction?.job.id === job.id} title={pendingJobAction?.job.id === job.id ? `${pendingJobAction.operation === "cancel" ? "Cancel" : "Retry"} job ${pendingJobAction.job.id}` : "Change ingestion job"} tone={pendingJobAction?.operation === "cancel" ? "danger" : "primary"} />
             </div>

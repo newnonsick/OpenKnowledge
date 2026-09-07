@@ -36,11 +36,17 @@ export function MfaEnrollmentForm() {
       return;
     }
     started.current = true;
+    startEnrollment();
+  }, []);
+
+  function startEnrollment() {
+    setLoading(true);
+    setError(null);
     contractDataWithSessionRetry(() => contractClient.POST("/api/v1/auth/mfa/totp/enroll", { body: {} }))
       .then(setEnrollment)
       .catch((requestError) => setError(requestError instanceof ApiError ? requestError.message : "Authenticator setup could not start."))
       .finally(() => setLoading(false));
-  }, []);
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -69,6 +75,7 @@ export function MfaEnrollmentForm() {
     try {
       await navigator.clipboard.writeText(recoveryCodes.join("\n"));
       setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
     } catch {
       setError("Copy failed — select the codes manually.");
     }
@@ -84,7 +91,7 @@ export function MfaEnrollmentForm() {
         <div aria-label="Recovery codes" className="recovery-codes" role="status">
           {recoveryCodes.map((recoveryCode) => <code key={recoveryCode}>{recoveryCode}</code>)}
         </div>
-        <button className="secondary-action" onClick={copyCodes} type="button"><Copy aria-hidden="true" size={15} />{copied ? "Copied" : "Copy all codes"}</button>
+        <button className="secondary-action" onClick={copyCodes} type="button"><Copy aria-hidden="true" size={15} />{copied ? "Copied" : "Copy all codes"}<span aria-live="polite" className="visually-hidden">{copied ? "Recovery codes copied" : ""}</span></button>
         {initialKey ? <><div className="secret-value"><code>{initialKey.secret}</code><button aria-label="Copy API key" onClick={() => { navigator.clipboard.writeText(initialKey.secret).catch(() => setError("Copy failed — select the key manually.")); }} type="button"><Copy aria-hidden="true" size={15} /></button></div><p className="secret-scope-summary">API access: {initialKey.scopes.join(", ")}</p></> : null}
         {error ? <div className="auth-error" role="alert">{error}</div> : null}
         <button className="auth-submit" onClick={() => { resetCachedMember(); router.replace("/"); }} type="button">I have saved these secrets</button>
@@ -99,10 +106,11 @@ export function MfaEnrollmentForm() {
       <h1>Protect admin access.</h1>
       <p>Scan this code with any TOTP-compatible authenticator, then enter its current code.</p>
 
-      {loading ? <div className="enrollment-loading"><LoaderCircle aria-hidden="true" className="spin" size={18} />Creating a private setup key…</div> : null}
+      {loading ? <div className="enrollment-loading" role="status"><LoaderCircle aria-hidden="true" className="spin" size={18} />Creating a private setup key…</div> : null}
       {enrollment ? <MfaEnrollmentSecret provisioningUri={enrollment.provisioning_uri} secret={enrollment.secret} /> : null}
+      {!enrollment && !loading && error ? <button className="secondary-action" onClick={startEnrollment} type="button">Retry setup</button> : null}
 
-      <label className="field-label" htmlFor="mfa-code">6-digit authentication code</label>
+      <label className="field-label" htmlFor="mfa-code">6–8 digit authentication code</label>
       <input autoComplete="one-time-code" className="text-field code-field" disabled={!enrollment} id="mfa-code" inputMode="numeric" maxLength={8} onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))} pattern="[0-9]{6,8}" required value={code} />
       {error ? <div className="auth-error" role="alert">{error}</div> : null}
       <button className="auth-submit" disabled={!enrollment || !/^\d{6,8}$/.test(code) || submitting} type="submit">

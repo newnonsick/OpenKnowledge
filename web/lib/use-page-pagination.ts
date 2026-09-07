@@ -35,7 +35,6 @@ type PagePaginationState<T> = {
 export function usePagePagination<T>({ loadPage, queryKey, initialPage = 1 }: PagePaginationOptions<T>) {
   const loadPageRef = useRef(loadPage);
   const queryKeyRef = useRef(queryKey);
-  queryKeyRef.current = queryKey;
   const requestIdRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
   const stateRef = useRef<PagePaginationState<T>>({
@@ -55,7 +54,8 @@ export function usePagePagination<T>({ loadPage, queryKey, initialPage = 1 }: Pa
 
   useEffect(() => {
     loadPageRef.current = loadPage;
-  }, [loadPage]);
+    queryKeyRef.current = queryKey;
+  }, [loadPage, queryKey]);
 
   const updateState = useCallback((next: PagePaginationState<T>) => {
     stateRef.current = next;
@@ -90,6 +90,10 @@ export function usePagePagination<T>({ loadPage, queryKey, initialPage = 1 }: Pa
     try {
       const response = await loadPageRef.current(targetPage, controller.signal);
       if (controller.signal.aborted || requestId !== requestIdRef.current) {
+        return;
+      }
+      if (response.items.length === 0 && targetPage > 1 && response.total_pages >= 1 && targetPage > response.total_pages) {
+        void fetchPage(response.total_pages, false);
         return;
       }
       updateState({

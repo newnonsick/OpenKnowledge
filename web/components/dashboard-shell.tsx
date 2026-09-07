@@ -249,14 +249,14 @@ export function DashboardShell({
             </article>
           </section>
 
-          <section className={`attention-strip${loading ? "" : ready ? " is-ok" : " is-warning"}`}>
+          <section className={`attention-strip${loading || ready ? "" : " is-warning"}`}>
             <div className="attention-icon">{loading ? <Clock3 aria-hidden="true" size={19} /> : ready ? <ShieldCheck aria-hidden="true" size={19} /> : <CircleAlert aria-hidden="true" size={19} />}</div>
             <div><strong>{loading ? "Checking system status" : ready ? "Permission-aware search is active" : "The gateway is not ready"}</strong><p>{loading ? "Loading access and operational status." : ready ? "Every search is limited to spaces this account can access." : "Check database readiness and schema compatibility before continuing."}</p></div>
             {loading ? <span className="attention-loading">Checking…</span> : <Link href={ready ? "/spaces" : "/activity"}>{ready ? "Manage spaces" : "View activity"}</Link>}
           </section>
         </div>
       </main>
-      <button aria-label="Close navigation overlay" className="navigation-overlay" onClick={() => setMenuOpen(false)} type="button" />
+      {menuOpen ? <button aria-label="Close navigation overlay" className="navigation-overlay" onClick={() => setMenuOpen(false)} type="button" /> : null}
     </div>
   );
 }

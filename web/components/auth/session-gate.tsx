@@ -69,7 +69,6 @@ export function SessionGate({ children }: { children: ReactNode }) {
           setMember(null);
           return;
         }
-        setFailed(true);
         setMember(null);
         router.replace("/login");
       });
@@ -188,8 +187,8 @@ export function SessionGate({ children }: { children: ReactNode }) {
       await apiRequest("/api/v1/auth/step-up", {
         body: {
           password: String(fields.get("password") || ""),
-          recovery_code: member?.system_role === "super_admin" && stepUpFactor === "recovery" ? String(fields.get("recovery_code") || "") : null,
-          totp_code: member?.system_role === "super_admin" && stepUpFactor === "totp" ? String(fields.get("totp_code") || "") : null,
+          recovery_code: member?.system_role === "super_admin" && stepUpFactor === "recovery" ? String(fields.get("recovery_code") || "").trim() || null : null,
+          totp_code: member?.system_role === "super_admin" && stepUpFactor === "totp" ? String(fields.get("totp_code") || "").replace(/[\s-]/g, "") || null : null,
         },
         method: "POST",
         retryAuthentication: false,
@@ -198,7 +197,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
     } catch (error) {
       setStepUpError(error instanceof ApiError && error.code === "recent_authentication_required"
         ? "Verify your identity, then run that action again."
-        : error instanceof ApiError ? error.message : "Identity verification failed.");
+        : "Identity verification failed. Check your entries and try again.");
     } finally {
       setStepUpSubmitting(false);
     }
@@ -209,7 +208,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
       <main className="session-loading" aria-live="polite">
         <span><Boxes aria-hidden="true" size={20} /></span>
         <LoaderCircle aria-hidden="true" className="spin" size={20} />
-        <p>{failed ? "The console could not be reached. Check your connection." : "Opening your private console…"}</p>
+        <p>{failed ? "The console could not be reached. Check your connection." : routeBlocked ? "Redirecting to required security setup…" : "Opening your private console…"}</p>
         {failed ? <button className="secondary-button" onClick={() => window.location.reload()} type="button">Retry</button> : null}
       </main>
     );
@@ -227,8 +226,8 @@ export function SessionGate({ children }: { children: ReactNode }) {
               {member.system_role === "super_admin" ? (
                 <>
                   <div className="step-up-factor-tabs" role="group" aria-label="Authentication factor">
-                    <button aria-pressed={stepUpFactor === "totp"} onClick={() => setStepUpFactor("totp")} type="button"><ShieldCheck aria-hidden="true" size={14} />Authenticator</button>
-                    <button aria-pressed={stepUpFactor === "recovery"} onClick={() => setStepUpFactor("recovery")} type="button"><KeyRound aria-hidden="true" size={14} />Recovery code</button>
+                    <button aria-pressed={stepUpFactor === "totp"} disabled={stepUpSubmitting} onClick={() => setStepUpFactor("totp")} type="button"><ShieldCheck aria-hidden="true" size={14} />Authenticator</button>
+                    <button aria-pressed={stepUpFactor === "recovery"} disabled={stepUpSubmitting} onClick={() => setStepUpFactor("recovery")} type="button"><KeyRound aria-hidden="true" size={14} />Recovery code</button>
                   </div>
                   <label className="field-label" htmlFor={stepUpFactor === "totp" ? "step-up-totp" : "step-up-recovery"}>{stepUpFactor === "totp" ? "Authentication code" : "Recovery code"}</label>
                   <input autoComplete="one-time-code" className="text-field code-field" id={stepUpFactor === "totp" ? "step-up-totp" : "step-up-recovery"} inputMode={stepUpFactor === "totp" ? "numeric" : undefined} maxLength={stepUpFactor === "totp" ? 8 : 64} name={stepUpFactor === "totp" ? "totp_code" : "recovery_code"} required />

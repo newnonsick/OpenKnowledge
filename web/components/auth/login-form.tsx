@@ -18,6 +18,11 @@ export function LoginForm() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const codeInputRef = useRef<HTMLInputElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    return () => setPassword("");
+  }, []);
 
   useEffect(() => {
     if (step === "code") {
@@ -39,11 +44,12 @@ export function LoginForm() {
         body: {
           password: String(fields.get("password") || ""),
           recovery_code: factorMode === "recovery" ? String(fields.get("recovery_code") || "").trim() || null : null,
-          totp_code: factorMode === "totp" ? String(fields.get("totp_code") || "").trim() || null : null,
+          totp_code: factorMode === "totp" ? String(fields.get("totp_code") || "").replace(/[\s-]/g, "") || null : null,
           username: String(fields.get("username") || ""),
         },
       }));
       resetCachedMember();
+      setPassword("");
       if (session.requires_password_change) {
         router.replace("/first-use/password");
       } else if (session.requires_mfa_enrollment) {
@@ -68,6 +74,7 @@ export function LoginForm() {
           ? "The authentication code was not accepted. Check your authenticator or switch to a recovery code."
           : "The username or password is incorrect.");
       }
+      requestAnimationFrame(() => errorRef.current?.focus());
     } finally {
       setSubmitting(false);
     }
@@ -110,7 +117,7 @@ export function LoginForm() {
       </div>
 
       {notice && !error ? <div className="auth-notice" role="status">{notice}</div> : null}
-      {error ? <div className="auth-error" role="alert">{error}</div> : null}
+      {error ? <div className="auth-error" ref={errorRef} role="alert" tabIndex={-1}>{error}</div> : null}
       <button className="auth-submit" disabled={submitting} type="submit">
         {submitting ? <LoaderCircle aria-hidden="true" className="spin" size={17} /> : null}
         {submitting
@@ -120,7 +127,7 @@ export function LoginForm() {
             : "Sign in"}
       </button>
       {step === "code" ? (
-        <button className="auth-back-link" onClick={() => { setStep("credentials"); setError(null); setNotice(null); }} type="button">
+        <button className="auth-back-link" disabled={submitting} onClick={() => { setStep("credentials"); setError(null); setNotice(null); }} type="button">
           <ArrowLeft aria-hidden="true" size={14} /> Back to sign in
         </button>
       ) : null}

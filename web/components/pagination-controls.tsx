@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, LoaderCircle } from "lucide-react";
 
 type PaginationControlsProps = {
   page: number;
@@ -16,10 +16,10 @@ type PaginationControlsProps = {
 const jumpThreshold = 10;
 
 function pageWindow(page: number, totalPages: number): (number | "gap")[] {
-  if (totalPages <= 5) {
+  if (totalPages <= 7) {
     return Array.from({ length: totalPages }, (_, index) => index + 1);
   }
-  const siblings = new Set<number>([1, page - 1, page, page + 1, totalPages]);
+  const siblings = new Set<number>([1, 2, page - 1, page, page + 1, totalPages - 1, totalPages]);
   const ordered = [...siblings].filter((value) => value >= 1 && value <= totalPages).sort((left, right) => left - right);
   const windowed: (number | "gap")[] = [];
   for (const value of ordered) {
@@ -52,20 +52,20 @@ export function PaginationControls({
   onPageChange,
 }: PaginationControlsProps) {
   const [directPage, setDirectPage] = useState(String(page));
+  const jumpInputRef = useRef<HTMLInputElement>(null);
   const jumpLabelId = useId();
 
   useEffect(() => {
-    setDirectPage(String(page));
+    if (document.activeElement !== jumpInputRef.current) {
+      setDirectPage(String(page));
+    }
   }, [page]);
 
-  if (totalItems === 0 || totalPages <= 1) {
+  if (totalItems === 0 || totalPages <= 0) {
     return null;
   }
 
   const goToDirectPage = () => {
-    if (loading) {
-      return;
-    }
     const parsed = Number.parseInt(directPage, 10);
     if (!Number.isInteger(parsed)) {
       setDirectPage(String(page));
@@ -80,6 +80,16 @@ export function PaginationControls({
 
   const summary = rangeSummary(page, pageSize, totalItems);
 
+  if (totalPages <= 1) {
+    return (
+      <nav aria-label="Pagination" className="pagination-controls pagination-single">
+        <p className="pagination-summary">{summary}</p>
+      </nav>
+    );
+  }
+
+  const pendingPage = loading ? (loadingPage ?? page) : null;
+
   return (
     <nav aria-busy={loading || undefined} aria-label="Pagination" className="pagination-controls">
       <p aria-live="polite" className="pagination-summary">{summary}</p>
@@ -87,7 +97,7 @@ export function PaginationControls({
         <button
           aria-label="Previous page"
           className="pagination-button pagination-step"
-          disabled={loading || page <= 1}
+          disabled={page <= 1}
           onClick={() => onPageChange(page - 1)}
           type="button"
         >
@@ -98,20 +108,25 @@ export function PaginationControls({
         ) : (
           <button
             aria-current={entry === page ? "page" : undefined}
+            aria-disabled={entry === pendingPage || undefined}
             aria-label={entry === page ? `Page ${entry}` : `Go to page ${entry}`}
-            className={`pagination-button${entry === page ? " is-current" : ""}`}
-            disabled={loading || entry === page}
+            className={`pagination-button${entry === page ? " is-current" : ""}${entry === pendingPage ? " is-loading" : ""}`}
+            disabled={entry === page}
             key={entry}
-            onClick={() => onPageChange(entry)}
+            onClick={() => {
+              if (entry !== pendingPage) {
+                onPageChange(entry);
+              }
+            }}
             type="button"
           >
-            {entry}
+            {entry === pendingPage ? <LoaderCircle aria-hidden="true" className="spin" size={13} /> : entry}
           </button>
         ))}
         <button
           aria-label="Next page"
           className="pagination-button pagination-step"
-          disabled={loading || page >= totalPages}
+          disabled={page >= totalPages}
           onClick={() => onPageChange(page + 1)}
           type="button"
         >
@@ -123,28 +138,35 @@ export function PaginationControls({
             <input
               aria-label={`Page number, 1 to ${totalPages}`}
               className="pagination-jump-input"
-              disabled={loading}
               id={jumpLabelId}
               inputMode="numeric"
               max={totalPages}
               min={1}
-              onBlur={(event) => {
-                if (event.target.value !== String(page)) {
-                  goToDirectPage();
-                }
-              }}
+              onBlur={() => setDirectPage(String(page))}
               onChange={(event) => setDirectPage(event.target.value.replace(/\D/g, ""))}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();
                   goToDirectPage();
+                  jumpInputRef.current?.blur();
+                } else if (event.key === "Escape") {
+                  setDirectPage(String(page));
+                  jumpInputRef.current?.blur();
                 }
               }}
               pattern="[0-9]*"
+              ref={jumpInputRef}
               type="text"
               value={directPage}
             />
-            <span aria-hidden="true" className="pagination-jump-range">of {totalPages}</span>
+            <button
+              className="pagination-button pagination-go"
+              onClick={goToDirectPage}
+              onMouseDown={(event) => event.preventDefault()}
+              type="button"
+            >
+              Go
+            </button>
           </span>
         ) : null}
       </div>
