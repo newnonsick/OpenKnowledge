@@ -13,7 +13,6 @@ import {
   Command,
   FileStack,
   FolderKanban,
-  Gauge,
   Grid2X2,
   Layers3,
   Menu,
@@ -208,7 +207,6 @@ export function DashboardShell({
               <Link href="/sources"><span className="action-icon"><Upload aria-hidden="true" size={17} /></span>Upload source</Link>
               <Link href="/knowledge"><span className="action-icon"><Plus aria-hidden="true" size={17} /></span>Capture knowledge</Link>
               <Link href="/spaces"><span className="action-icon"><FolderKanban aria-hidden="true" size={17} /></span>Create space</Link>
-              <Link href="/explore"><span className="action-icon"><Gauge aria-hidden="true" size={17} /></span>Test retrieval</Link>
             </div>
           </section>
 
@@ -242,7 +240,7 @@ export function DashboardShell({
                   <div><small>Queue</small><strong>{operations ? `${queued} queued` : "Unavailable"}</strong></div>
                   <div><small>Processing</small><strong>{operations ? `${operations.ingestion.running} running` : "Unavailable"}</strong></div>
                   <div><small>Storage</small><strong>{operations ? `${formatBytes(operations.storage.referenced_bytes)} referenced` : "Unavailable"}</strong></div>
-                  <div><small>Retrieval</small><strong>{operations?.retrieval.embedding_generation_active ? "Generation active" : "Check generation"}</strong></div>
+                  <div><small>Retrieval</small><strong>{operations ? (operations.retrieval.embedding_generation_active ? "Generation active" : "Lexical only") : "Unavailable"}</strong></div>
                   <div><small>Settings</small><strong>{operations ? `Revision ${operations.settings_revision}` : "Unavailable"}</strong></div>
                   <div><small>Failures</small><strong>{operations ? `${operations.ingestion.failed} terminal` : "Unavailable"}</strong></div>
                 </div>

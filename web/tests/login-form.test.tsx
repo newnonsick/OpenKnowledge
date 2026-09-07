@@ -111,8 +111,7 @@ describe("LoginForm", () => {
     expect(await secondCall.json()).toMatchObject({ recovery_code: "abcd-efgh-ijkl", totp_code: null });
   });
 
-  it("keeps the entered credentials when moving to the second factor and back", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
+  it("keeps the entered credentials when moving to the second factor and back", async () => {    const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
           error: { message: "Second-factor authentication code required.", type: "authentication_error", code: "mfa_code_required" },
@@ -131,5 +130,75 @@ describe("LoginForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to sign in" }));
     expect((screen.getByRole("textbox", { name: "Username" }) as HTMLInputElement).value).toBe("mai");
     expect((screen.getByLabelText("Password") as HTMLInputElement).value).toBe("family-password");
+  });
+
+  function fillCredentials() {
+    fireEvent.change(screen.getByRole("textbox", { name: "Username" }), { target: { value: "mai" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "family-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  }
+
+  function errorResponse(status: number, code = "request_failed", message = "Something went wrong.") {
+    return new Response(JSON.stringify({ error: { code, message, type: "api_error" } }), { status });
+  }
+
+  it("moves focus to the code input when the MFA step appears", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: { message: "Second-factor authentication code required.", type: "authentication_error", code: "mfa_code_required" },
+    }), { status: 401 })));
+    render(<LoginForm />);
+
+    fillCredentials();
+
+    const code = await screen.findByLabelText("Authentication code");
+    await waitFor(() => expect(code).toHaveFocus());
+  });
+
+  it("disables the code input while the second factor submits", async () => {
+    let release: (response: Response) => void = () => {};
+    const pending = new Promise<Response>((resolve) => { release = resolve; });
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: { message: "Second-factor authentication code required.", type: "authentication_error", code: "mfa_code_required" },
+      }), { status: 401 }))
+      .mockReturnValueOnce(pending);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<LoginForm />);
+
+    fillCredentials();
+    const code = await screen.findByLabelText("Authentication code");
+    fireEvent.change(code, { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Verify and sign in" }));
+
+    await waitFor(() => expect(screen.getByLabelText("Authentication code")).toBeDisabled());
+    release(sessionResponse({ system_role: "super_admin" }));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
+  });
+
+  it("reports rate limiting distinctly from other failures", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(errorResponse(429, "rate_limited", "Slow down.")));
+    render(<LoginForm />);
+
+    fillCredentials();
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Too many attempts. Please wait a moment before trying again."));
+  });
+
+  it("reports gateway trouble distinctly on 5xx failures", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(errorResponse(503, "upstream_unavailable", "Downstream failed.")));
+    render(<LoginForm />);
+
+    fillCredentials();
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("The gateway is having trouble. Please wait a moment and try again."));
+  });
+
+  it("reports a connection problem distinctly on network failures", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("offline")));
+    render(<LoginForm />);
+
+    fillCredentials();
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Could not reach the gateway. Check your connection and try again."));
   });
 });

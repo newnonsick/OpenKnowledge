@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ActivityConsole, AiActionsConsole, ExploreConsole, IngestionConsole, KnowledgeConsole, PeopleConsole, SettingsConsole, SourcesConsole, SpacesConsole } from "@/components/management-console";
 import { apiMultipart, apiRequest } from "@/lib/api-client";
+import { invalidateAccessibleSpaces } from "@/lib/space-options";
 
 const currentMember = vi.hoisted(() => ({ display_name: "Mai", id: "admin-1", mfa_enabled: false, system_role: "member" as "member" | "super_admin" }));
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), search: "q=water" }));
@@ -110,6 +111,7 @@ describe("management console", () => {
     navigation.search = "q=water";
     vi.mocked(apiRequest).mockReset();
     vi.mocked(apiMultipart).mockReset();
+    invalidateAccessibleSpaces();
   });
 
   it("creates a private space and refreshes the accessible list", async () => {
@@ -469,7 +471,7 @@ describe("management console", () => {
     expect(screen.queryByText("First note")).not.toBeInTheDocument();
   });
 
-  it("keeps the current knowledge page stable and non-interactive while the next page loads", async () => {
+  it("keeps the current knowledge page stable while the next page loads", async () => {
     let resolveSecondPage: ((value: unknown) => void) | undefined;
     vi.mocked(apiRequest).mockImplementation((path) => {
       if (path === "/api/v1/spaces?limit=100") {
@@ -488,7 +490,7 @@ describe("management console", () => {
     const firstTitle = await screen.findByText("First note");
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(firstTitle.closest(".data-list")).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByRole("button", { name: "Edit First note" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Edit First note" })).toBeEnabled();
 
     resolveSecondPage?.({ items: [{ id: "note-2", space_id: "global", title: "Second note", tags: [], version: 1, updated_at: "2026-08-20T11:00:00Z" }], page: 2, page_size: 25, total_items: 2, total_pages: 2 });
     expect(await screen.findByText("Second note")).toBeInTheDocument();
@@ -609,6 +611,48 @@ describe("management console", () => {
     });
   });
 
+  it("keeps prior explore results visible with a refining indicator during a follow-up search", async () => {
+    let resolveSecond: ((value: unknown) => void) | undefined;
+    let searchCount = 0;
+    vi.mocked(apiRequest).mockImplementation((path, options) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return Promise.resolve({ items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }] }) as never;
+      }
+      if (path === "/api/v1/retrieval/search" && options?.method === "POST") {
+        searchCount += 1;
+        if (searchCount === 1) {
+          return Promise.resolve({
+            hits: [{ canonical_id: "note-1", citation_uri: "knowledge://note-1", content_excerpt: "Turn the water valve clockwise.", rank: 1, rank_score: 0.9, source_type: "knowledge_revision", space_id: "global", title: "Water valve", version: 2 }],
+            health: { semantic_status: "healthy", degraded_reasons: [] },
+            explanation: { effective_space_ids: ["global"], abstained: false },
+          }) as never;
+        }
+        return new Promise((resolve) => {
+          resolveSecond = resolve;
+        }).then(() => ({
+          hits: [{ canonical_id: "note-2", citation_uri: "knowledge://note-2", content_excerpt: "Close the main valve first.", rank: 1, rank_score: 0.8, source_type: "knowledge_revision", space_id: "global", title: "Main valve", version: 1 }],
+          health: { semantic_status: "healthy", degraded_reasons: [] },
+          explanation: { effective_space_ids: ["global"], abstained: false },
+        })) as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<ExploreConsole />);
+
+    expect(await screen.findByText("Turn the water valve clockwise.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /1 match for/ })).toHaveTextContent("water");
+
+    fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "main valve" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search knowledge" }));
+
+    expect(await screen.findByText("Refining results…")).toBeInTheDocument();
+    expect(screen.getByText("Turn the water valve clockwise.")).toBeInTheDocument();
+
+    resolveSecond?.({});
+    expect(await screen.findByText("Close the main valve first.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /1 match for/ })).toHaveTextContent("main valve");
+  });
+
   it("uploads a source into the durable ingestion queue", async () => {
     let uploaded = false;
     vi.mocked(apiRequest).mockImplementation(async (path) => {
@@ -636,7 +680,7 @@ describe("management console", () => {
 
     await waitFor(() => expect(apiMultipart).toHaveBeenCalledWith("/api/v1/sources/upload", expect.any(FormData), { idempotent: true }));
     expect(await screen.findByText(/procedures\.txt/)).toBeInTheDocument();
-    expect(screen.getByText("Queued for durable ingestion")).toBeInTheDocument();
+    expect(screen.getByText(/Queued for durable ingestion/)).toBeInTheDocument();
   });
 
   it("archives a source only after explicit confirmation", async () => {
@@ -741,8 +785,8 @@ describe("management console", () => {
     render(<PeopleConsole />);
 
     await screen.findByRole("heading", { name: "Create a member" });
-    fireEvent.change(screen.getByLabelText("Filter member status"), { target: { value: "disabled" } });
-    fireEvent.change(screen.getByLabelText("Filter system role"), { target: { value: "super_admin" } });
+    fireEvent.change(screen.getByLabelText(/Filter member status/), { target: { value: "disabled" } });
+    fireEvent.change(screen.getByLabelText(/Filter system role/), { target: { value: "super_admin" } });
     fireEvent.click(await screen.findByRole("button", { name: "Next page" }));
     fireEvent.click(await screen.findByRole("button", { name: "Next page" }));
     expect(await screen.findByText("Member 3")).toBeInTheDocument();
@@ -752,7 +796,7 @@ describe("management console", () => {
 
     expect(await screen.findByText("Temp-Only-Once!42")).toBeInTheDocument();
     expect(screen.getByRole("searchbox", { name: "Search members" })).toHaveValue("nana");
-    expect(await screen.findByRole("button", { name: "Edit Nana" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: new RegExp("^Edit Nana") })).toBeInTheDocument();
     const createdMemberPath = memberPaths.findLast((path) => path.includes("q=nana"));
     expect(createdMemberPath).not.toContain("status=");
     expect(createdMemberPath).not.toContain("system_role=");
@@ -776,17 +820,17 @@ describe("management console", () => {
     });
     render(<PeopleConsole />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Edit Mai" }));
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp("^Edit Mai") }));
     expect(screen.queryByRole("button", { name: "Reset Mai password" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Change your password in Security settings" })).toHaveAttribute("href", "/settings?section=security");
     fireEvent.click(screen.getByRole("button", { name: "Close member editor" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Edit Nok" }));
+    fireEvent.click(screen.getByRole("button", { name: new RegExp("^Edit Nok") }));
     expect(screen.getByRole("button", { name: "Reset Nok password" })).toBeDisabled();
     expect(screen.getByText("Enable this member before resetting their password.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close member editor" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Edit Jo" }));
+    fireEvent.click(screen.getByRole("button", { name: new RegExp("^Edit Jo") }));
     expect(screen.getByRole("button", { name: "Reset Jo password" })).toBeEnabled();
   });
 
@@ -811,15 +855,15 @@ describe("management console", () => {
     });
     render(<PeopleConsole />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Edit Nana" }));
-    expect(screen.getByRole("dialog", { name: "Edit Nana" })).toHaveAttribute("aria-modal", "true");
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp("^Edit Nana") }));
+    expect(screen.getByRole("dialog", { name: new RegExp("^Edit Nana") })).toHaveAttribute("aria-modal", "true");
     fireEvent.click(screen.getByRole("button", { name: "Reset Nana password" }));
     expect(screen.getByRole("alertdialog", { name: "Reset Nana password" })).toHaveAttribute("aria-modal", "true");
     expect(screen.getByText(/signs out every session/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm password reset" }));
     expect(await screen.findByText("Reset-Only-Once!42")).toBeInTheDocument();
 
-    const memberDialog = screen.getByRole("dialog", { name: "Edit Nana" });
+    const memberDialog = screen.getByRole("dialog", { name: new RegExp("^Edit Nana") });
     fireEvent.change(within(memberDialog).getByLabelText("Display name"), { target: { value: "Unsaved Nana" } });
     fireEvent.change(within(memberDialog).getByLabelText("System role"), { target: { value: "super_admin" } });
     fireEvent.click(screen.getByRole("button", { name: "Disable Nana" }));
@@ -870,17 +914,17 @@ describe("management console", () => {
     });
     render(<PeopleConsole />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Edit Nana" }));
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp("^Edit Nana") }));
     fireEvent.click(screen.getByRole("button", { name: "Reset Nana password" }));
     expect(screen.getByText("Their existing MFA remains required.", { exact: false })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm password reset" }));
     expect(await screen.findByText("Reset-Only-Once!42")).toBeInTheDocument();
     expect(screen.getByText(/expires/i)).toBeInTheDocument();
 
-    const memberDialog = screen.getByRole("dialog", { name: "Edit Nana" });
+    const memberDialog = screen.getByRole("dialog", { name: new RegExp("^Edit Nana") });
     fireEvent.click(within(memberDialog).getByRole("button", { name: "Close member editor" }));
     expect(screen.queryByText("Reset-Only-Once!42")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Edit Nana" }));
+    fireEvent.click(screen.getByRole("button", { name: new RegExp("^Edit Nana") }));
     expect(screen.queryByText("Reset-Only-Once!42")).not.toBeInTheDocument();
   });
 
@@ -903,7 +947,7 @@ describe("management console", () => {
     });
     render(<PeopleConsole />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Edit Nana" }));
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp("^Edit Nana") }));
     fireEvent.click(screen.getByRole("button", { name: actionName }));
     fireEvent.click(screen.getByRole("button", { name: confirmName }));
 
@@ -930,18 +974,18 @@ describe("management console", () => {
     });
     render(<PeopleConsole />);
 
-    const nanaTrigger = await screen.findByRole("button", { name: "Edit Nana" });
+    const nanaTrigger = await screen.findByRole("button", { name: new RegExp("^Edit Nana") });
     nanaTrigger.focus();
     fireEvent.click(nanaTrigger);
-    const nanaDialog = screen.getByRole("dialog", { name: "Edit Nana" });
+    const nanaDialog = screen.getByRole("dialog", { name: new RegExp("^Edit Nana") });
     expect(nanaDialog).toBeInTheDocument();
     expect(nanaDialog.querySelector('option[value="super_admin"]')).toBeDisabled();
     expect(screen.getByText(/set up MFA in Settings.*Security/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close member editor" }));
     await waitFor(() => expect(nanaTrigger).toHaveFocus());
 
-    fireEvent.click(screen.getByRole("button", { name: "Edit Jo" }));
-    expect(screen.getByRole("dialog", { name: "Edit Jo" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: new RegExp("^Edit Jo") }));
+    expect(screen.getByRole("dialog", { name: new RegExp("^Edit Jo") })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("System role"), { target: { value: "super_admin" } });
     fireEvent.click(screen.getByRole("button", { name: "Save account" }));
 
@@ -950,7 +994,7 @@ describe("management console", () => {
       idempotent: true,
       method: "PATCH",
     }));
-    expect(screen.queryByRole("dialog", { name: "Edit Jo" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: new RegExp("^Edit Jo") })).not.toBeInTheDocument();
   });
 
   it("lets a super admin repair ownership without granting themselves space access", async () => {

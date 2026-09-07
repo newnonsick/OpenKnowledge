@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SessionGate } from "@/components/auth/session-gate";
+import { SessionGate, resetCachedMember } from "@/components/auth/session-gate";
 import { apiRequest } from "@/lib/api-client";
 
 const replace = vi.fn();
@@ -12,6 +12,7 @@ vi.mock("next/navigation", () => ({ usePathname: () => pathname, useRouter: () =
 
 describe("SessionGate", () => {
   beforeEach(() => {
+    resetCachedMember();
     Object.defineProperty(navigator, "locks", {
       configurable: true,
       value: { request: vi.fn(async (_name: string, callback: () => Promise<unknown>) => callback()) },
@@ -286,5 +287,112 @@ describe("SessionGate", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled());
     resolveStepUp(new Response(JSON.stringify({ status: "reauthenticated", step_up_expires_at: "2026-08-20T12:10:00Z" }), { status: 200 }));
+  });
+
+  function memberResponse(overrides: Record<string, unknown> = {}) {
+    return new Response(JSON.stringify({
+      id: "member-1",
+      username: "mai",
+      display_name: "Mai",
+      status: "active",
+      system_role: "member",
+      requires_password_change: false,
+      ...overrides,
+    }), { status: 200 });
+  }
+
+  it("enforces MFA enrollment for a super_admin without mfa_enabled", async () => {
+    pathname = "/";
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(memberResponse({ mfa_enabled: false, system_role: "super_admin" })));
+
+    render(<SessionGate><div>Private console</div></SessionGate>);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(replace).toHaveBeenCalledWith("/first-use/mfa");
+    expect(screen.queryByText("Private console")).not.toBeInTheDocument();
+  });
+
+  it("does not enforce MFA enrollment once mfa_enabled is true", async () => {
+    pathname = "/";
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(memberResponse({ mfa_enabled: true, system_role: "super_admin" })));
+
+    render(<SessionGate><div>Private console</div></SessionGate>);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(replace).not.toHaveBeenCalledWith("/first-use/mfa");
+    expect(screen.getByText("Private console")).toBeInTheDocument();
+  });
+
+  it("orders password change before MFA enrollment on first use", async () => {
+    pathname = "/";
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(memberResponse({ mfa_enabled: false, requires_password_change: true, system_role: "super_admin" })));
+
+    render(<SessionGate><div>Private console</div></SessionGate>);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(replace).toHaveBeenCalledWith("/first-use/password");
+    expect(replace).not.toHaveBeenCalledWith("/first-use/mfa");
+  });
+
+  it("matches /people and /activity exactly without blocking similar prefixes", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(memberResponse()));
+
+    pathname = "/people-directory";
+    const first = render(<SessionGate><div>Private console</div></SessionGate>);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(replace).not.toHaveBeenCalledWith("/");
+    expect(screen.getByText("Private console")).toBeInTheDocument();
+    first.unmount();
+    resetCachedMember();
+    replace.mockReset();
+
+    pathname = "/activity-log";
+    render(<SessionGate><div>Private console</div></SessionGate>);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(replace).not.toHaveBeenCalledWith("/");
+  });
+
+  it("blocks nested /people and /activity routes for regular members", async () => {
+    pathname = "/people/member-1";
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(memberResponse()));
+
+    render(<SessionGate><div>Private console</div></SessionGate>);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(replace).toHaveBeenCalledWith("/");
+    expect(screen.queryByText("Private console")).not.toBeInTheDocument();
+  });
+
+  it("shows Retry without a forced login redirect when /me is unreachable", async () => {
+    pathname = "/";
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockRejectedValue(new TypeError("offline")));
+
+    render(<SessionGate><div>Private console</div></SessionGate>);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByText("The console could not be reached. Check your connection.")).toBeInTheDocument();
+    expect(replace).not.toHaveBeenCalledWith("/login");
   });
 });

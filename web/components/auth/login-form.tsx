@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -16,6 +16,13 @@ export function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const codeInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (step === "code") {
+      codeInputRef.current?.focus();
+    }
+  }, [factorMode, step]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -48,6 +55,10 @@ export function LoginForm() {
         setFactorMode("totp");
       } else if (requestError instanceof ApiError && requestError.status === 429) {
         setError("Too many attempts. Please wait a moment before trying again.");
+      } else if (requestError instanceof ApiError && requestError.status >= 500) {
+        setError("The gateway is having trouble. Please wait a moment and try again.");
+      } else if (requestError instanceof TypeError) {
+        setError("Could not reach the gateway. Check your connection and try again.");
       } else {
         setError(step === "code"
           ? "The authentication code was not accepted. Check your authenticator or switch to a recovery code."
@@ -67,17 +78,17 @@ export function LoginForm() {
       <div className="auth-step-pane" hidden={step !== "credentials"}>
         <p className="auth-form-intro">Sign in with the credentials created for you by your family administrator.</p>
         <label className="field-label" htmlFor="username">Username</label>
-        <input autoCapitalize="none" autoComplete="username" className="text-field" id="username" name="username" onChange={(event) => setUsername(event.target.value)} required={step === "credentials"} value={username} />
+        <input autoCapitalize="none" autoComplete="username" className="text-field" disabled={submitting} id="username" name="username" onChange={(event) => setUsername(event.target.value)} required={step === "credentials"} value={username} />
         <label className="field-label" htmlFor="password">Password</label>
         <div className="password-field">
-          <input autoComplete="current-password" id="password" name="password" onChange={(event) => setPassword(event.target.value)} required={step === "credentials"} type={showPassword ? "text" : "password"} value={password} />
-          <button aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword((value) => !value)} type="button">
+          <input autoComplete="current-password" disabled={submitting} id="password" name="password" onChange={(event) => setPassword(event.target.value)} required={step === "credentials"} type={showPassword ? "text" : "password"} value={password} />
+          <button aria-label={showPassword ? "Hide password" : "Show password"} disabled={submitting} onClick={() => setShowPassword((value) => !value)} type="button">
             {showPassword ? <EyeOff aria-hidden="true" size={18} /> : <Eye aria-hidden="true" size={18} />}
           </button>
         </div>
       </div>
       <div className="auth-step-pane" hidden={step !== "code"}>
-        <p className="auth-form-intro auth-form-intro-protected"><ShieldCheck aria-hidden="true" size={15} /> This account protects sign-in with two-factor authentication. Enter the current code to finish.</p>
+        <p className="auth-form-intro auth-form-intro-protected" role="status"><ShieldCheck aria-hidden="true" size={15} /> This account protects sign-in with two-factor authentication. Enter the current code to finish.</p>
         <input autoComplete="username" hidden id="login-username-persist" name="username" readOnly type="text" value={username} />
         <input autoComplete="current-password" hidden id="login-password-persist" name="password" readOnly type="password" value={password} />
         <div className="factor-tabs" role="group" aria-label="Second factor method">
@@ -88,9 +99,9 @@ export function LoginForm() {
           {factorMode === "totp" ? "Authentication code" : "Recovery code"}
         </label>
         {factorMode === "totp" ? (
-          <input autoComplete="one-time-code" className="text-field code-field" id="totp_code" inputMode="numeric" maxLength={8} name="totp_code" pattern="[0-9]{6,8}" required={step === "code" && factorMode === "totp"} />
+          <input autoComplete="one-time-code" className="text-field code-field" disabled={submitting} id="totp_code" inputMode="numeric" maxLength={8} name="totp_code" pattern="[0-9]{6,8}" ref={codeInputRef} required={step === "code" && factorMode === "totp"} />
         ) : (
-          <input autoCapitalize="none" autoComplete="one-time-code" className="text-field code-field" id="recovery_code" maxLength={64} name="recovery_code" required={step === "code" && factorMode === "recovery"} />
+          <input autoCapitalize="none" autoComplete="one-time-code" className="text-field code-field" disabled={submitting} id="recovery_code" maxLength={64} name="recovery_code" ref={codeInputRef} required={step === "code" && factorMode === "recovery"} />
         )}
       </div>
 

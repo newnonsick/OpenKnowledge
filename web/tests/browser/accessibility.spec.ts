@@ -18,7 +18,7 @@ const loginFixture = {
 const memberFixture = {
   display_name: "Mai Arun",
   id: "member-1",
-  mfa_enabled: false,
+  mfa_enabled: true,
   requires_password_change: false,
   status: "active",
   system_role: "member",
@@ -398,12 +398,12 @@ test("moves a management list with the direct numeric page control", async ({ pa
   await page.goto("/knowledge");
 
   await expect(page.getByText("First page knowledge")).toBeVisible();
-  const jumpInput = page.getByRole("textbox", { name: "Jump to page of 20" });
+  const jumpInput = page.getByRole("textbox", { name: "Go to page number" });
   await jumpInput.fill("2");
   await jumpInput.press("Enter");
 
   await expect(page.getByText("Second page knowledge")).toBeVisible();
-  await expect(page.getByText("Page 2 of 20 · 500 items")).toBeVisible();
+  await expect(page.getByText("500 items")).toBeVisible();
   await expect(page.getByRole("button", { name: "Page 2, current page" })).toBeVisible();
 });
 

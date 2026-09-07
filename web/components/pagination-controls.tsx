@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 type PaginationControlsProps = {
@@ -14,10 +14,10 @@ type PaginationControlsProps = {
 };
 
 function pageWindow(page: number, totalPages: number): (number | "gap")[] {
-  if (totalPages <= 7) {
+  if (totalPages <= 5) {
     return Array.from({ length: totalPages }, (_, index) => index + 1);
   }
-  const siblings = new Set<number>([1, 2, page - 1, page, page + 1, totalPages - 1, totalPages]);
+  const siblings = new Set<number>([1, page - 1, page, page + 1, totalPages]);
   const ordered = [...siblings].filter((value) => value >= 1 && value <= totalPages).sort((left, right) => left - right);
   const windowed: (number | "gap")[] = [];
   for (const value of ordered) {
@@ -40,6 +40,8 @@ export function PaginationControls({
   onPageChange,
 }: PaginationControlsProps) {
   const [directPage, setDirectPage] = useState(String(page));
+  const jumpLabelId = useId();
+  const jumpRangeId = useId();
 
   useEffect(() => {
     setDirectPage(String(page));
@@ -68,7 +70,7 @@ export function PaginationControls({
   return (
     <nav aria-busy={loading || undefined} aria-label="Pagination" className="pagination-controls">
       <p aria-atomic="true" aria-live="polite" className="pagination-summary" role="status">
-        {loading ? `Loading page ${loadingPage ?? page}…` : `Page ${page} of ${totalPages} · ${totalItems} items`}
+        {loading ? `Loading page ${loadingPage ?? page}…` : `${totalItems} items`}
       </p>
       <div className="pagination-actions">
         <button
@@ -104,11 +106,12 @@ export function PaginationControls({
         >
           <ChevronRight aria-hidden="true" size={15} />
         </button>
-        {totalPages >= 8 ? (
+        {totalPages >= 6 ? (
           <label className="pagination-jump">
-            <span>Go to</span>
+            <span id={jumpLabelId}>Go to page</span>
             <input
-              aria-label={`Jump to page of ${totalPages}`}
+              aria-describedby={`${jumpLabelId} ${jumpRangeId}`}
+              aria-label="Go to page number"
               className="pagination-jump-input"
               disabled={loading}
               inputMode="numeric"
@@ -126,9 +129,11 @@ export function PaginationControls({
                   goToDirectPage();
                 }
               }}
+              pattern="[0-9]*"
               type="text"
               value={directPage}
             />
+            <span className="pagination-jump-range" id={jumpRangeId}>of {totalPages}</span>
           </label>
         ) : null}
       </div>

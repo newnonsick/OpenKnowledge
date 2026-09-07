@@ -30,8 +30,28 @@ export function ThemeToggle({ menuItem = false, onFocus, tabIndex }: { menuItem?
 
   useEffect(() => {
     const sync = () => setTheme(currentTheme());
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === "openknowledge-theme") {
+        sync();
+      }
+    };
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const onMedia = () => {
+      try {
+        if (localStorage.getItem("openknowledge-theme") === null) {
+          sync();
+        }
+      } catch {
+      }
+    };
     window.addEventListener("openknowledge-theme-change", sync);
-    return () => window.removeEventListener("openknowledge-theme-change", sync);
+    window.addEventListener("storage", onStorage);
+    media?.addEventListener?.("change", onMedia);
+    return () => {
+      window.removeEventListener("openknowledge-theme-change", sync);
+      window.removeEventListener("storage", onStorage);
+      media?.removeEventListener?.("change", onMedia);
+    };
   }, []);
 
   const apply = (next: Theme) => {
@@ -52,9 +72,10 @@ export function ThemeToggle({ menuItem = false, onFocus, tabIndex }: { menuItem?
       onFocus={onFocus}
       role={menuItem ? "menuitem" : undefined}
       tabIndex={tabIndex}
+      title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
       type="button"
     >
-      {theme === "dark" ? <Sun aria-hidden="true" size={15} /> : <Moon aria-hidden="true" size={15} />}
+      {theme === "dark" ? <Sun aria-hidden="true" size={16} /> : <Moon aria-hidden="true" size={16} />}
       <span>{theme === "dark" ? "Light theme" : "Dark theme"}</span>
     </button>
   );

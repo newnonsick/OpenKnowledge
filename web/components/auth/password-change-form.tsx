@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Check, Copy, KeyRound, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -14,6 +14,7 @@ type InitialAPIKey = components["schemas"]["InitialAPIKey"];
 
 export function PasswordChangeForm() {
   const router = useRouter();
+  const successHeadingRef = useRef<HTMLHeadingElement>(null);
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -21,6 +22,12 @@ export function PasswordChangeForm() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const canSubmit = isPasswordValid(password, confirmation) && !submitting;
+
+  useEffect(() => {
+    if (initialKey) {
+      successHeadingRef.current?.focus();
+    }
+  }, [initialKey]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -50,14 +57,15 @@ export function PasswordChangeForm() {
 
   if (initialKey) {
     return (
-      <section className="first-use-card recovery-card">
+      <section aria-labelledby="first-key-heading" className="first-use-card recovery-card">
         <span className="first-use-step">Your first integration</span>
         <span className="first-use-icon mint"><Check aria-hidden="true" size={22} /></span>
-        <h1>Save your personal API key.</h1>
+        <h1 id="first-key-heading" ref={successHeadingRef} tabIndex={-1}>Save your personal API key.</h1>
         <p>This secret is shown only once. Keep it in a password manager and never place it in browser storage.</p>
-        <div className="secret-value"><code>{initialKey.secret}</code><button aria-label="Copy API key" onClick={async () => { await navigator.clipboard.writeText(initialKey.secret); setCopied(true); }} type="button"><Copy aria-hidden="true" size={15} /></button></div>
+        <div className="secret-value"><code>{initialKey.secret}</code><button aria-label="Copy API key" onClick={() => { navigator.clipboard.writeText(initialKey.secret).then(() => setCopied(true)).catch(() => setError("Copy failed — select the key manually.")); }} type="button"><Copy aria-hidden="true" size={15} /></button></div>
         <p className="secret-scope-summary">Access: {initialKey.scopes.join(", ")}</p>
         {copied ? <span className="copy-confirmation" role="status">API key copied</span> : null}
+        {error ? <div className="auth-error" role="alert">{error}</div> : null}
         <button className="auth-submit" onClick={() => router.replace("/")} type="button">I have saved this API key</button>
       </section>
     );

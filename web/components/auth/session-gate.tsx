@@ -45,6 +45,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true;
+    setFailed(false);
     contractData(contractClient.GET("/api/v1/me"))
       .then((current) => {
         if (!active) {
@@ -53,13 +54,24 @@ export function SessionGate({ children }: { children: ReactNode }) {
         cachedMember = current;
         setMember(current);
       })
-      .catch(() => {
+      .catch((loadError) => {
         cachedMember = null;
-        if (active) {
+        if (!active) {
+          return;
+        }
+        if (loadError instanceof ApiError && loadError.status >= 500) {
           setFailed(true);
           setMember(null);
-          router.replace("/login");
+          return;
         }
+        if (loadError instanceof TypeError || (loadError instanceof ApiError && loadError.code === "request_failed")) {
+          setFailed(true);
+          setMember(null);
+          return;
+        }
+        setFailed(true);
+        setMember(null);
+        router.replace("/login");
       });
     return () => {
       active = false;
@@ -71,18 +83,25 @@ export function SessionGate({ children }: { children: ReactNode }) {
     if (!current) {
       return;
     }
-    if (current.requires_password_change && !pathname.startsWith("/first-use/")) {
+    if (current.requires_password_change && pathname !== "/first-use/password") {
       router.replace("/first-use/password");
       return;
     }
-    if (current.system_role !== "super_admin" && (pathname.startsWith("/people") || pathname.startsWith("/activity"))) {
+    const requiresMfaEnrollment = !current.requires_password_change && current.system_role === "super_admin" && !current.mfa_enabled;
+    if (requiresMfaEnrollment && pathname !== "/first-use/mfa") {
+      router.replace("/first-use/mfa");
+      return;
+    }
+    if (current.system_role !== "super_admin" && (pathname === "/people" || pathname.startsWith("/people/") || pathname === "/activity" || pathname.startsWith("/activity/"))) {
       router.replace("/");
     }
   }, [member, pathname, router]);
 
+  const requiresMfaEnrollment = member !== null && !member.requires_password_change && member.system_role === "super_admin" && !member.mfa_enabled;
   const routeBlocked = member !== null && (
-    (member.requires_password_change && !pathname.startsWith("/first-use/")) ||
-    (member.system_role !== "super_admin" && (pathname.startsWith("/people") || pathname.startsWith("/activity")))
+    (member.requires_password_change && pathname !== "/first-use/password") ||
+    (requiresMfaEnrollment && pathname !== "/first-use/mfa") ||
+    (member.system_role !== "super_admin" && (pathname === "/people" || pathname.startsWith("/people/") || pathname === "/activity" || pathname.startsWith("/activity/")))
   );
 
   useEffect(() => {
@@ -190,7 +209,8 @@ export function SessionGate({ children }: { children: ReactNode }) {
       <main className="session-loading" aria-live="polite">
         <span><Boxes aria-hidden="true" size={20} /></span>
         <LoaderCircle aria-hidden="true" className="spin" size={20} />
-        <p>{failed ? "Returning to sign in…" : "Opening your private console…"}</p>
+        <p>{failed ? "The console could not be reached. Check your connection." : "Opening your private console…"}</p>
+        {failed ? <button className="secondary-button" onClick={() => window.location.reload()} type="button">Retry</button> : null}
       </main>
     );
   }
@@ -198,7 +218,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
   return (
     <SessionContext.Provider value={member}>
       {children}
-      <ModalDialog ariaDescribedBy={stepUpDescriptionId} ariaLabelledBy={stepUpTitleId} className="step-up-dialog" onClose={() => { if (!stepUpSubmitting) closeStepUp(); }} open={stepUpOpen} returnFocusTarget={stepUpReturnTarget}>
+      <ModalDialog ariaDescribedBy={stepUpDescriptionId} ariaLabelledBy={stepUpTitleId} className="step-up-dialog" initialFocusSelector="#step-up-password" onClose={() => { if (!stepUpSubmitting) closeStepUp(); }} open={stepUpOpen} returnFocusTarget={stepUpReturnTarget}>
             <div className="step-up-heading"><span><KeyRound aria-hidden="true" size={18} /></span><div><small>Security check</small><h2 id={stepUpTitleId}>Verify your identity</h2></div><button aria-label="Close identity verification" disabled={stepUpSubmitting} onClick={closeStepUp} type="button"><X aria-hidden="true" size={18} /></button></div>
             <p id={stepUpDescriptionId}>For extra security, this action needs a fresh identity check. Nothing was saved yet — verify below, then run the action again.</p>
             <form onSubmit={submitStepUp}>

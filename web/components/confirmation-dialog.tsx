@@ -11,6 +11,7 @@ type ModalDialogProps = {
   ariaLabelledBy: string;
   children: ReactNode;
   className?: string;
+  initialFocusSelector?: string;
   onClose: () => void;
   open: boolean;
   returnFocusTarget?: HTMLElement | null;
@@ -22,12 +23,13 @@ export function ModalDialog({
   ariaLabelledBy,
   children,
   className = "",
+  initialFocusSelector,
   onClose,
   open,
   returnFocusTarget,
   role = "dialog",
 }: ModalDialogProps) {
-  const dialogRef = useModalFocus(open, onClose, returnFocusTarget);
+  const dialogRef = useModalFocus(open, onClose, returnFocusTarget, initialFocusSelector);
   const [portalRoot] = useState<HTMLElement | null>(() => {
     if (typeof document === "undefined") {
       return null;

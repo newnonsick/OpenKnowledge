@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AccountMenu } from "@/components/account-menu";
@@ -67,5 +67,46 @@ describe("AccountMenu", () => {
 
     expect(onSignOut).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("menu", { name: "Account" })).not.toBeInTheDocument();
+  });
+
+  it("closes on Tab and refocuses the trigger with a toggled label", async () => {
+    render(<AccountMenu member={{ displayName: "Mai Arun", role: "Member" }} onSignOut={vi.fn()} signingOut={false} />);
+    const trigger = screen.getByRole("button", { name: "Open account menu" });
+    fireEvent.click(trigger);
+    expect(screen.getByRole("button", { name: "Close account menu" })).toBeInTheDocument();
+
+    const security = screen.getByRole("menuitem", { name: "Security settings" });
+    await waitFor(() => expect(security).toHaveFocus());
+    fireEvent.keyDown(security, { key: "Tab" });
+
+    await waitFor(() => expect(screen.queryByRole("menu", { name: "Account" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open account menu" })).toHaveFocus());
+  });
+
+  it("prevents default on Escape and refocuses the trigger", async () => {
+    render(<AccountMenu member={{ displayName: "Mai Arun", role: "Member" }} onSignOut={vi.fn()} signingOut={false} />);
+    const trigger = screen.getByRole("button", { name: "Open account menu" });
+    fireEvent.click(trigger);
+    await waitFor(() => expect(screen.getByRole("menu", { name: "Account" })).toBeInTheDocument());
+
+    let prevented = true;
+    await act(async () => {
+      prevented = document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape" }));
+    });
+
+    expect(prevented).toBe(false);
+    await waitFor(() => expect(screen.queryByRole("menu", { name: "Account" })).not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
+  });
+
+  it("skips disabled items when moving initial focus", async () => {
+    render(<AccountMenu member={{ displayName: "Mai Arun", role: "Member" }} onSignOut={vi.fn()} signingOut />);
+    fireEvent.click(screen.getByRole("button", { name: "Open account menu" }));
+
+    const signOut = screen.getByRole("menuitem", { name: "Sign out" });
+    expect(signOut).toBeDisabled();
+    expect(signOut).toHaveTextContent("Signing out…");
+    await waitFor(() => expect(document.activeElement).not.toBe(signOut));
+    expect(screen.getByRole("menuitem", { name: "Security settings" })).toHaveFocus();
   });
 });

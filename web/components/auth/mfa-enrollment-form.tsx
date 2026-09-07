@@ -15,6 +15,7 @@ type InitialAPIKey = components["schemas"]["InitialAPIKey"];
 export function MfaEnrollmentForm() {
   const router = useRouter();
   const started = useRef(false);
+  const successHeadingRef = useRef<HTMLHeadingElement>(null);
   const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [code, setCode] = useState("");
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
@@ -23,6 +24,12 @@ export function MfaEnrollmentForm() {
   const [submitting, setSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (recoveryCodes) {
+      successHeadingRef.current?.focus();
+    }
+  }, [recoveryCodes]);
 
   useEffect(() => {
     if (started.current) {
@@ -59,22 +66,27 @@ export function MfaEnrollmentForm() {
     if (!recoveryCodes) {
       return;
     }
-    await navigator.clipboard.writeText(recoveryCodes.join("\n"));
-    setCopied(true);
+    try {
+      await navigator.clipboard.writeText(recoveryCodes.join("\n"));
+      setCopied(true);
+    } catch {
+      setError("Copy failed — select the codes manually.");
+    }
   }
 
   if (recoveryCodes) {
     return (
-      <section className="first-use-card recovery-card">
+      <section aria-labelledby="recovery-secrets-heading" className="first-use-card recovery-card">
         <span className="first-use-step">Final security step</span>
         <span className="first-use-icon mint"><Check aria-hidden="true" size={22} /></span>
-        <h1>Save your recovery secrets.</h1>
+        <h1 id="recovery-secrets-heading" ref={successHeadingRef} tabIndex={-1}>Save your recovery secrets.</h1>
         <p>Your recovery codes and first API key are shown only once. Keep them somewhere separate from your authenticator.</p>
-        <div className="recovery-codes" aria-label="Recovery codes">
+        <div aria-label="Recovery codes" className="recovery-codes" role="status">
           {recoveryCodes.map((recoveryCode) => <code key={recoveryCode}>{recoveryCode}</code>)}
         </div>
         <button className="secondary-action" onClick={copyCodes} type="button"><Copy aria-hidden="true" size={15} />{copied ? "Copied" : "Copy all codes"}</button>
-        {initialKey ? <><div className="secret-value"><code>{initialKey.secret}</code><button aria-label="Copy API key" onClick={() => navigator.clipboard.writeText(initialKey.secret)} type="button"><Copy aria-hidden="true" size={15} /></button></div><p className="secret-scope-summary">API access: {initialKey.scopes.join(", ")}</p></> : null}
+        {initialKey ? <><div className="secret-value"><code>{initialKey.secret}</code><button aria-label="Copy API key" onClick={() => { navigator.clipboard.writeText(initialKey.secret).catch(() => setError("Copy failed — select the key manually.")); }} type="button"><Copy aria-hidden="true" size={15} /></button></div><p className="secret-scope-summary">API access: {initialKey.scopes.join(", ")}</p></> : null}
+        {error ? <div className="auth-error" role="alert">{error}</div> : null}
         <button className="auth-submit" onClick={() => { resetCachedMember(); router.replace("/"); }} type="button">I have saved these secrets</button>
       </section>
     );

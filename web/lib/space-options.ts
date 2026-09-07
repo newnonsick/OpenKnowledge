@@ -4,8 +4,13 @@ import type { components } from "@/lib/generated/openapi";
 type Space = components["schemas"]["SpaceSummary"];
 
 const pageSize = 100;
+const cacheTtlMs = 45_000;
 
-export async function loadAccessibleSpaces(signal?: AbortSignal): Promise<Space[]> {
+let cachedSpaces: Space[] | null = null;
+let cachedAt = 0;
+let inFlight: Promise<Space[]> | null = null;
+
+async function fetchAccessibleSpaces(signal?: AbortSignal): Promise<Space[]> {
   const firstPage = await contractData(contractClient.GET("/api/v1/spaces", {
     params: { query: { page: 1, page_size: pageSize } },
     signal,
@@ -23,4 +28,25 @@ export async function loadAccessibleSpaces(signal?: AbortSignal): Promise<Space[
     seen.add(space.id);
     return true;
   });
+}
+
+export async function loadAccessibleSpaces(signal?: AbortSignal): Promise<Space[]> {
+  if (cachedSpaces && Date.now() - cachedAt < cacheTtlMs) {
+    return cachedSpaces;
+  }
+  if (!inFlight) {
+    inFlight = fetchAccessibleSpaces(signal).then((spaces) => {
+      cachedSpaces = spaces;
+      cachedAt = Date.now();
+      return spaces;
+    }).finally(() => {
+      inFlight = null;
+    });
+  }
+  return inFlight;
+}
+
+export function invalidateAccessibleSpaces(): void {
+  cachedSpaces = null;
+  cachedAt = 0;
 }

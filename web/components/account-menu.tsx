@@ -35,6 +35,7 @@ export function AccountMenu({ member, onSignOut, signingOut }: AccountMenuProps)
     };
     const dismissWithKeyboard = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.preventDefault();
         setOpen(false);
         triggerRef.current?.focus();
       }
@@ -52,8 +53,8 @@ export function AccountMenu({ member, onSignOut, signingOut }: AccountMenuProps)
       return;
     }
     queueMicrotask(() => {
-      const items = menuRef.current?.querySelectorAll<HTMLElement>("[role='menuitem']");
-      items?.[activeIndex]?.focus();
+      const items = menuRef.current?.querySelectorAll<HTMLElement>("[role='menuitem']:not([disabled])");
+      items?.[Math.min(activeIndex, (items.length || 1) - 1)]?.focus();
     });
   }, [activeIndex, open]);
 
@@ -62,9 +63,14 @@ export function AccountMenu({ member, onSignOut, signingOut }: AccountMenuProps)
     setActiveIndex(index);
     setOpen(true);
   };
+  const closeAndRefocus = () => {
+    setOpen(false);
+    queueMicrotask(() => triggerRef.current?.focus());
+  };
   const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Tab") {
-      setOpen(false);
+      event.preventDefault();
+      closeAndRefocus();
       return;
     }
     const itemCount = menuRef.current?.querySelectorAll("[role='menuitem']").length ?? 0;
@@ -97,7 +103,7 @@ export function AccountMenu({ member, onSignOut, signingOut }: AccountMenuProps)
           <button aria-label="Sign out" className="account-menu-item is-danger" disabled={signingOut} onClick={() => { close(); onSignOut(); }} onFocus={() => setActiveIndex(3)} role="menuitem" tabIndex={activeIndex === 3 ? 0 : -1} type="button"><LogOut aria-hidden="true" size={16} /><span>{signingOut ? "Signing out…" : "Sign out"}</span></button>
         </div>
       ) : null}
-      <button aria-controls={menuId} aria-expanded={open} aria-haspopup="menu" aria-label="Open account menu" className="profile-card account-menu-trigger" onClick={() => { if (open) close(); else openAt(0); }} onKeyDown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); openAt(event.key === "ArrowDown" ? 0 : 3); } }} ref={triggerRef} type="button">
+      <button aria-controls={menuId} aria-expanded={open} aria-haspopup="menu" aria-label={open ? "Close account menu" : "Open account menu"} className="profile-card account-menu-trigger" onClick={() => { if (open) closeAndRefocus(); else openAt(0); }} onKeyDown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); openAt(event.key === "ArrowDown" ? 0 : 3); } }} ref={triggerRef} type="button">
         <span className="profile-avatar">{initials || "M"}</span>
         <span><strong>{member.displayName}</strong><small>{member.role}</small></span>
         <ChevronUp aria-hidden="true" className={open ? "is-open" : ""} size={16} />

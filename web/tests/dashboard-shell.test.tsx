@@ -48,7 +48,6 @@ describe("DashboardShell", () => {
     expect(screen.getByRole("link", { name: /upload source/i })).toHaveAttribute("href", "/sources");
     expect(screen.getByRole("link", { name: /capture knowledge/i })).toHaveAttribute("href", "/knowledge");
     expect(screen.getByRole("link", { name: /create space/i })).toHaveAttribute("href", "/spaces");
-    expect(screen.getByRole("link", { name: /test retrieval/i })).toHaveAttribute("href", "/explore");
     for (const searchLink of screen.getAllByRole("link", { name: /search/i })) {
       expect(searchLink).toHaveAttribute("href", "/explore");
     }

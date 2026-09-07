@@ -60,4 +60,32 @@ describe("PasswordChangeForm", () => {
     expect(screen.getByText(/shown only once/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "I have saved this API key" })).toBeInTheDocument();
   });
+
+  it("moves focus to the success heading and reports API key copy failures", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      requires_mfa_enrollment: false,
+      initial_api_key: {
+        id: "key-1",
+        public_id: "public-1",
+        name: "First device",
+        secret: "openknowledge_v1_public-1_secret",
+        scopes: ["chat:write", "knowledge:read"],
+      },
+    }), { status: 200 })));
+    render(<PasswordChangeForm />);
+
+    fireEvent.change(screen.getByLabelText("New password"), { target: { value: "Permanent-Password-934!" } });
+    fireEvent.change(screen.getByLabelText("Confirm password"), { target: { value: "Permanent-Password-934!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Set new password" }));
+
+    const heading = await screen.findByRole("heading", { name: "Save your personal API key." });
+    await waitFor(() => expect(heading).toHaveFocus());
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy API key" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Copy failed — select the key manually."));
+  });
 });

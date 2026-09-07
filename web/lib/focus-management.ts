@@ -76,7 +76,7 @@ export function focusModalReturnTarget(target: HTMLElement | null): boolean {
     ? target
     : target.id
       ? document.getElementById(target.id)
-      : Array.from(document.querySelectorAll<HTMLElement>("[aria-label]")).find((candidate) => candidate.getAttribute("aria-label") === target.getAttribute("aria-label"));
+      : null;
   if (!connectedTarget || connectedTarget.closest("[inert], [data-modal-suspended]")) {
     return false;
   }
@@ -85,7 +85,30 @@ export function focusModalReturnTarget(target: HTMLElement | null): boolean {
 }
 
 function focusableElements(root: HTMLElement): HTMLElement[] {
-  return Array.from(root.querySelectorAll<HTMLElement>(focusableSelector)).filter((element) => !element.hidden);
+  return Array.from(root.querySelectorAll<HTMLElement>(focusableSelector)).filter((element) => {
+    if (element.hidden) {
+      return false;
+    }
+    if (element instanceof HTMLDetailsElement) {
+      return element.open;
+    }
+    const style = typeof element.checkVisibility === "function" ? null : getComputedStyle(element);
+    if (typeof element.checkVisibility === "function") {
+      try {
+        if (!element.checkVisibility({ checkOpacity: false, checkVisibilityCSS: true })) {
+          return false;
+        }
+      } catch {
+        return false;
+      }
+    } else if (style && (style.display === "none" || style.visibility === "hidden")) {
+      return false;
+    }
+    if (element.closest("[inert], details:not([open])")) {
+      return false;
+    }
+    return true;
+  });
 }
 
 function containFocus(event: KeyboardEvent, root: HTMLElement): void {
@@ -118,19 +141,29 @@ export function useDrawerFocus(open: boolean, setOpen: Dispatch<SetStateAction<b
   useLayoutEffect(() => {
     if (!open) {
       if (wasOpen.current) {
-        queueMicrotask(() => triggerRef.current?.focus());
+        const trigger = triggerRef.current;
+        queueMicrotask(() => {
+          if (trigger?.isConnected && trigger.offsetParent !== null) {
+            trigger.focus();
+          } else {
+            document.querySelector<HTMLElement>("main h1")?.setAttribute("tabindex", "-1");
+            const heading = document.querySelector<HTMLElement>("main h1");
+            heading?.focus({ preventScroll: true });
+          }
+        });
       }
       wasOpen.current = false;
       return;
     }
     wasOpen.current = true;
-    const focusTimer = window.setTimeout(() => {
-      const closeButton = closeRef.current || drawerRef.current?.querySelector<HTMLButtonElement>("button[aria-label='Close navigation']");
-      closeButton?.focus();
-    }, 240);
+    const overflowBefore = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeButton = closeRef.current || drawerRef.current?.querySelector<HTMLButtonElement>("button[aria-label='Close navigation']");
+    closeButton?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
+        event.stopPropagation();
         setOpen(false);
         return;
       }
@@ -140,7 +173,7 @@ export function useDrawerFocus(open: boolean, setOpen: Dispatch<SetStateAction<b
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => {
-      window.clearTimeout(focusTimer);
+      document.body.style.overflow = overflowBefore;
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [open, setOpen]);
@@ -148,7 +181,7 @@ export function useDrawerFocus(open: boolean, setOpen: Dispatch<SetStateAction<b
   return { closeRef, drawerRef, triggerRef };
 }
 
-export function useModalFocus(open: boolean, onClose: () => void, explicitReturnTarget?: HTMLElement | null) {
+export function useModalFocus(open: boolean, onClose: () => void, explicitReturnTarget?: HTMLElement | null, initialFocusSelector?: string) {
   const dialogRef = useRef<HTMLElement>(null);
   const returnRef = useRef<HTMLElement | null>(null);
   const closeRef = useRef(onClose);
@@ -175,6 +208,11 @@ export function useModalFocus(open: boolean, onClose: () => void, explicitReturn
       if (!dialog) {
         return;
       }
+      const preferred = initialFocusSelector ? dialog.querySelector<HTMLElement>(initialFocusSelector) : null;
+      if (preferred && !preferred.hasAttribute("disabled")) {
+        preferred.focus();
+        return;
+      }
       const initial = focusableElements(dialog)[0];
       if (initial) {
         initial.focus();
@@ -189,6 +227,7 @@ export function useModalFocus(open: boolean, onClose: () => void, explicitReturn
       }
       if (event.key === "Escape") {
         event.preventDefault();
+        event.stopPropagation();
         closeRef.current();
         return;
       }
