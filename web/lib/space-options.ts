@@ -9,6 +9,7 @@ const cacheTtlMs = 45_000;
 let cachedSpaces: Space[] | null = null;
 let cachedAt = 0;
 let inFlight: Promise<Space[]> | null = null;
+let generation = 0;
 
 async function fetchAccessibleSpaces(signal?: AbortSignal): Promise<Space[]> {
   const firstPage = await contractData(contractClient.GET("/api/v1/spaces", {
@@ -35,18 +36,23 @@ export async function loadAccessibleSpaces(signal?: AbortSignal): Promise<Space[
     return cachedSpaces;
   }
   if (!inFlight) {
+    const requestGeneration = generation;
     inFlight = fetchAccessibleSpaces(signal).then((spaces) => {
-      cachedSpaces = spaces;
-      cachedAt = Date.now();
+      if (requestGeneration === generation) {
+        cachedSpaces = spaces;
+        cachedAt = Date.now();
+      }
       return spaces;
     }).finally(() => {
-      inFlight = null;
+      if (requestGeneration === generation) inFlight = null;
     });
   }
   return inFlight;
 }
 
 export function invalidateAccessibleSpaces(): void {
+  generation += 1;
+  inFlight = null;
   cachedSpaces = null;
   cachedAt = 0;
 }

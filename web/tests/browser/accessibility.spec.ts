@@ -139,6 +139,7 @@ async function mockGateway(page: Page, systemRole: "member" | "super_admin" = "m
 }
 
 async function expectAccessible(page: Page) {
+  await expect(page).toHaveTitle(/OpenKnowledge/);
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
     .analyze();
@@ -162,7 +163,7 @@ test("signs in from a keyboard-accessible page and opens the scoped dashboard", 
   await page.keyboard.press("Enter");
 
   await expect(page).toHaveURL("/");
-  await expect(page.getByRole("heading", { name: /Everything your family knows/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Your knowledge, together/ })).toBeVisible();
   await expect(page.getByText("Family Shared")).toBeVisible();
   await expect(page.getByText("Permission-aware search is active")).toBeVisible();
   await expect(page.getByRole("link", { name: "People & access" })).toHaveCount(0);
@@ -177,7 +178,7 @@ test("keeps dashboard navigation discoverable on a mobile viewport", async ({ pa
   await mockGateway(page);
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: /Everything your family knows/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Your knowledge, together/ })).toBeVisible();
   await expect(page).toHaveScreenshot("dashboard-mobile-light.png", {
     animations: "disabled",
     fullPage: true,
@@ -193,6 +194,9 @@ test("keeps dashboard navigation discoverable on a mobile viewport", async ({ pa
   await expect(page.getByRole("navigation", { name: "Primary navigation" })).toBeHidden();
   await expect(opener).toBeFocused();
   await expect(opener).toHaveAttribute("aria-expanded", "false");
+  await opener.click();
+  await page.getByRole("link", { name: "For you", exact: true }).click();
+  await expect(page.getByRole("navigation", { name: "Primary navigation" })).toBeHidden();
   await expectAccessible(page);
 });
 
@@ -410,6 +414,25 @@ test("signs out through the account menu and returns to login", async ({ page })
   await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
 });
 
+test("recovers from a failed sign out on mobile without claiming success", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockGateway(page);
+  let attempts = 0;
+  await page.route("**/api/v1/auth/logout*", (route) => {
+    attempts += 1;
+    return attempts === 1 ? route.abort("failed") : route.fulfill(json({ signed_out: true }));
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  await page.getByRole("button", { name: "Open account menu" }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Sign out failed" })).toBeVisible();
+  await expect(page).toHaveURL("/");
+  await expectAccessible(page);
+  await page.getByRole("button", { name: "Retry sign out" }).click();
+  await expect(page).toHaveURL("/login");
+});
+
 test("shows the spaces empty state when no spaces exist", async ({ page }) => {
   await mockGateway(page);
   await page.route("**/api/v1/spaces*", (route) => route.fulfill(json({ items: [], page: 1, page_size: 100, total_items: 0, total_pages: 0 })));
@@ -489,7 +512,7 @@ test("keeps the sign-in action in the first mobile viewport", async ({ page }) =
 test("preserves approved light and dark-ready dashboard visuals", async ({ page }) => {
   await mockGateway(page);
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /Everything your family knows/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Your knowledge, together/ })).toBeVisible();
 
   await expect(page).toHaveScreenshot("dashboard-light.png", {
     animations: "disabled",
@@ -574,7 +597,7 @@ test("moves a management list with the direct numeric page control", async ({ pa
 
   await expect(page.getByText("Second page knowledge")).toBeVisible();
   await expect(page.getByText("26–50 of 500")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Page 2", exact: true })).toBeVisible();
+  await expect(jumpInput).toHaveValue("2");
 });
 
 test("keeps the mobile knowledge error and retry state within the viewport", async ({ page }) => {

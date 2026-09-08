@@ -20,7 +20,6 @@ import {
   Search,
   Settings2,
   ShieldCheck,
-  Sparkles,
   Upload,
   UsersRound,
   WandSparkles,
@@ -193,9 +192,8 @@ export function DashboardShell({
         <div className="content-wrap">
           {loading ? <p aria-label="Loading dashboard" aria-live="polite" className="visually-hidden" role="status">Loading dashboard</p> : null}
           <section className="hero-section">
-            <div className="eyebrow"><Sparkles aria-hidden="true" size={15} /> Your family knowledge, in one place</div>
-            <h1>Everything your family knows.<br /><span>Ready when you need it.</span></h1>
-            <p className="hero-description">Find a detail, return to a project, or add something worth remembering.</p>
+            <h1>Your knowledge, together.</h1>
+            <p className="hero-description">Search your spaces, save a note, or add a document.</p>
 
             <form action="/explore" className="knowledge-search" method="get" role="search">
               <Search aria-hidden="true" size={23} strokeWidth={1.8} />
@@ -213,7 +211,7 @@ export function DashboardShell({
           <section className="dashboard-grid">
             <article className="continue-panel">
               <div className="section-heading">
-                <div><p className="section-kicker">PICK UP THE THREAD</p><h2>Continue where you left off</h2></div>
+                <div><h2>Your spaces</h2></div>
                 <Link href="/spaces">View all <ArrowRight aria-hidden="true" size={15} /></Link>
               </div>
               <div className="recent-list">
@@ -222,7 +220,7 @@ export function DashboardShell({
                 </div> : spaces.slice(0, 3).map((space) => (
                   <Link className="recent-row" href={`/knowledge?space=${encodeURIComponent(space.id)}`} key={space.id}>
                     <span className="document-glyph"><BookOpen aria-hidden="true" size={18} /></span>
-                    <span className="recent-copy"><strong>{space.name}</strong><small>{space.role} · available now</small></span>
+                    <span className="recent-copy"><strong>{space.name}</strong><small>{space.role}</small></span>
                     <ArrowRight aria-hidden="true" className="row-arrow" size={17} />
                   </Link>
                 ))}
@@ -240,9 +238,9 @@ export function DashboardShell({
                   <div><small>Queue</small><strong>{operations ? `${queued} queued` : "Unavailable"}</strong></div>
                   <div><small>Processing</small><strong>{operations ? `${operations.ingestion.running} running` : "Unavailable"}</strong></div>
                   <div><small>Storage</small><strong>{operations ? `${formatBytes(operations.storage.referenced_bytes)} referenced` : "Unavailable"}</strong></div>
-                  <div><small>Retrieval</small><strong>{operations ? (operations.retrieval.embedding_generation_active ? "Generation active" : "Lexical only") : "Unavailable"}</strong></div>
+                  <div><small>Search</small><strong>{operations ? (operations.retrieval.embedding_generation_active ? "Semantic search ready" : "Keyword search") : "Unavailable"}</strong></div>
                   <div><small>Settings</small><strong>{operations ? `Revision ${operations.settings_revision}` : "Unavailable"}</strong></div>
-                  <div><small>Failures</small><strong>{operations ? `${operations.ingestion.failed} terminal` : "Unavailable"}</strong></div>
+                  <div><small>Failed jobs</small><strong>{operations ? operations.ingestion.failed : "Unavailable"}</strong></div>
                 </div>
                 {operations ? <time className="pulse-observed" dateTime={operations.observed_at}>Snapshot {formatClock(operations.observed_at)}</time> : null}
               </>}

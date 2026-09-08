@@ -8,6 +8,7 @@ import { ModalDialog } from "@/components/confirmation-dialog";
 import { ApiError, apiRequest, contractClient, contractData, noteMeaningfulActivity, refreshSession } from "@/lib/api-client";
 import { focusModalReturnTarget, modalReturnTargetFor } from "@/lib/focus-management";
 import type { components } from "@/lib/generated/openapi";
+import { invalidateAccessibleSpaces } from "@/lib/space-options";
 
 export type CurrentMember = components["schemas"]["CurrentMember"];
 
@@ -19,6 +20,7 @@ let cachedMember: CurrentMember | null = null;
 
 export function resetCachedMember(): void {
   cachedMember = null;
+  invalidateAccessibleSpaces();
 }
 
 export function useCurrentMember(): CurrentMember {

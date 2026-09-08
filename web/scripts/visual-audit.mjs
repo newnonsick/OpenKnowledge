@@ -47,7 +47,7 @@ for (const viewport of VIEWPORTS) {
   page.on("console", (msg) => {
     const expectedEnrollmentResponse = new URL(page.url()).pathname === "/first-use/mfa" && msg.text().includes("status of 401");
     if (msg.type() === "error" && !msg.text().includes("Applying inline style violates") && !expectedEnrollmentResponse) {
-      consoleErrors.push(msg.text().slice(0, 250));
+      consoleErrors.push(`${new URL(page.url()).pathname}: ${msg.text()}`);
     }
   });
   page.on("pageerror", (err) => consoleErrors.push("pageerror: " + String(err).slice(0, 250)));

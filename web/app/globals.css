@@ -34,7 +34,7 @@
   --z-modal: 80;
   --radius-sm: 8px;
   --radius-md: 12px;
-  --radius-lg: 18px;
+  --radius-lg: 14px;
   --font-ui: var(--next-font-ui, "Segoe UI"), "Segoe UI", system-ui, sans-serif;
   --font-display: var(--next-font-ui, "Segoe UI"), "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-mono: "Cascadia Code", ui-monospace, "SFMono-Regular", Consolas, monospace;
@@ -134,10 +134,10 @@ p { text-wrap: pretty; }
 .spin { animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.page-enter { animation: page-enter 0.28s var(--ease-out) backwards; }
+.console-content, .content-wrap { animation: page-enter 0.18s ease-out; }
 @keyframes page-enter {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0.65; }
+  to { opacity: 1; }
 }
 
 @keyframes reveal {
@@ -292,10 +292,13 @@ html[data-theme="dark"] .navigation-item.is-active { color: var(--accent-strong)
 }
 html[data-theme="dark"] .eyebrow { color: var(--accent); }
 .hero-section h1 {
-  max-width: 800px; margin: 0; font-family: var(--font-display); font-size: clamp(32px, 4.2vw, 50px);
-  font-weight: 520; letter-spacing: -0.02em; line-height: 1.06;
+  max-width: 800px; margin: 0; font-family: var(--font-display); font-size: clamp(28px, 3vw, 38px);
+  font-weight: 560; letter-spacing: -0.025em; line-height: 1.18;
 }
 .hero-section h1 span { color: var(--ink-faint); font-weight: 440; }
+.knowledge-reading-content { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
+.sign-out-error { padding: 12px 0; color: var(--ink-soft); font-size: 12px; overflow-wrap: anywhere; }
+.sign-out-error p { margin: 0 0 8px; }
 .hero-description { margin: 16px 0 26px; max-width: 560px; color: var(--ink-soft); font-size: 15px; }
 
 .knowledge-search {
@@ -792,9 +795,11 @@ html[data-theme="dark"] .row-leading.violet { color: var(--accent); }
 .row-stats strong { font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
 .member-state small { color: var(--amber); font-size: 11px; white-space: nowrap; }
 
-.pagination-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.pagination-controls { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); flex-wrap: wrap; }
 .pagination-summary { margin: 0; color: var(--ink-faint); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.pagination-actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.pagination-actions { display: flex; align-items: center; gap: 6px; max-width: 100%; }
+.pagination-position { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.pagination-progress { position: absolute; top: -8px; right: 0; height: 16px; color: var(--accent); background: var(--surface); }
 .pagination-button {
   min-width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
   padding: 0 9px; border: 1px solid transparent; border-radius: 9px; background: transparent;
@@ -1591,7 +1596,7 @@ html[data-theme="dark"] .auth-story { background: radial-gradient(circle at 85% 
   .content-wrap { width: min(100% - 32px, 620px); padding-top: 32px; }
   .console-content { width: min(100% - 32px, 620px); padding: 28px 0 60px; }
   .hero-section { padding-bottom: 32px; }
-  .hero-section h1 { font-size: clamp(30px, 9.5vw, 42px); }
+  .hero-section h1 { font-size: clamp(27px, 7.2vw, 34px); }
   .knowledge-search { min-height: 56px; padding-left: 15px; }
   .knowledge-search button { min-height: 44px; padding: 0 14px; }
   .quick-actions a, .quick-actions button { flex: 1 1 calc(50% - 4px); justify-content: flex-start; min-width: 0; }
@@ -1641,7 +1646,7 @@ html[data-theme="dark"] .auth-story { background: radial-gradient(circle at 85% 
   .console-unavailable .secondary-button { width: 100%; }
   .pagination-controls { flex-wrap: wrap; }
   .pagination-summary { width: 100%; }
-  .pagination-actions { width: 100%; justify-content: center; flex-wrap: wrap; }
+  .pagination-actions { width: 100%; justify-content: space-between; }
   .pagination-jump { margin-left: 0; }
   .editor-actions { grid-template-columns: 1fr; }
   .space-card { grid-template-columns: 36px minmax(0, 1fr); }

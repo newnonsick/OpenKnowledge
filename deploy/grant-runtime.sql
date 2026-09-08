@@ -17,7 +17,7 @@ GRANT UPDATE (role, updated_at) ON space_memberships TO gateway_runtime;
 GRANT UPDATE (name, archived_at, revision) ON workspaces TO gateway_runtime;
 GRANT USAGE, SELECT ON login_throttle_buckets_id_seq TO gateway_runtime;
 GRANT EXECUTE ON FUNCTION gateway_actor_active(), gateway_has_space_role(text, text[]), gateway_is_initial_space_owner(text, uuid), gateway_can_change_membership(text, uuid, text), gateway_actor_super_admin() TO gateway_runtime;
-GRANT SELECT ON document_revision_chunks, document_revisions, documents, embedding_generations, ingestion_jobs, job_outbox, members, operational_alerts, space_memberships, workspaces TO gateway_worker;
+GRANT SELECT ON document_revision_chunks, document_revisions, documents, embedding_generations, ingestion_jobs, job_outbox, members, operational_alerts, retrieval_units, space_memberships, workspaces TO gateway_worker;
 GRANT INSERT ON document_revision_chunks, job_outbox, operational_alerts, retrieval_units TO gateway_worker;
 GRANT UPDATE (current_revision_id, revision, updated_at) ON documents TO gateway_worker;
 GRANT UPDATE (staging_storage_key, parser_version, status, failure_code, ready_at, activated_at) ON document_revisions TO gateway_worker;

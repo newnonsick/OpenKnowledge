@@ -102,6 +102,69 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
 });
 
 describe("management console", () => {
+  it("shows failed job actions inside the active confirmation", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (options?.method === "POST") throw new Error("Job service unavailable");
+      return { items: path.startsWith("/api/v1/spaces") ? [] : [{ id: "job-1", document_id: "doc-1", space_id: "global", state: "failed", progress: 0, attempt_count: 1, max_attempts: 5 }] } as never;
+    });
+    render(<IngestionConsole />);
+    fireEvent.click(await screen.findByRole("button", { name: "Retry job job-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm retry job" }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("The request could not be completed.");
+  });
+
+  it("keeps runtime settings available when only space lookup fails", async () => {
+    navigation.search = "section=runtime";
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path.startsWith("/api/v1/spaces")) throw new Error("Space service unavailable");
+      if (path === "/api/v1/settings") return { revision: 7, state: "active", values: { retrieval: { limit: 20 } } } as never;
+      return { items: [] } as never;
+    });
+    render(<SettingsConsole />);
+    expect(await screen.findByText("Revision 7 is active")).toBeVisible();
+    expect(screen.getByText("Spaces unavailable")).toBeVisible();
+  });
+
+  it("offers only writable spaces when capturing knowledge", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (path) => ({ items: path.startsWith("/api/v1/spaces") ? [{ id: "readonly", name: "Read only", role: "reader" }, { id: "editable", name: "Editable", role: "editor" }] : [] }) as never);
+    render(<KnowledgeConsole />);
+    expect(await screen.findByRole("option", { name: "Editable" })).toBeVisible();
+    expect(screen.queryByRole("option", { name: "Read only" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Space")).toHaveValue("editable");
+  });
+
+  it("retries the failed search phrase rather than an earlier successful search", async () => {
+    navigation.search = "";
+    const attempts: string[] = [];
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/v1/spaces")) return { items: [] } as never;
+      const phrase = (options?.body as { query: string }).query;
+      attempts.push(phrase);
+      if (attempts.length === 2) throw new Error("Search unavailable");
+      return { hits: [{ canonical_id: phrase, source_type: "knowledge_revision", space_id: "global", title: phrase, content_excerpt: phrase, rank: 1, rank_score: 0.5 }], health: { semantic_status: "healthy" } } as never;
+    });
+    render(<ExploreConsole />);
+    fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "water" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search knowledge" }));
+    await screen.findByRole("heading", { name: "water" });
+    fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "electricity" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search knowledge" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("heading", { name: "electricity" })).toBeVisible();
+    expect(attempts).toEqual(["water", "electricity", "electricity"]);
+  });
+
+  it("allows a dropped source file through native form validation", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (path) => ({ items: path.startsWith("/api/v1/spaces") ? [{ id: "global", name: "Shared", role: "editor", revision: 1 }] : [] }) as never);
+    render(<SourcesConsole />);
+    await screen.findByRole("option", { name: "Shared" });
+    fireEvent.drop(screen.getByText("Choose a source file or drag it here"), { dataTransfer: { files: [new File(["Test document"], "test.txt", { type: "text/plain" })] } });
+    const button = screen.getByRole("button", { name: "Queue source" });
+    expect(button).toBeEnabled();
+    expect(button.closest("form")!.checkValidity()).toBe(true);
+  });
+
   beforeEach(() => {
     currentMember.display_name = "Mai";
     currentMember.id = "admin-1";
@@ -404,7 +467,7 @@ describe("management console", () => {
       }
       if (path === "/api/v1/spaces?limit=100&page=2") {
         return {
-          items: [{ id: "later", name: "Later space", role: "reader", revision: 1 }],
+          items: [{ id: "later", name: "Later space", role: "editor", revision: 1 }],
           page: 2,
           page_size: 100,
           total_items: 101,
@@ -490,10 +553,25 @@ describe("management console", () => {
     const firstTitle = await screen.findByText("First note");
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(firstTitle.closest(".data-list")).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByRole("button", { name: "Edit First note" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Edit First note" })).toBeDisabled();
 
     resolveSecondPage?.({ items: [{ id: "note-2", space_id: "global", title: "Second note", tags: [], version: 1, updated_at: "2026-08-20T11:00:00Z" }], page: 2, page_size: 25, total_items: 2, total_pages: 2 });
     expect(await screen.findByText("Second note")).toBeInTheDocument();
+  });
+
+  it("opens readable knowledge without edit controls for a reader", async () => {
+    const note = { id: "note-1", space_id: "global", title: "Water valve", content: "Turn clockwise.", tags: ["home"], version: 1 };
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path.startsWith("/api/v1/spaces")) return { items: [{ id: "global", name: "Shared", role: "reader" }] } as never;
+      if (path === "/api/v1/knowledge/note-1") return note as never;
+      return { items: [note] } as never;
+    });
+    render(<KnowledgeConsole />);
+    fireEvent.click(await screen.findByRole("button", { name: "View Water valve" }));
+    expect(await screen.findByRole("dialog", { name: "Water valve" })).toBeVisible();
+    expect(screen.getByText("Turn clockwise.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Save revision" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Archive Water valve" })).not.toBeInTheDocument();
   });
 
   it("edits and archives knowledge with optimistic concurrency and confirmation", async () => {
@@ -1199,6 +1277,24 @@ describe("management console", () => {
     expect(screen.getByText("This session")).toBeInTheDocument();
   });
 
+  it("preserves proposed settings after a draft failure without offering a destructive reload", async () => {
+    currentMember.system_role = "super_admin";
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path === "/api/v1/settings") return { revision: 1, values: { retrieval: { limit: 20 } } } as never;
+      if (path === "/api/v1/settings/drafts") throw new Error("Draft unavailable");
+      return { items: [] } as never;
+    });
+    render(<SettingsConsole />);
+    fireEvent.click(screen.getByRole("tab", { name: "Runtime" }));
+    fireEvent.change(await screen.findByLabelText("Retrieval result limit"), { target: { value: "30" } });
+    fireEvent.change(screen.getByLabelText("Change reason"), { target: { value: "Test proposed setting" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create validated draft" }));
+    await screen.findByText("The request could not be completed.");
+    expect(screen.getByLabelText("Retrieval result limit")).toHaveValue(30);
+    expect(screen.queryByRole("button", { name: "Retry runtime settings" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create validated draft" })).toBeEnabled();
+  });
+
   it("creates and activates a validated safe runtime settings draft", async () => {
     currentMember.system_role = "super_admin";
     const activeValues = { retrieval: { limit: 20, lexical_weight: 1, vector_weight: 1 } };
@@ -1234,6 +1330,7 @@ describe("management console", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create validated draft" }));
 
     expect(await screen.findByText("Draft revision 1 ready")).toBeInTheDocument();
+    expect(screen.getByText("Retrieval result limit: 15")).toBeVisible();
     expect(apiRequest).toHaveBeenCalledWith("/api/v1/settings/drafts", {
       body: {
         base_revision: 0,
@@ -1281,9 +1378,9 @@ describe("management console", () => {
     render(<SettingsConsole />);
 
     fireEvent.click(screen.getByRole("tab", { name: "Runtime" }));
-    fireEvent.change(await screen.findByLabelText("Change reason"), { target: { value: "Restore the proven focused profile" } });
     fireEvent.click(await screen.findByRole("button", { name: "Restore revision 1" }));
     expect(screen.getByRole("alertdialog", { name: "Restore revision 1" })).toHaveAttribute("aria-modal", "true");
+    fireEvent.change(within(screen.getByRole("alertdialog")).getByLabelText("Restore reason"), { target: { value: "Restore the proven focused profile" } });
     expect(screen.getByText(/creates a new active revision/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm restore revision 1" }));
 
@@ -1369,6 +1466,17 @@ describe("management console", () => {
     expect(screen.getByLabelText(`Resource knowledge_item ${resourceId}`)).toHaveAttribute("title", `${resourceId}`);
     expect(screen.getByLabelText("Actor member ID member-1")).toHaveAttribute("title", "member-1");
     expect(screen.getByRole("button", { name: "Copy actor member id" })).toBeInTheDocument();
+  });
+
+  it("keeps AI tools visible when the space lookup fails", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path.startsWith("/api/v1/spaces")) throw new Error("Spaces unavailable");
+      if (path === "/api/v1/ai-tools") return { items: [{ name: "knowledge.read.v1", description: "Read saved knowledge", confirmation: "none" }] } as never;
+      return { items: [] } as never;
+    });
+    render(<AiActionsConsole />);
+    expect(await screen.findByText("knowledge.read.v1")).toBeVisible();
+    expect(await screen.findByText("No actions need approval")).toBeVisible();
   });
 
   it("presents AI management tools as deliberate actions without a chat surface", async () => {

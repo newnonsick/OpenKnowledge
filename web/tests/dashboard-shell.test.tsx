@@ -27,7 +27,7 @@ describe("DashboardShell", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: /everything your family knows/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /your knowledge, together/i })).toBeInTheDocument();
     expect(screen.getAllByText("OpenKnowledge").length).toBeGreaterThan(0);
     expect(screen.getByRole("searchbox", { name: /search family knowledge/i })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: /primary navigation/i })).toBeInTheDocument();

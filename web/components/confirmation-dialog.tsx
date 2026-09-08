@@ -71,6 +71,7 @@ export function ModalDialog({
 }
 
 type ConfirmationDialogProps = {
+  children?: ReactNode;
   busy?: boolean;
   busyLabel?: string;
   cancelLabel: string;
@@ -87,6 +88,7 @@ type ConfirmationDialogProps = {
 };
 
 export function ConfirmationDialog({
+  children,
   busy = false,
   busyLabel,
   cancelLabel,
@@ -136,6 +138,7 @@ export function ConfirmationDialog({
         </div>
       </div>
       <p className="modal-copy" id={descriptionId}>{description}</p>
+      {children}
       {error ? <p className="inline-error modal-error" role="alert">{error}</p> : null}
       <div className="modal-actions">
         <button className="secondary-button" disabled={busy} onClick={onCancel} type="button">{cancelLabel}</button>

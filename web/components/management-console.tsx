@@ -535,6 +535,7 @@ export function KnowledgeConsole() {
   const editorCloseRef = useRef<HTMLButtonElement>(null);
   const editorReturnFocusRef = useRef<HTMLButtonElement>(null);
   const editorTitleId = useId();
+  const writableSpaces = spaces.filter((space) => space.role === "owner" || space.role === "editor");
 
   const loadKnowledgePage = useCallback((page: number, signal: AbortSignal) => contractData(
     contractClient.GET("/api/v1/knowledge", {
@@ -569,8 +570,11 @@ export function KnowledgeConsole() {
 
   const editorDirty = editing !== null
     && (editTitle !== editing.title || editContent !== editing.content || editTags !== editing.tags.join(", "));
+  const canEditKnowledge = (targetSpaceId: string) => writableSpaces.some((space) => space.id === targetSpaceId);
+  const editorWritable = editing !== null && canEditKnowledge(editing.space_id);
 
   const closeEditor = () => {
+    if (editorSaving) return;
     if (editorDirty && !confirmDiscard) {
       setConfirmDiscard(true);
       return;
@@ -587,7 +591,7 @@ export function KnowledgeConsole() {
         return;
       }
       setSpaces(spaceResponse);
-      setSpaceId((current) => current || spaceResponse[0]?.id || "");
+      setSpaceId((current) => current || spaceResponse.find((space) => (space.role === "owner" || space.role === "editor") && space.id === spaceFilter)?.id || spaceResponse.find((space) => space.role === "owner" || space.role === "editor")?.id || "");
       setCreateError(null);
     }).catch((loadError) => {
       if (active) {
@@ -606,7 +610,7 @@ export function KnowledgeConsole() {
 
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!spaceId || !title.trim() || !content.trim() || creating) {
+    if (!writableSpaces.some((space) => space.id === spaceId) || !title.trim() || !content.trim() || creating) {
       return;
     }
     setCreating(true);
@@ -665,7 +669,7 @@ export function KnowledgeConsole() {
 
   const saveRevision = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!editing || !editTitle.trim() || !editContent.trim() || editorSaving) {
+    if (!editing || !editorWritable || !editTitle.trim() || !editContent.trim() || editorSaving) {
       return;
     }
     setEditorSaving(true);
@@ -695,7 +699,7 @@ export function KnowledgeConsole() {
   };
 
   const archiveKnowledge = async () => {
-    if (!editing || editorSaving) {
+    if (!editing || !editorWritable || editorSaving) {
       return;
     }
     setEditorSaving(true);
@@ -773,7 +777,7 @@ export function KnowledgeConsole() {
                 <span className="row-leading violet"><BookOpen aria-hidden="true" size={18} /></span>
                 <div className="row-copy"><h3 title={item.title}>{item.title}</h3><p title={`${spaceLabel(spaces, item.space_id)} · version ${item.version}`}>{spaceLabel(spaces, item.space_id)} · version {item.version}</p></div>
                 <div className="tag-list">{[...new Set(item.tags.filter(Boolean))].slice(0, 3).map((value) => <span key={value} title={value}><Tag size={11} />{value}</span>)}</div>
-                <button aria-label={`Edit ${item.title}`} className="row-action-button" onClick={(event) => void openEditor(item, event.currentTarget)} type="button">Edit</button>
+                <button aria-label={`${canEditKnowledge(item.space_id) ? "Edit" : "View"} ${item.title}`} className="row-action-button" disabled={loading || detailLoading} onClick={(event) => void openEditor(item, event.currentTarget)} type="button">{canEditKnowledge(item.space_id) ? "Edit" : "View"}</button>
               </article>
             ))}
           </div>
@@ -783,28 +787,28 @@ export function KnowledgeConsole() {
             <>
             <ModalDialog ariaLabelledBy={editorTitleId} className="knowledge-editor" onClose={closeEditor} open={!confirmArchive && !confirmDiscard} returnFocusTarget={editorReturnFocusRef.current}>
               <div className="space-access-heading">
-                <div><span>Immutable revision</span><h2 id={editorTitleId}>Edit {editing.title}</h2></div>
-                <button aria-label="Close knowledge editor" className="icon-button" onClick={closeEditor} ref={editorCloseRef} type="button"><X size={16} /></button>
+                <div><span>{editorWritable ? "Edit knowledge" : "Knowledge"}</span><h2 id={editorTitleId}>{editorWritable ? `Edit ${editing.title}` : editing.title}</h2></div>
+                <button aria-label="Close knowledge editor" className="icon-button" disabled={editorSaving} onClick={closeEditor} ref={editorCloseRef} type="button"><X size={16} /></button>
               </div>
               <p className="revision-state">Version {editing.version} is active</p>
               {savedRevision ? <p className="inline-success" role="status"><ShieldCheck size={14} /> Revision {savedRevision} saved and searchable.</p> : null}
               {editorError ? <p className="inline-error" role="alert">{editorError}</p> : null}
-              <form className="console-form" onSubmit={saveRevision}>
+              {editorWritable ? <form className="console-form" onSubmit={saveRevision}>
                 <label htmlFor="edit-knowledge-title">Edit title</label>
-                <input id="edit-knowledge-title" maxLength={500} onChange={(event) => { setEditTitle(event.target.value); setConfirmDiscard(false); }} required value={editTitle} />
+                <input disabled={editorSaving} id="edit-knowledge-title" maxLength={500} onChange={(event) => { setEditTitle(event.target.value); setConfirmDiscard(false); }} required value={editTitle} />
                 <label htmlFor="edit-knowledge-content">Edit content</label>
-                <textarea id="edit-knowledge-content" maxLength={1000000} onChange={(event) => { setEditContent(event.target.value); setConfirmDiscard(false); }} required rows={7} value={editContent} />
+                <textarea disabled={editorSaving} id="edit-knowledge-content" maxLength={1000000} onChange={(event) => { setEditContent(event.target.value); setConfirmDiscard(false); }} required rows={7} value={editContent} />
                 <label htmlFor="edit-knowledge-tags">Edit tags</label>
-                <input id="edit-knowledge-tags" onChange={(event) => { setEditTags(event.target.value); setConfirmDiscard(false); }} value={editTags} />
+                <input disabled={editorSaving} id="edit-knowledge-tags" onChange={(event) => { setEditTags(event.target.value); setConfirmDiscard(false); }} value={editTags} />
                 <div className="editor-actions">
                   <button aria-describedby={!editorDirty ? "save-revision-hint" : undefined} className="primary-button" disabled={editorSaving || !editorDirty} type="submit"><Save size={15} /> Save revision</button>
                   <button aria-label={`Archive ${editing.title}`} className="archive-button" disabled={editorSaving} onClick={() => setConfirmArchive(true)} type="button"><Archive size={15} /> Archive</button>
                 </div>
                 {!editorDirty ? <p className="list-context-line" id="save-revision-hint">No unsaved changes.</p> : null}
-              </form>
+              </form> : <div className="knowledge-reading-content">{editing.content}</div>}
             </ModalDialog>
             <ConfirmationDialog cancelLabel="Keep editing" confirmLabel="Discard changes" description="Closing the editor now leaves the active revision unchanged." onCancel={() => { setConfirmDiscard(false); window.setTimeout(() => editorCloseRef.current?.focus(), 0); }} onConfirm={() => { setEditing(null); setConfirmDiscard(false); }} open={confirmDiscard} returnFocusTarget={editorReturnFocusRef.current} title="Discard unsaved changes" tone="danger" />
-            <ConfirmationDialog busy={editorSaving} busyLabel="Archiving knowledge…" cancelLabel="Keep active" confirmLabel="Confirm archive" description="It will leave default retrieval but its revision history remains preserved." onCancel={() => { setConfirmArchive(false); window.setTimeout(() => editorCloseRef.current?.focus(), 0); }} onConfirm={() => void archiveKnowledge()} open={confirmArchive} returnFocusTarget={editorReturnFocusRef.current} title={`Archive ${editing.title}`} tone="danger" />
+            <ConfirmationDialog error={editorError} busy={editorSaving} busyLabel="Archiving knowledge…" cancelLabel="Keep active" confirmLabel="Confirm archive" description="It will leave default retrieval but its revision history remains preserved." onCancel={() => { setConfirmArchive(false); window.setTimeout(() => editorCloseRef.current?.focus(), 0); }} onConfirm={() => void archiveKnowledge()} open={confirmArchive} returnFocusTarget={editorReturnFocusRef.current} title={`Archive ${editing.title}`} tone="danger" />
             </>
           ) : null}
         </section>
@@ -816,7 +820,7 @@ export function KnowledgeConsole() {
           <form className="console-form" onSubmit={create}>
             <label htmlFor="knowledge-space">Space</label>
             <select id="knowledge-space" onChange={(event) => setSpaceId(event.target.value)} required value={spaceId}>
-              {spaces.map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}
+              {writableSpaces.map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}
             </select>
             <label htmlFor="knowledge-title">Title</label>
             <input id="knowledge-title" maxLength={500} onChange={(event) => { setTitle(event.target.value); setCreatedTitle(null); }} ref={titleRef} required value={title} />
@@ -824,7 +828,8 @@ export function KnowledgeConsole() {
             <textarea id="knowledge-content" maxLength={1000000} onChange={(event) => { setContent(event.target.value); setCreatedTitle(null); }} required rows={7} value={content} />
             <label htmlFor="knowledge-tags">Tags</label>
             <input id="knowledge-tags" onChange={(event) => setTags(event.target.value)} placeholder="home, safety" value={tags} />
-            <button className="primary-button" disabled={creating || spacesLoading || spaces.length === 0} type="submit">{creating ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} Capture knowledge</button>
+            {!spacesLoading && !spacesFailed && writableSpaces.length === 0 ? <p className="list-context-line">You need editor access to add knowledge. <Link href="/spaces">Create a space</Link> or ask its owner for access.</p> : null}
+            <button className="primary-button" disabled={creating || spacesLoading || writableSpaces.length === 0} type="submit">{creating ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} Capture knowledge</button>
           </form>
           {createdTitle ? <p className="inline-success" role="status"><ShieldCheck size={14} /> “{createdTitle}” is captured and searchable.</p> : null}
           {createError ? <p className="inline-error" role="alert">{createError}</p> : null}
@@ -853,6 +858,7 @@ export function ExploreConsole() {
   const searchingRef = useRef(false);
   const shouldScrollRef = useRef(false);
   const [lastQuery, setLastQuery] = useState<string | null>(null);
+  const [failedQuery, setFailedQuery] = useState<string | null>(null);
 
   useEffect(() => {
     searchActiveRef.current = true;
@@ -902,6 +908,7 @@ export function ExploreConsole() {
     searchingRef.current = true;
     setSearching(true);
     setError(null);
+    setFailedQuery(null);
     setHint(null);
     shouldScrollRef.current = true;
     try {
@@ -921,6 +928,7 @@ export function ExploreConsole() {
     } catch (searchError) {
       if (searchActiveRef.current) {
         setError(message(searchError));
+        setFailedQuery(trimmed);
       }
     } finally {
       searchingRef.current = false;
@@ -963,7 +971,7 @@ export function ExploreConsole() {
         </form>
         <p>OpenKnowledge fans the query out only to authorized spaces, merges the candidates, and returns a single ranked result set.</p>
       </section>
-      {error ? <p className="inline-error wide" role="alert">{error}{lastQuery ? <button className="filter-clear-button" onClick={() => { setError(null); void runSearch(lastQuery); }} type="button">Retry</button> : <button className="filter-clear-button" onClick={() => setError(null)} type="button">Dismiss</button>}</p> : null}
+      {error ? <p className="inline-error wide" role="alert">{error}{failedQuery ? <button className="filter-clear-button" onClick={() => void runSearch(failedQuery)} type="button">Retry</button> : <button className="filter-clear-button" onClick={() => setError(null)} type="button">Dismiss</button>}</p> : null}
       {hint && !error ? <p className="filter-strip" role="status"><Search size={13} /> {hint}</p> : null}
       <p className="visually-hidden" role="status">{searching ? "Searching…" : result && lastQuery ? `${result.hits.length} matches found for ${lastQuery}` : ""}</p>
       {searching && !result ? (
@@ -1028,6 +1036,7 @@ export function SourcesConsole() {
   const [dragging, setDragging] = useState(false);
   const dragCount = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const writableSpaces = spaces.filter((space) => space.role === "owner" || space.role === "editor");
 
   const loadSourcePage = useCallback((page: number, signal: AbortSignal) => contractData(
     contractClient.GET("/api/v1/sources", {
@@ -1064,7 +1073,7 @@ export function SourcesConsole() {
         return;
       }
       setSpaces(spaceResponse);
-      setSpaceId(spaceResponse[0]?.id || "");
+      setSpaceId(spaceResponse.find((space) => space.role === "owner" || space.role === "editor")?.id || "");
     }).catch((loadError) => {
       if (active) {
         setUploadError(message(loadError));
@@ -1082,7 +1091,7 @@ export function SourcesConsole() {
 
   const upload = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!file || !spaceId || uploading) {
+    if (!file || !writableSpaces.some((space) => space.id === spaceId) || uploading) {
       return;
     }
     if (file.size > DEFAULT_MAX_UPLOAD_BYTES) {
@@ -1190,8 +1199,8 @@ export function SourcesConsole() {
           <p>The website stores the original bytes first, then queues parsing and retrieval activation separately.</p>
           <form className="console-form" onSubmit={upload}>
             <label htmlFor="source-space">Space</label>
-            {spaces.length === 0 && !spacesLoading ? <p className="list-context-line">Create a space first — uploads need a destination space.</p> : null}
-            <select id="source-space" onChange={(event) => setSpaceId(event.target.value)} required value={spaceId}>{spaces.map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}</select>
+            {writableSpaces.length === 0 && !spacesLoading && !spacesFailed ? <p className="list-context-line">You need editor access to upload. <Link href="/spaces">Create a space</Link> or ask its owner for access.</p> : null}
+            <select id="source-space" onChange={(event) => setSpaceId(event.target.value)} required value={spaceId}>{writableSpaces.map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}</select>
             <label htmlFor="source-name">Display name</label>
             <input id="source-name" maxLength={500} onChange={(event) => setDisplayName(event.target.value)} placeholder="Defaults to filename" value={displayName} />
             <label
@@ -1212,8 +1221,8 @@ export function SourcesConsole() {
                 }
               }}
             ><FileUp size={20} /><strong>{file ? file.name : "Choose a source file or drag it here"}</strong><span>{file ? `${Math.max(1, Math.round(file.size / 1024))} KB · select a different file to replace it` : "The configured server upload limit applies"}</span></label>
-            <input accept={SUPPORTED_SOURCE_EXTENSIONS} aria-label="Source file" className="visually-hidden" id="source-file" ref={fileInputRef} onChange={(event) => { const selected = event.target.files?.[0] || null; setUploadError(selected && selected.size > DEFAULT_MAX_UPLOAD_BYTES ? `That file is larger than the default ${Math.round(DEFAULT_MAX_UPLOAD_BYTES / 1024 / 1024)} MB server upload limit. Choose a smaller file.` : null); setFile(selected); setQueued(false); }} required type="file" />
-            <button className="primary-button" disabled={uploading || spacesLoading || !file || spaces.length === 0 || file.size > DEFAULT_MAX_UPLOAD_BYTES} type="submit">{uploading ? <LoaderCircle className="spin" size={16} /> : <FileUp size={16} />} Queue source</button>
+            <input accept={SUPPORTED_SOURCE_EXTENSIONS} aria-label="Source file" className="visually-hidden" id="source-file" ref={fileInputRef} onChange={(event) => { const selected = event.target.files?.[0] || null; setUploadError(selected && selected.size > DEFAULT_MAX_UPLOAD_BYTES ? `That file is larger than the default ${Math.round(DEFAULT_MAX_UPLOAD_BYTES / 1024 / 1024)} MB server upload limit. Choose a smaller file.` : null); setFile(selected); setQueued(false); }} required={!file} type="file" />
+            <button className="primary-button" disabled={uploading || spacesLoading || !file || writableSpaces.length === 0 || file.size > DEFAULT_MAX_UPLOAD_BYTES} type="submit">{uploading ? <LoaderCircle className="spin" size={16} /> : <FileUp size={16} />} Queue source</button>
           </form>
           {queued ? <p className="inline-success" role="status"><ShieldCheck size={14} /> Queued for durable ingestion — track it under Ingestion.</p> : null}
           {uploadError ? <p className="inline-error" role="alert">{uploadError}</p> : null}
@@ -1634,7 +1643,9 @@ export function SettingsConsole() {
   const [keyError, setKeyError] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [runtimeLoadError, setRuntimeLoadError] = useState<string | null>(null);
   const [mfaEnabled, setMfaEnabled] = useState(member.mfa_enabled);
+  const [runtimeRetry, setRuntimeRetry] = useState(0);
   const keyReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const sessionReturnFocusRef = useRef<HTMLButtonElement | null>(null);
 
@@ -1691,20 +1702,23 @@ export function SettingsConsole() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([
+    setLoading(true);
+    setRuntimeLoadError(null);
+    Promise.allSettled([
       loadAccessibleSpaces(),
       contractData(contractClient.GET("/api/v1/settings")),
     ]).then(([spaceResponse, runtimeResponse]) => {
       if (!active) {
         return;
       }
-      setSpaces(spaceResponse);
-      setSettings(runtimeResponse);
-      setRuntimeLimit(String(runtimeResponse.values.retrieval?.limit ?? 20));
-    }).catch((loadError) => {
-      if (active) {
-        setRuntimeError(message(loadError));
-        setSpacesFailed(true);
+      setSpacesFailed(spaceResponse.status === "rejected");
+      if (spaceResponse.status === "fulfilled") setSpaces(spaceResponse.value);
+      if (runtimeResponse.status === "fulfilled") {
+        setSettings(runtimeResponse.value);
+        setRuntimeLimit(String(runtimeResponse.value.values.retrieval?.limit ?? 20));
+        setRuntimeLoadError(null);
+      } else {
+        setRuntimeLoadError(message(runtimeResponse.reason));
       }
     }).finally(() => {
       if (active) {
@@ -1714,7 +1728,7 @@ export function SettingsConsole() {
     return () => {
       active = false;
     };
-  }, [member.system_role]);
+  }, [member.system_role, runtimeRetry]);
 
   const createKey = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1784,7 +1798,7 @@ export function SettingsConsole() {
     }
   };
 
-  const parsedRuntimeLimit = Number.parseInt(runtimeLimit, 10);
+  const parsedRuntimeLimit = Number(runtimeLimit);
   const runtimeLimitValid = Number.isInteger(parsedRuntimeLimit) && parsedRuntimeLimit >= 1 && parsedRuntimeLimit <= 100;
 
   const createRuntimeDraft = async (event: FormEvent<HTMLFormElement>) => {
@@ -1951,13 +1965,13 @@ export function SettingsConsole() {
               <button className="primary-button" disabled={runtimeSaving || runtimeReason.trim().length < 5 || !runtimeLimitValid} type="submit">{runtimeSaving ? <LoaderCircle className="spin" size={16} /> : null} Create validated draft</button>
             </form>
           ) : null}
-          {runtimeDraft ? <div className="runtime-draft-review"><div><strong>Draft revision {runtimeDraft.revision} ready</strong><span>Validated against the typed safe-setting schema. Review the draft values below, then activate or discard it.</span></div><div className="runtime-draft-actions"><button className="primary-button" disabled={runtimeSaving} onClick={() => void activateRuntimeDraft()} type="button">Activate settings</button><button className="secondary-button" disabled={runtimeSaving} onClick={() => setRuntimeDraft(null)} type="button">Discard draft</button></div></div> : null}
+          {runtimeDraft ? <div className="runtime-draft-review"><div><strong>Draft revision {runtimeDraft.revision} ready</strong><span>Retrieval result limit: {runtimeDraft.values.retrieval?.limit ?? "default"}</span><span>Based on revision {runtimeDraft.base_revision}. Activate to apply this value, or discard to keep the current settings.</span></div><div className="runtime-draft-actions"><button className="primary-button" disabled={runtimeSaving} onClick={() => void activateRuntimeDraft()} type="button">Activate settings</button><button className="secondary-button" disabled={runtimeSaving} onClick={() => setRuntimeDraft(null)} type="button">Discard draft</button></div></div> : null}
           {member.system_role === "super_admin" ? <div className="list-filter-bar single-filter-bar"><label><select aria-label="Filter settings history state" onChange={(event) => setHistoryState(event.target.value as typeof historyState)} value={historyState}><option value="">All history</option><option value="active">Active</option><option value="superseded">Superseded</option></select></label></div> : null}
           {(historyPages.initialLoading || (historyPages.loading && settingsHistory.length === 0)) && member.system_role === "super_admin" ? <ListSkeleton compact rows={3} /> : null}
           {historyPages.error ? <ListUnavailable detail={historyPages.error} label="settings history" onRetry={() => void historyPages.reload()} /> : null}
           {settingsHistory.length > 0 ? <div aria-busy={historyPages.loading} className={`data-list compact-list${historyPages.loading ? " is-page-loading" : ""}`}>{settingsHistory.map((revision) => <article className="data-row" key={revision.id || revision.revision}><span className="row-leading violet"><Settings2 size={16} /></span><div className="row-copy"><h3>Revision {revision.revision}</h3><p>Retrieval limit {revision.values.retrieval?.limit ?? "default"} · {revision.state}</p></div>{revision.state === "superseded" ? <button aria-label={`Restore revision ${revision.revision}`} className="row-action-button" disabled={runtimeSaving} onClick={() => setPendingSettingsRestore(revision)} type="button">Restore</button> : <span className="status-pill status-active">active</span>}</article>)}</div> : null}
           {historyPages.totalPages > 1 ? <PaginationControls loading={historyPages.loading} loadingPage={historyPages.loadingPage} onPageChange={(nextPage) => void historyPages.goToPage(nextPage)} page={historyPages.page} pageSize={historyPages.pageSize} totalItems={historyPages.totalItems} totalPages={historyPages.totalPages} /> : null}
-          <ConfirmationDialog busy={runtimeSaving} busyLabel="Restoring settings…" cancelLabel="Keep current" confirmDisabled={runtimeReason.trim().length < 5} confirmLabel={`Confirm restore revision ${pendingSettingsRestore?.revision ?? ""}`} description="This creates a new active revision from the historical values. The current revision remains preserved for audit and future recovery." onCancel={() => setPendingSettingsRestore(null)} onConfirm={() => void restoreRuntimeSettings()} open={Boolean(pendingSettingsRestore)} title={pendingSettingsRestore ? `Restore revision ${pendingSettingsRestore.revision}` : "Restore settings revision"} tone="danger" />
+          <ConfirmationDialog error={runtimeError} busy={runtimeSaving} busyLabel="Restoring settings…" cancelLabel="Keep current" confirmDisabled={runtimeReason.trim().length < 5} confirmLabel={`Confirm restore revision ${pendingSettingsRestore?.revision ?? ""}`} description="This creates a new active revision from the historical values. The current revision remains preserved for audit and future recovery." onCancel={() => setPendingSettingsRestore(null)} onConfirm={() => void restoreRuntimeSettings()} open={Boolean(pendingSettingsRestore)} title={pendingSettingsRestore ? `Restore revision ${pendingSettingsRestore.revision}` : "Restore settings revision"} tone="danger"><div className="console-form"><label htmlFor="restore-settings-reason">Restore reason</label><input autoComplete="off" disabled={runtimeSaving} id="restore-settings-reason" maxLength={500} minLength={5} onChange={(event) => setRuntimeReason(event.target.value)} required value={runtimeReason} /><p className="list-context-line">At least 5 characters. This reason is saved in the activity history.</p></div></ConfirmationDialog>
           <div className="runtime-values">
             {Object.entries((runtimeDraft?.values || settings?.values || {}) as Record<string, Record<string, unknown> | undefined>).map(([section, entries]) => (
               <details className="runtime-value-group" key={section} open={section === "retrieval"}>
@@ -1973,7 +1987,8 @@ export function SettingsConsole() {
           </> : null}
         </section> : null}
       </div>
-      {runtimeError && activeSection === "runtime" ? <p className="inline-error wide" role="alert">{runtimeError}</p> : null}
+      {runtimeLoadError && activeSection === "runtime" ? <ListUnavailable detail={runtimeLoadError} label="runtime settings" onRetry={() => setRuntimeRetry((value) => value + 1)} /> : null}
+      {runtimeError && activeSection === "runtime" && !pendingSettingsRestore ? <p className="inline-error" role="alert">{runtimeError}</p> : null}
     </ConsoleShell>
   );
 }
@@ -2095,7 +2110,7 @@ export function IngestionConsole() {
                 {!['succeeded', 'failed', 'cancelled'].includes(job.state) ? <button aria-label={`Cancel job ${job.id}`} className="archive-button compact" disabled={jobSaving && pendingJobAction?.job.id === job.id} onClick={() => setPendingJobAction({ job, operation: "cancel" })} type="button">{jobSaving && pendingJobAction?.job.id === job.id && pendingJobAction.operation === "cancel" ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}Cancel job</button> : null}
                 {['failed', 'cancelled'].includes(job.state) ? <button aria-label={`Retry job ${job.id}`} className="secondary-button" disabled={jobSaving && pendingJobAction?.job.id === job.id} onClick={() => setPendingJobAction({ job, operation: "retry" })} type="button">{jobSaving && pendingJobAction?.job.id === job.id && pendingJobAction.operation === "retry" ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}Retry job</button> : null}
               </article>
-              <ConfirmationDialog busy={jobSaving} busyLabel={pendingJobAction?.operation === "cancel" ? "Cancelling job…" : "Requesting retry…"} cancelLabel="Not now" confirmLabel={`Confirm ${pendingJobAction?.operation ?? "retry"} job`} description={pendingJobAction?.operation === "cancel" ? "The worker will stop at a safe boundary; completed durable stages and audit history remain preserved." : "This starts a new durable attempt from the preserved original source and records the request in the audit trail."} onCancel={() => setPendingJobAction(null)} onConfirm={() => void mutateJob()} open={pendingJobAction?.job.id === job.id} title={pendingJobAction?.job.id === job.id ? `${pendingJobAction.operation === "cancel" ? "Cancel" : "Retry"} job ${pendingJobAction.job.id}` : "Change ingestion job"} tone={pendingJobAction?.operation === "cancel" ? "danger" : "primary"} />
+              <ConfirmationDialog error={jobError} busy={jobSaving} busyLabel={pendingJobAction?.operation === "cancel" ? "Cancelling job…" : "Requesting retry…"} cancelLabel="Not now" confirmLabel={`Confirm ${pendingJobAction?.operation ?? "retry"} job`} description={pendingJobAction?.operation === "cancel" ? "The worker will stop at a safe boundary; completed durable stages and audit history remain preserved." : "This starts a new durable attempt from the preserved original source and records the request in the audit trail."} onCancel={() => setPendingJobAction(null)} onConfirm={() => void mutateJob()} open={pendingJobAction?.job.id === job.id} title={pendingJobAction?.job.id === job.id ? `${pendingJobAction.operation === "cancel" ? "Cancel" : "Retry"} job ${pendingJobAction.job.id}` : "Change ingestion job"} tone={pendingJobAction?.operation === "cancel" ? "danger" : "primary"} />
             </div>
           ))}
         </div>
@@ -2248,6 +2263,9 @@ export function AiActionsConsole() {
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [spacesReady, setSpacesReady] = useState(false);
   const [tools, setTools] = useState<AIManagementTool[]>([]);
+  const [toolsLoading, setToolsLoading] = useState(true);
+  const [toolsError, setToolsError] = useState<string | null>(null);
+  const [toolsRetry, setToolsRetry] = useState(0);
   const [spacesFailed, setSpacesFailed] = useState(false);
   const [reviewing, setReviewing] = useState<PendingAIAction | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -2262,27 +2280,26 @@ export function AiActionsConsole() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([
+    setToolsLoading(true);
+    setToolsError(null);
+    Promise.allSettled([
       loadAccessibleSpaces(),
       contractData(contractClient.GET("/api/v1/ai-tools")),
     ]).then(([spaceResponse, toolResponse]) => {
       if (!active) {
         return;
       }
-      setSpaces(spaceResponse);
+      setSpaces(spaceResponse.status === "fulfilled" ? spaceResponse.value : []);
+      setSpacesFailed(spaceResponse.status === "rejected");
       setSpacesReady(true);
-      setTools(toolResponse.items);
-    }).catch((loadError) => {
-      if (active) {
-        setError(message(loadError));
-        setSpacesFailed(true);
-        setSpacesReady(true);
-      }
+      if (toolResponse.status === "fulfilled") setTools(toolResponse.value.items);
+      else setToolsError(message(toolResponse.reason));
+      setToolsLoading(false);
     });
     return () => {
       active = false;
     };
-  }, []);
+  }, [toolsRetry]);
 
   const confirmAction = async () => {
     if (!reviewing || confirming) {
@@ -2305,7 +2322,7 @@ export function AiActionsConsole() {
 
   return (
     <ConsoleShell
-      description="A typed management surface for trusted assistants. Identity, scope, idempotency, audit, and confirmations remain server-enforced."
+      description="Review actions requested by connected assistants and see which tools they can use."
       eyebrow="Tool contracts"
       member={memberView(member)}
       spaceCount={spacesReady && !spacesFailed ? spaces.length : null}
@@ -2314,6 +2331,8 @@ export function AiActionsConsole() {
     >
       <section className="tool-principle"><Sparkles size={22} /><div><strong>Plain requests in, deliberate operations out</strong><p>Read actions can run directly. High-impact writes require a short-lived confirmation before execution.</p></div></section>
       <div className="tool-grid">
+        {toolsLoading ? <ListSkeleton rows={3} /> : null}
+        {toolsError ? <ListUnavailable detail={toolsError} label="AI tools" onRetry={() => setToolsRetry((value) => value + 1)} /> : null}
         {tools.map((tool, index) => <article className="tool-card" key={tool.name}><div><span className={`tool-icon accent-${index % 4}`}><Code2 size={17} /></span><span className={`mode-pill mode-${tool.confirmation === "required" ? "confirm" : "read"}`}>{tool.confirmation === "required" ? "Confirm" : "Direct"}</span></div><code>{tool.name}</code><p>{tool.description}</p></article>)}
       </div>
       {actionPages.initialLoading || (actionPages.loading && pendingActions.length === 0) ? <section className="console-panel pending-ai-panel"><ListSkeleton compact rows={3} /></section> : null}

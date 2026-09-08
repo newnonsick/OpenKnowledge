@@ -4,7 +4,7 @@ const outDir = "../gui-test-screenshots/verify";
 import fs from "fs";
 fs.mkdirSync(outDir, { recursive: true });
 const readyFixture = { request_id: "verify", status: "ready" };
-const memberFixture = { display_name: "Mai Arun", id: "member-1", mfa_enabled: false, requires_password_change: false, status: "active", system_role: "super_admin", username: "mai" };
+const memberFixture = { display_name: "Mai Arun", id: "member-1", mfa_enabled: true, requires_password_change: false, status: "active", system_role: "super_admin", username: "mai" };
 const spacesFixture = { items: [{ created_at: "2026-08-21T12:00:00Z", id: "global", name: "Family Shared", personal: false, revision: 1, role: "editor" }, { created_at: "2026-08-20T12:00:00Z", id: "travel", name: "Travel plans", personal: false, revision: 1, role: "owner" }], page: 1, page_size: 100, total_items: 2, total_pages: 1 };
 const operationsFixture = { ingestion: { cancelled: 0, cancellation_requested: 0, failed: 0, queued: 1, retry_wait: 0, running: 1, succeeded: 8 }, observed_at: "2026-08-22T13:00:00Z", retrieval: { embedding_generation_active: true }, scope: "accessible_spaces", settings_revision: 4, spaces: 2, storage: { referenced_bytes: 524288 } };
 function listPage(items, pageSize=25) { return { items, page: 1, page_size: pageSize, total_items: items.length, total_pages: items.length ? 1 : 0 }; }
@@ -42,6 +42,9 @@ for (const vp of [{w:1440,h:1000},{w:390,h:844}]) {
   for (const route of routes) {
     await page.goto(base + route, { waitUntil: "networkidle" });
     await page.waitForTimeout(600);
+    if (new URL(page.url()).pathname !== route) {
+      throw new Error(`Expected ${route}, reached ${new URL(page.url()).pathname}`);
+    }
     const name = (route === "/" ? "dashboard" : route.slice(1)) + "-" + vp.w + ".png";
     await page.screenshot({ path: outDir + "/" + name, fullPage: true, animations: "disabled" });
     const overflow = await page.evaluate(() => {

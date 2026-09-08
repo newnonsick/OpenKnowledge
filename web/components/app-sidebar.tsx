@@ -47,16 +47,20 @@ export function AppSidebar({
   const pathname = usePathname();
   const router = useRouter();
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutFailed, setSignOutFailed] = useState(false);
   const signOut = async () => {
     if (signingOut) {
       return;
     }
     setSigningOut(true);
+    setSignOutFailed(false);
     try {
       await contractData(contractClient.POST("/api/v1/auth/logout", { body: {} }));
-    } finally {
       resetCachedMember();
       router.replace("/login");
+    } catch {
+      setSignOutFailed(true);
+      setSigningOut(false);
     }
   };
 
@@ -68,7 +72,7 @@ export function AppSidebar({
           const Icon = item.icon;
           const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           return (
-            <Link aria-current={active ? "page" : undefined} className={`navigation-item${active ? " is-active" : ""}`} href={item.href} key={item.href}>
+            <Link aria-current={active ? "page" : undefined} className={`navigation-item${active ? " is-active" : ""}`} href={item.href} key={item.href} onClick={onMenuClose}>
               <Icon aria-hidden="true" size={18} strokeWidth={1.8} />
               <span>{item.label}</span>
             </Link>
@@ -99,7 +103,7 @@ export function AppSidebar({
         {manageGroups.map(renderGroup)}
       </nav>
 
-      <div className="sidebar-footer console-account"><AccountMenu member={member} onSignOut={() => void signOut()} signingOut={signingOut} /></div>
+      <div className="sidebar-footer console-account">{signOutFailed ? <div className="sign-out-error" role="alert"><p>Sign out failed. Check your connection and try again.</p><button className="secondary-button" onClick={() => void signOut()} type="button">Retry sign out</button></div> : null}<AccountMenu member={member} onSignOut={() => void signOut()} signingOut={signingOut} /></div>
     </aside>
   );
 }
