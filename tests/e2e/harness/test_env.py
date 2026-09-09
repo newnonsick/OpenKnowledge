@@ -313,6 +313,7 @@ class TestEnvironment:
             try:
                 async with bootstrap_engine.begin() as conn:
                     await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+                    await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm;"))
                     await conn.execute(text(f"CREATE SCHEMA {self.postgres_schema};"))
             finally:
                 await bootstrap_engine.dispose()

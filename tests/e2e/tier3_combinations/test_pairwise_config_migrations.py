@@ -149,20 +149,20 @@ async def test_pairwise_f01_f04_f05_config_test_env_lifecycle_integration():
     """Test pairwise interaction: TestEnvironment startup, DB setup, clean_database, and shutdown."""
     test_env = TestEnvironment(db_url="sqlite+aiosqlite:///:memory:")
     await test_env.start()
+    try:
+        assert test_env.engine is not None
+        assert test_env.session_factory is not None
 
-    assert test_env.engine is not None
-    assert test_env.session_factory is not None
+        async with test_env.session_factory() as session:
+            res = await session.execute(select(Workspace.id).where(Workspace.id == "global"))
+            ws_id = res.scalar_one_or_none()
+            assert ws_id == "global"
 
-    async with test_env.session_factory() as session:
-        res = await session.execute(select(Workspace.id).where(Workspace.id == "global"))
-        ws_id = res.scalar_one_or_none()
-        assert ws_id == "global"
+        await test_env.clean_database()
 
-    await test_env.clean_database()
-
-    async with test_env.session_factory() as session:
-        res = await session.execute(select(Workspace.id).where(Workspace.id == "global"))
-        assert res.scalar_one_or_none() == "global"
-
-    await test_env.stop()
+        async with test_env.session_factory() as session:
+            res = await session.execute(select(Workspace.id).where(Workspace.id == "global"))
+            assert res.scalar_one_or_none() == "global"
+    finally:
+        await test_env.stop()
     assert test_env.engine is None

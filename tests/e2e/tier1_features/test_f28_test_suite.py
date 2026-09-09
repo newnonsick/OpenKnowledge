@@ -109,9 +109,10 @@ async def test_f28_test_environment_lifecycle_and_cleanup():
     """Verify TestEnvironment starts up cleanly and tears down temporary storage and database engine."""
     env = TestEnvironment()
     await env.start()
-    assert env.storage_path is not None
-    assert env.storage_path.exists()
-    assert env.engine is not None
-
-    await env.stop()
+    try:
+        assert env.storage_path is not None
+        assert env.storage_path.exists()
+        assert env.engine is not None
+    finally:
+        await env.stop()
     assert env.engine is None

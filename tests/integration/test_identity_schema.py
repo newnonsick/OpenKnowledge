@@ -37,6 +37,12 @@ async def test_configured_postgres_has_identity_invariants() -> None:
                 "personal_api_keys",
                 "audit_events",
             } <= tables
+            await connection.execute(
+                text(
+                    "INSERT INTO workspaces (id, name) VALUES ('global', 'Family Shared') "
+                    "ON CONFLICT (id) DO UPDATE SET name = 'Family Shared'"
+                )
+            )
             global_name = await connection.scalar(
                 text("SELECT name FROM workspaces WHERE id = 'global'")
             )
