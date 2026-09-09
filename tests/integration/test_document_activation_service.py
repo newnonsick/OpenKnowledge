@@ -9,6 +9,7 @@ from src.gateway.application.services.ingestion_job_service import IngestionJobS
 from src.gateway.domain.exceptions import JobLeaseLostException
 from src.gateway.domain.identity import Principal, PrincipalKind, SystemRole
 from src.gateway.infrastructure.persistence.ingestion_models import DocumentModel, DocumentRevisionChunkModel, DocumentRevisionModel, EmbeddingGenerationModel, IngestionJobModel, RetrievalUnitModel
+from src.gateway.infrastructure.persistence.models import EMBED_DIM
 from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
 from tests.e2e.harness.test_env import TestEnvironment
 
@@ -51,7 +52,7 @@ async def test_activation_is_atomic_fenced_and_makes_revision_searchable(tmp_pat
                     id=generation_id,
                     purpose="retrieval",
                     model_id="test-embedding",
-                    dimensions=1024,
+                    dimensions=EMBED_DIM,
                     status="active",
                 )
             )
@@ -62,14 +63,14 @@ async def test_activation_is_atomic_fenced_and_makes_revision_searchable(tmp_pat
             ActivationChunk(
                 content="alpha",
                 content_hash="a" * 64,
-                embedding=[1.0] + [0.0] * 1023,
+                embedding=[1.0] + [0.0] * (EMBED_DIM - 1),
                 language="en",
                 parser_metadata={"page": 1},
             ),
             ActivationChunk(
                 content="beta",
                 content_hash="b" * 64,
-                embedding=[0.0, 1.0] + [0.0] * 1022,
+                embedding=[0.0, 1.0] + [0.0] * (EMBED_DIM - 2),
                 language="en",
                 parser_metadata={"page": 2},
             ),

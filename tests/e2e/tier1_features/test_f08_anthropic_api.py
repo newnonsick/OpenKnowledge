@@ -1,11 +1,13 @@
 """Tier 1 Feature Tests for Feature 8: Anthropic /v1/messages API.
 
 Validates standard Anthropic messages non-streaming JSON responses, tool_use content blocks,
-system prompt handling, usage accounting, and error structures.
+system prompt handling, usage accounting, streaming SSE framing, and error structures.
 
 All HTTP tests exercise the real gateway stack (auth middleware, Anthropic converter,
 orchestrator, HTTP LLM adapter) wired to the in-process mock upstream.
 """
+
+import json
 
 import httpx
 import pytest
@@ -184,3 +186,54 @@ async def test_f08_anthropic_empty_messages_rejected():
         assert data["type"] == "error"
         assert data["error"]["type"] == "invalid_request_error"
         assert gw.llm.call_count == 0
+
+
+@pytest.mark.tier1
+@pytest.mark.feature("F8")
+@pytest.mark.asyncio
+async def test_f08_anthropic_text_streaming_event_framing():
+    """Verify a normal text streaming response emits the full Anthropic SSE frame sequence."""
+    async with GatewayMockUpstream() as gw:
+        gw.llm.queue_stream_response(["Hello ", "streaming ", "world."])
+
+        resp = await gw.client.post(
+            "/v1/messages",
+            json={
+                "model": "default",
+                "max_tokens": 512,
+                "messages": [{"role": "user", "content": "Say hello."}],
+                "stream": True,
+            },
+        )
+        assert resp.status_code == 200
+
+        event_types: list = []
+        payloads: list = []
+        async for line in resp.aiter_lines():
+            line = line.strip()
+            if line.startswith("event: "):
+                event_types.append(line[len("event: "):])
+            elif line.startswith("data: "):
+                try:
+                    payloads.append(json.loads(line[len("data: "):]))
+                except json.JSONDecodeError:
+                    pass
+
+        assert event_types[0] == "message_start"
+        assert "content_block_start" in event_types
+        assert "content_block_stop" in event_types
+        assert "message_delta" in event_types
+        assert event_types[-1] == "message_stop"
+        assert event_types.index("content_block_start") < event_types.index("content_block_stop")
+
+        text_deltas = [
+            payload for payload in payloads
+            if payload.get("type") == "content_block_delta"
+            and payload.get("delta", {}).get("type") == "text_delta"
+        ]
+        assert text_deltas, "text_delta SSE events must be emitted"
+        assert "".join(item["delta"]["text"] for item in text_deltas) == "Hello streaming world."
+
+        message_deltas = [payload for payload in payloads if payload.get("type") == "message_delta"]
+        assert message_deltas
+        assert message_deltas[-1]["delta"]["stop_reason"] == "end_turn"

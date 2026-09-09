@@ -9,7 +9,9 @@ from src.gateway.infrastructure.migrations import get_schema_status_async, run_m
 
 async def test_configured_postgres_has_identity_invariants() -> None:
     await run_migrations_async()
-    status = await get_schema_status_async(expected_embedding_dimension=1024)
+    status = await get_schema_status_async(
+        expected_embedding_dimension=get_settings().embedding.dimension
+    )
     assert status.compatible is True
     assert status.current_revision == "021"
 

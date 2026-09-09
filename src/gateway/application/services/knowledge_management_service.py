@@ -17,6 +17,7 @@ from src.gateway.domain.identity import Principal
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
 from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGenerationModel, ProvenanceLinkModel, RetrievalUnitModel
 from src.gateway.infrastructure.persistence.models import KnowledgeItem, KnowledgeRevision
+from src.gateway.observability import increment_metric
 
 logger = logging.getLogger(__name__)
 
@@ -239,18 +240,36 @@ class KnowledgeManagementService:
         )
 
     async def _activate_projection(self, item: KnowledgeItem, revision: KnowledgeRevision, now: datetime) -> None:
-        generation_id = await self._session.scalar(
-            select(EmbeddingGenerationModel.id)
-            .where(
-                EmbeddingGenerationModel.purpose == "retrieval",
-                EmbeddingGenerationModel.status == "active",
+        generation = (
+            await self._session.execute(
+                select(EmbeddingGenerationModel)
+                .where(
+                    EmbeddingGenerationModel.purpose == "retrieval",
+                    EmbeddingGenerationModel.status == "active",
+                )
+                .order_by(EmbeddingGenerationModel.activated_at.desc().nullslast(), EmbeddingGenerationModel.created_at.desc())
+                .limit(1)
             )
-            .order_by(EmbeddingGenerationModel.activated_at.desc().nullslast(), EmbeddingGenerationModel.created_at.desc())
-            .limit(1)
-        )
-        if generation_id is None:
+        ).scalar_one_or_none()
+        if generation is None:
             return
+        generation_id = generation.id
         embedding = await self._embed_revision(revision)
+        if embedding is not None and len(embedding) != generation.dimensions:
+            logger.warning(
+                "Knowledge embedding dimension mismatch; storing revision without vector projection",
+                extra={
+                    "expected_dimensions": generation.dimensions,
+                    "actual_dimensions": len(embedding),
+                    "knowledge_item_id": str(revision.item_id),
+                },
+            )
+            increment_metric(
+                "gateway_embedding_events_total",
+                event="dimension_mismatch",
+                outcome="degraded",
+            )
+            embedding = None
         revision.embedding = embedding
         revision_ids = select(KnowledgeRevision.id).where(KnowledgeRevision.item_id == item.id)
         await self._session.execute(

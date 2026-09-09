@@ -14,7 +14,7 @@ from src.gateway.infrastructure.persistence import retrieval_unit_repository as 
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SpaceRole, SystemRole
 from src.gateway.infrastructure.database import set_session_factory
 from src.gateway.infrastructure.persistence.identity_models import AuditEventModel, MFAFactorModel, MemberModel, PasswordCredentialModel, SpaceMembershipModel
-from src.gateway.infrastructure.persistence.models import Workspace
+from src.gateway.infrastructure.persistence.models import EMBED_DIM, Workspace
 from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGenerationModel
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
 from src.gateway.presentation.errors import register_exception_handlers
@@ -35,10 +35,10 @@ def principal(member_id, system_role=SystemRole.MEMBER):
 
 class StubEmbeddingClient:
     async def embed_query(self, query):
-        return [0.1] * 1024
+        return [0.1] * EMBED_DIM
 
     async def embed_texts(self, texts):
-        return [[0.1] * 1024 for _ in texts]
+        return [[0.1] * EMBED_DIM for _ in texts]
 
 
 async def test_management_resources_enforce_membership_and_one_time_secret_boundaries(tmp_path, monkeypatch) -> None:
@@ -96,7 +96,7 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                         id=uuid4(),
                         purpose="retrieval",
                         model_id="offline-test-generation",
-                        dimensions=1024,
+                        dimensions=EMBED_DIM,
                         status="active",
                         activated_at=now,
                     ),
@@ -183,7 +183,7 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
             monkeypatch.setattr(
                 retrieval_unit_repository_module,
                 "EMBED_DIM",
-                1024,
+                EMBED_DIM,
             )
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(

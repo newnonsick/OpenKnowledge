@@ -107,7 +107,7 @@ async def test_expired_claim_is_recovered_and_stale_worker_cannot_commit() -> No
             await session.execute(
                 update(IngestionJobModel)
                 .where(IngestionJobModel.id == job_id)
-                .values(lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+                .values(lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=60))
             )
         async with factory.begin() as session:
             with pytest.raises(JobLeaseLostException):
@@ -143,7 +143,7 @@ async def test_expired_final_attempt_is_failed_instead_of_becoming_stuck() -> No
             await session.execute(
                 update(IngestionJobModel)
                 .where(IngestionJobModel.id == job_id)
-                .values(lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+                .values(lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=60))
             )
 
         async with factory.begin() as session:
@@ -227,7 +227,7 @@ async def test_expired_cancelled_claim_is_finalized_without_reclaim() -> None:
             await session.execute(
                 update(IngestionJobModel)
                 .where(IngestionJobModel.id == job_id)
-                .values(lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+                .values(lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=60))
             )
         async with factory.begin() as session:
             assert await IngestionJobService(session).claim_next("worker-b", lease_seconds=30) is None

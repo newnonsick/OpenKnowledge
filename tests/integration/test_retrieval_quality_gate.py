@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import math
+import random
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
@@ -23,16 +25,43 @@ def _id(space_index: int, slot: int, kind: str):
 
 
 def _query_vector() -> list[float]:
-    return [1.0] + [0.0] * (EMBED_DIM - 1)
+    rng = random.Random("retrieval-quality-query-v1")
+    drawn = [rng.gauss(0.0, 1.0) for _ in range(EMBED_DIM)]
+    norm = math.sqrt(sum(value * value for value in drawn))
+    return [value / norm for value in drawn]
+
+
+def _noise_direction() -> list[float]:
+    query = _query_vector()
+    rng = random.Random("retrieval-quality-noise-v1")
+    drawn = [rng.gauss(0.0, 1.0) for _ in range(EMBED_DIM)]
+    dot = sum(a * b for a, b in zip(drawn, query))
+    orthogonal = [a - dot * b for a, b in zip(drawn, query)]
+    norm = math.sqrt(sum(value * value for value in orthogonal))
+    return [value / norm for value in orthogonal]
+
+
+_NOISE_DIRECTION: list[float] | None = None
 
 
 def _distractor_vector(space_index: int, slot: int) -> list[float]:
-    value = ((space_index * 50 + slot) % 997) / 997.0
-    return [0.1, 1.0, value] + [0.0] * (EMBED_DIM - 3)
+    query = _query_vector()
+    rng = random.Random(f"retrieval-quality-distractor-v1:{space_index}:{slot}")
+    drawn = [rng.gauss(0.0, 1.0) for _ in range(EMBED_DIM)]
+    combined = [0.1 * a + b for a, b in zip(query, drawn)]
+    norm = math.sqrt(sum(value * value for value in combined))
+    return [value / norm for value in combined]
 
 
 def _relevant_vector(space_index: int) -> list[float]:
-    return [1.0, (space_index + 1) / 10000.0] + [0.0] * (EMBED_DIM - 2)
+    global _NOISE_DIRECTION
+    if _NOISE_DIRECTION is None:
+        _NOISE_DIRECTION = _noise_direction()
+    query = _query_vector()
+    magnitude = 0.001 if space_index < 20 else 0.02
+    combined = [a + magnitude * b for a, b in zip(query, _NOISE_DIRECTION)]
+    norm = math.sqrt(sum(value * value for value in combined))
+    return [value / norm for value in combined]
 
 
 def _plan_uses_index(value, index_name: str) -> bool:

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from src.gateway.config import get_settings
-from src.gateway.infrastructure.migrations import run_migrations_async
+from src.gateway.infrastructure.migrations import run_migrations_async, set_embedding_dimension
 
 
 @asynccontextmanager
@@ -29,6 +29,7 @@ async def isolated_postgres_database():
             created = True
         url = make_url(base_url).set(database=name).render_as_string(hide_password=False)
         await run_migrations_async(url)
+        await set_embedding_dimension(get_settings().embedding.dimension, db_url=url)
         engine = create_async_engine(url, poolclass=NullPool)
         try:
             yield engine, async_sessionmaker(engine, expire_on_commit=False)

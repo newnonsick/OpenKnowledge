@@ -89,11 +89,11 @@ def test_dry_run_reports_collected_nodes_without_claiming_execution(monkeypatch,
 
     summary = runner.run()
 
-    assert summary.total_tests == 4
+    assert summary.total_tests == 5
     assert summary.passed == 0
     assert summary.failed == 0
     assert summary.errors == 0
-    assert summary.feature_matrix["F29"]["1"] == 4
+    assert summary.feature_matrix["F29"]["1"] == 5
     assert summary.verdict == "COLLECTED"
     assert summary.thresholds_passed is True
     ReportFormatter.print_terminal_report(summary)

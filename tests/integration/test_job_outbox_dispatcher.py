@@ -98,7 +98,7 @@ async def test_outbox_dispatcher_retries_failure_and_reuses_same_key(tmp_path) -
             await session.execute(
                 update(JobOutboxModel)
                 .where(JobOutboxModel.id == event.id)
-                .values(available_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+                .values(available_at=datetime.now(timezone.utc) - timedelta(seconds=60))
             )
 
         assert await dispatcher.dispatch_once() == event.id

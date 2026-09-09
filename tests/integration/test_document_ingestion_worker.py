@@ -11,7 +11,7 @@ from src.gateway.domain.exceptions import ConcurrencyConflictException, Embeddin
 from src.gateway.domain.identity import Principal, PrincipalKind, SystemRole
 from src.gateway.infrastructure.persistence.ingestion_models import DocumentModel, DocumentRevisionModel, EmbeddingGenerationModel, IngestionJobModel, RetrievalUnitModel
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, SpaceMembershipModel
-from src.gateway.infrastructure.persistence.models import Workspace
+from src.gateway.infrastructure.persistence.models import EMBED_DIM, Workspace
 from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
 from src.gateway.observability import metrics_registry_context
 from src.gateway.presentation.metrics import MetricsRegistry
@@ -41,10 +41,10 @@ class _Parser:
 
 
 class _EmbeddingClient:
-    dimension = 1024
+    dimension = EMBED_DIM
 
     async def embed_texts(self, texts):
-        return [[1.0] + [0.0] * 1023 for _ in texts]
+        return [[1.0] + [0.0] * (EMBED_DIM - 1) for _ in texts]
 
 
 class _FailOnceEmbeddingClient(_EmbeddingClient):
@@ -82,7 +82,7 @@ async def _generation(env):
                 id=generation_id,
                 purpose="retrieval",
                 model_id="test-embedding",
-                dimensions=1024,
+                dimensions=EMBED_DIM,
                 status="active",
             )
         )
@@ -158,7 +158,7 @@ async def test_worker_retries_transient_embedding_failure_then_succeeds(tmp_path
             await session.execute(
                 update(IngestionJobModel)
                 .where(IngestionJobModel.id == receipt.job_id)
-                .values(next_attempt_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+                .values(next_attempt_at=datetime.now(timezone.utc) - timedelta(seconds=60))
             )
 
         assert await worker.run_once() == receipt.job_id
@@ -341,7 +341,7 @@ async def test_worker_round_trip_on_real_postgres(tmp_path) -> None:
                 EmbeddingGenerationModel(
                     purpose="retrieval",
                     model_id="test-embedding",
-                    dimensions=1024,
+                    dimensions=EMBED_DIM,
                     status="active",
                 )
             )

@@ -7,7 +7,7 @@ from src.gateway.application.services.legacy_backfill_service import LegacyBackf
 from src.gateway.application.services.storage_manifest_service import StorageManifestService
 from src.gateway.infrastructure.persistence.identity_models import MemberModel
 from src.gateway.infrastructure.persistence.ingestion_models import DocumentModel, DocumentRevisionModel, EmbeddingGenerationModel, MigrationBackfillRunModel, ProvenanceLinkModel, RetrievalUnitModel
-from src.gateway.infrastructure.persistence.models import DocumentChunk, DocumentFile, KnowledgeItem, KnowledgeRevision, Workspace
+from src.gateway.infrastructure.persistence.models import EMBED_DIM, DocumentChunk, DocumentFile, KnowledgeItem, KnowledgeRevision, Workspace
 from src.gateway.infrastructure.storage.local_storage import LocalStorageAdapter
 from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
 from tests.e2e.harness.test_env import TestEnvironment
@@ -46,7 +46,7 @@ async def _seed_legacy_document(env, storage, *, created_at, suffix: str):
                 workspace_id="test_ws",
                 chunk_index=0,
                 content=content.decode(),
-                embedding=[1.0] + [0.0] * 1023,
+                embedding=[1.0] + [0.0] * (EMBED_DIM - 1),
                 metadata_={"legacy": True},
             )
         )
@@ -69,7 +69,7 @@ async def test_document_backfill_uses_recorded_high_water_then_bounded_delta(tmp
                 EmbeddingGenerationModel(
                     purpose="retrieval",
                     model_id="legacy-embedding",
-                    dimensions=1024,
+                    dimensions=EMBED_DIM,
                     status="active",
                 )
             )
@@ -212,7 +212,7 @@ async def test_document_backfill_round_trip_on_postgres_pgvector(tmp_path) -> No
                 EmbeddingGenerationModel(
                     purpose="retrieval",
                     model_id="legacy-postgres",
-                    dimensions=1024,
+                    dimensions=EMBED_DIM,
                     status="active",
                 )
             )
@@ -224,7 +224,7 @@ async def test_document_backfill_round_trip_on_postgres_pgvector(tmp_path) -> No
                     workspace_id=space_id,
                     chunk_index=0,
                     content=content.decode(),
-                    embedding=[1.0] + [0.0] * 1023,
+                    embedding=[1.0] + [0.0] * (EMBED_DIM - 1),
                     metadata_={},
                 )
             )
@@ -249,4 +249,4 @@ async def test_document_backfill_round_trip_on_postgres_pgvector(tmp_path) -> No
             )
             assert revision.status == "active"
             assert unit.active
-            assert len(unit.embedding) == 1024
+            assert len(unit.embedding) == EMBED_DIM

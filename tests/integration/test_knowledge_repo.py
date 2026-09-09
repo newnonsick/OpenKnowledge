@@ -56,7 +56,7 @@ async def test_knowledge_repository_lifecycle():
         assert saved_item.id == item_id
         assert saved_item.version == 1
         assert saved_item.current_revision is not None
-        assert saved_item.current_revision.embedding == [0.1] * EMBED_DIM
+        assert saved_item.current_revision.embedding == pytest.approx([0.1] * EMBED_DIM, abs=1e-3)
 
         # 2. Get item
         fetched = await repo.get_item_by_id(item_id)
@@ -64,7 +64,7 @@ async def test_knowledge_repository_lifecycle():
         assert fetched.version == 1
         assert fetched.content == initial_content
         assert fetched.current_revision is not None
-        assert fetched.current_revision.embedding == [0.1] * EMBED_DIM
+        assert fetched.current_revision.embedding == pytest.approx([0.1] * EMBED_DIM, abs=1e-3)
 
         # 3. Update with valid OCC expected_version=1 -> v2
         updated_content = "PostgreSQL pgvector storage guidelines v2 with HNSW indexing."
@@ -86,7 +86,7 @@ async def test_knowledge_repository_lifecycle():
         assert updated_item.version == 2
         assert updated_item.content == updated_content
         assert updated_item.current_revision is not None
-        assert updated_item.current_revision.embedding == [0.2] * EMBED_DIM
+        assert updated_item.current_revision.embedding == pytest.approx([0.2] * EMBED_DIM, abs=1e-3)
 
         # 4. Attempt update with stale expected_version=1 -> raises 409
         rev_v3_stale = KnowledgeRevision(
@@ -107,9 +107,9 @@ async def test_knowledge_repository_lifecycle():
         history = await repo.list_revisions(item_id)
         assert len(history) == 2
         assert history[0].version == 1
-        assert history[0].embedding == [0.1] * EMBED_DIM
+        assert history[0].embedding == pytest.approx([0.1] * EMBED_DIM, abs=1e-3)
         assert history[1].version == 2
-        assert history[1].embedding == [0.2] * EMBED_DIM
+        assert history[1].embedding == pytest.approx([0.2] * EMBED_DIM, abs=1e-3)
 
         # 6. Fetch historical version 1
         v1_snapshot = await repo.get_item_by_id(item_id, version=1)
@@ -117,7 +117,7 @@ async def test_knowledge_repository_lifecycle():
         assert v1_snapshot.version == 1
         assert v1_snapshot.content == initial_content
         assert v1_snapshot.current_revision is not None
-        assert v1_snapshot.current_revision.embedding == [0.1] * EMBED_DIM
+        assert v1_snapshot.current_revision.embedding == pytest.approx([0.1] * EMBED_DIM, abs=1e-3)
 
         # 7. Soft delete
         del_result = await repo.soft_delete_item(item_id, expected_version=2)

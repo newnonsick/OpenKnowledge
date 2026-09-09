@@ -14,6 +14,7 @@ from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, 
 from src.gateway.infrastructure.database import get_db_session, set_session_factory
 from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeModel, AuditEventModel, MemberModel, PersonalAPIKeyModel
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
+from src.gateway.presentation.session_cookies import access_cookie_name
 from tests.integration.postgres_test_database import isolated_postgres_database
 
 
@@ -228,20 +229,20 @@ async def test_personal_key_and_website_cookie_bind_database_principal() -> None
                 session_response = await client.get(
                     "/principal",
                     cookies={
-                        "__Host-openknowledge-access": website_session.access_token.reveal()
+                        access_cookie_name(): website_session.access_token.reveal()
                     },
                 )
                 rejected_unsafe_response = await client.post(
                     "/principal",
                     cookies={
-                        "__Host-openknowledge-access": website_session.access_token.reveal()
+                        access_cookie_name(): website_session.access_token.reveal()
                     },
                     json={},
                 )
                 accepted_unsafe_response = await client.post(
                     "/principal",
                     cookies={
-                        "__Host-openknowledge-access": website_session.access_token.reveal()
+                        access_cookie_name(): website_session.access_token.reveal()
                     },
                     headers={
                         "Origin": "http://localhost:3000",

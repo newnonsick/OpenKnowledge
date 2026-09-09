@@ -202,3 +202,41 @@ async def test_f29_anthropic_stream_thinking_delta_events(reasoning_env):
         if e.get("type") == "content_block_delta" and e.get("delta", {}).get("type") == "text_delta"
     ]
     assert "".join(e["delta"]["text"] for e in text_deltas) == "Visible stream."
+
+
+@pytest.mark.tier1
+@pytest.mark.feature("F29")
+@pytest.mark.asyncio
+async def test_f29_openai_stream_without_reasoning_content(reasoning_env):
+    env, mock_mgr = reasoning_env
+    mock_mgr.llm.queue_response(
+        MockLLMResponse.stream(
+            chunks=["Plain ", "answer."],
+            finish_reason="stop",
+        )
+    )
+
+    async with env.get_client() as client:
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "default",
+                "messages": [{"role": "user", "content": "Stream without thoughts"}],
+                "stream": True,
+            },
+        )
+    assert resp.status_code == 200
+    events = await parse_sse_stream(resp)
+
+    reasoning_parts = [
+        e["choices"][0]["delta"]["reasoning_content"]
+        for e in events
+        if "reasoning_content" in e.get("choices", [{}])[0].get("delta", {})
+    ]
+    content_parts = [
+        e["choices"][0]["delta"]["content"]
+        for e in events
+        if "content" in e.get("choices", [{}])[0].get("delta", {})
+    ]
+    assert reasoning_parts == []
+    assert "".join(content_parts) == "Plain answer."

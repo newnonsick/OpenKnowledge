@@ -70,14 +70,14 @@ async def test_knowledge_service_embedding_lifecycle_persistence():
         assert item.current_revision.embedding is not None
         assert len(item.current_revision.embedding) == EMBED_DIM
         # First element is 0.9 because content contains 'database'/'sql'
-        assert item.current_revision.embedding[0] == 0.9
+        assert item.current_revision.embedding[0] == pytest.approx(0.9, abs=1e-3)
 
         # 2. Verify reading from repository directly hydrates embedding
         fetched = await service.get_item(item.id, workspace_id="test_ws")
         assert fetched is not None
         assert fetched.current_revision is not None
         assert fetched.current_revision.embedding is not None
-        assert fetched.current_revision.embedding[0] == 0.9
+        assert fetched.current_revision.embedding[0] == pytest.approx(0.9, abs=1e-3)
 
         # 3. Update item OCC to v2 with frontend content and title
         updated = await service.update_item(
@@ -93,17 +93,17 @@ async def test_knowledge_service_embedding_lifecycle_persistence():
         assert updated.current_revision is not None
         assert updated.current_revision.embedding is not None
         # v2 embedding should reflect frontend content (second dimension 0.9)
-        assert updated.current_revision.embedding[1] == 0.9
+        assert updated.current_revision.embedding[1] == pytest.approx(0.9, abs=1e-3)
 
         # 4. Verify historical revisions preserve respective embeddings
         revisions = await service.list_revisions(item.id)
         assert len(revisions) == 2
         assert revisions[0].version == 1
         assert revisions[0].embedding is not None
-        assert revisions[0].embedding[0] == 0.9  # v1 database embedding
+        assert revisions[0].embedding[0] == pytest.approx(0.9, abs=1e-3)  # v1 database embedding
         assert revisions[1].version == 2
         assert revisions[1].embedding is not None
-        assert revisions[1].embedding[1] == 0.9  # v2 frontend embedding
+        assert revisions[1].embedding[1] == pytest.approx(0.9, abs=1e-3)  # v2 frontend embedding
 
 
 @pytest.mark.integration

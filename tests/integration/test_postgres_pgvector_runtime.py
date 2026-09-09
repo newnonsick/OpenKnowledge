@@ -20,8 +20,9 @@ async def test_configured_postgres_pgvector_round_trip_and_cosine_ordering() -> 
     second_item = uuid4()
     first_revision = uuid4()
     second_revision = uuid4()
-    near = "[" + ",".join(["1", "0"] + ["0"] * 1022) + "]"
-    far = "[" + ",".join(["0", "1"] + ["0"] * 1022) + "]"
+    dimension = get_settings().embedding.dimension
+    near = "[" + ",".join(["1", "0"] + ["0"] * (dimension - 2)) + "]"
+    far = "[" + ",".join(["0", "1"] + ["0"] * (dimension - 2)) + "]"
 
     try:
         async with engine.connect() as connection:
@@ -30,6 +31,15 @@ async def test_configured_postgres_pgvector_round_trip_and_cosine_ordering() -> 
                 extension_version = await connection.scalar(
                     text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
                 )
+                column_type = await connection.scalar(
+                    text(
+                        "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a "
+                        "JOIN pg_class c ON c.oid = a.attrelid "
+                        "WHERE c.relname = 'knowledge_revisions' AND a.attname = 'embedding' "
+                        "AND NOT a.attisdropped"
+                    )
+                )
+                vector_cast = "halfvec" if (column_type or "").startswith("halfvec") else "vector"
                 indexes = set(
                     (
                         await connection.execute(
@@ -67,8 +77,8 @@ async def test_configured_postgres_pgvector_round_trip_and_cosine_ordering() -> 
                     text(
                         "INSERT INTO knowledge_revisions "
                         "(id, item_id, space_id, version, title, content_hash, content, embedding, author) VALUES "
-                        "(:first_revision, :first_item, :workspace_id, 1, 'Near', :first_hash, 'near', CAST(:near AS vector), 'test'), "
-                        "(:second_revision, :second_item, :workspace_id, 1, 'Far', :second_hash, 'far', CAST(:far AS vector), 'test')"
+                        f"(:first_revision, :first_item, :workspace_id, 1, 'Near', :first_hash, 'near', CAST(:near AS {vector_cast}), 'test'), "
+                        f"(:second_revision, :second_item, :workspace_id, 1, 'Far', :second_hash, 'far', CAST(:far AS {vector_cast}), 'test')"
                     ),
                     {
                         "first_revision": first_revision,
@@ -85,7 +95,7 @@ async def test_configured_postgres_pgvector_round_trip_and_cosine_ordering() -> 
                 rows = (
                     await connection.execute(
                         text(
-                            "SELECT item_id, embedding <=> CAST(:query AS vector) AS distance "
+                            f"SELECT item_id, embedding <=> CAST(:query AS {vector_cast}) AS distance "
                             "FROM knowledge_revisions WHERE item_id IN (:first_item, :second_item) "
                             "ORDER BY distance ASC"
                         ),

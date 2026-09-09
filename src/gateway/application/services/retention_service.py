@@ -64,6 +64,7 @@ class RetentionService:
             )
             if not acquired:
                 return None
+            db_now = await session.scalar(text("SELECT statement_timestamp()"))
             rows = (
                 await session.execute(
                     text(
@@ -71,9 +72,9 @@ class RetentionService:
                         "FROM public.gateway_run_retention(:archived_before, :revision_before, :operational_before, :max_rows)"
                     ),
                     {
-                        "archived_before": now - archive_retention,
-                        "revision_before": now - revision_retention,
-                        "operational_before": now - operational_retention,
+                        "archived_before": db_now - archive_retention,
+                        "revision_before": db_now - revision_retention,
+                        "operational_before": db_now - operational_retention,
                         "max_rows": batch_size,
                     },
                 )
