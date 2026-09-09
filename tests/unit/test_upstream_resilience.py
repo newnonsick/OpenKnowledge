@@ -332,3 +332,41 @@ async def test_stream_adapter_never_retries_after_emitting_data() -> None:
 
 async def _record_delay(delays: list[float], delay: float) -> None:
     delays.append(delay)
+
+
+async def test_llm_adapter_sends_configured_extra_headers_without_overriding_auth(monkeypatch) -> None:
+    from src.gateway.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv(
+        "LLM_EXTRA_HEADERS",
+        '{"x-opencode-session": "session-1", "Authorization": "Bearer evil"}',
+    )
+    get_settings.cache_clear()
+    try:
+        seen: dict[str, str] = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            seen.update(request.headers)
+            return httpx.Response(
+                200,
+                json={
+                    "id": "one",
+                    "model": "test",
+                    "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
+                },
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            llm = HttpLLMClient(
+                base_url="https://llm.test/v1",
+                api_key="key",
+                default_model="test",
+                client=client,
+                resilience_policy=ResiliencePolicy(max_attempts=1, base_backoff_seconds=0, max_backoff_seconds=0),
+            )
+            await llm.generate([{"role": "user", "content": "hello"}])
+        assert seen["x-opencode-session"] == "session-1"
+        assert seen["authorization"] == "Bearer key"
+    finally:
+        get_settings.cache_clear()

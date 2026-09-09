@@ -6,7 +6,7 @@ from functools import lru_cache
 from enum import Enum
 from ipaddress import ip_network
 import json
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 from pydantic import AliasChoices, Field, ValidationError, field_validator
@@ -98,6 +98,26 @@ class LLMSettings(BaseSettings):
         validation_alias=AliasChoices("LLM_MAX_TOKENS", "llm_max_tokens", "max_tokens"),
         description="Default max completion tokens",
     )
+    extra_headers: Union[Dict[str, str], str] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("LLM_EXTRA_HEADERS", "llm_extra_headers", "extra_headers"),
+        description="Additional HTTP headers sent to the LLM provider",
+    )
+
+    @field_validator("extra_headers", mode="before")
+    @classmethod
+    def parse_extra_headers(cls, value: Any) -> Dict[str, str]:
+        if isinstance(value, str):
+            if not value.strip():
+                return {}
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+            value = parsed
+        if isinstance(value, dict):
+            return {str(k): str(v) for k, v in value.items()}
+        return {}
 
     @field_validator("fallback_model_ids", mode="before")
     @classmethod

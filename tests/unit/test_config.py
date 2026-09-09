@@ -130,3 +130,14 @@ def test_get_settings_cached():
     s1 = get_settings()
     s2 = get_settings()
     assert s1 is s2
+
+
+def test_llm_extra_headers_parsing(monkeypatch):
+    """Verify LLM_EXTRA_HEADERS accepts JSON and defaults to empty."""
+    assert LLMSettings().extra_headers == {}
+
+    monkeypatch.setenv("LLM_EXTRA_HEADERS", '{"x-opencode-session": "session-1"}')
+    assert LLMSettings().extra_headers == {"x-opencode-session": "session-1"}
+
+    monkeypatch.setenv("LLM_EXTRA_HEADERS", "not-json")
+    assert LLMSettings().extra_headers == {}

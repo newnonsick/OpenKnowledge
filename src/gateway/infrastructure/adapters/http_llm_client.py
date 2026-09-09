@@ -195,6 +195,9 @@ class HttpLLMClient(ILLMClient):
         headers.update(current_trace_headers())
         if self.api_key and self.api_key != "EMPTY":
             headers["Authorization"] = f"Bearer {self.api_key}"
+        for name, value in (get_settings().llm.extra_headers or {}).items():
+            if name.lower() not in {"authorization", "content-type", "accept"}:
+                headers[name] = value
         return headers
 
     async def _get_client(self) -> httpx.AsyncClient:

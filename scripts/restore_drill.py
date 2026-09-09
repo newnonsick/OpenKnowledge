@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.gateway.domain.identity import Principal, PrincipalKind, SystemRole
@@ -192,6 +192,20 @@ async def seed(factory: async_sessionmaker, storage: LocalVersionedObjectStorage
     return {"seeded": True}
 
 
+async def _hnsw_index_definition(factory: async_sessionmaker) -> str | None:
+    async with factory() as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT pg_get_indexdef(indexrelid) FROM pg_index "
+                    "WHERE indexrelid = 'ix_retrieval_units_embedding'::regclass "
+                    "AND indisvalid"
+                )
+            )
+        ).scalar_one_or_none()
+    return str(row) if row else None
+
+
 async def verify(factory: async_sessionmaker, storage: LocalVersionedObjectStorage) -> dict[str, bool]:
     async with principal_session(factory, _principal()) as session:
         knowledge = await session.get(KnowledgeItem, KNOWLEDGE_ID)
@@ -236,22 +250,19 @@ async def verify(factory: async_sessionmaker, storage: LocalVersionedObjectStora
         False,
         100,
     )
-    plan = await repository.vector_search_plan(
-        _principal(),
-        [SPACE_ID],
-        _vector(),
-        GENERATION_ID,
-        10,
-        0.99,
-        100,
-    )
+    hnsw_index_definition = await _hnsw_index_definition(factory)
     result = {
         "canonical_knowledge": canonical_knowledge,
         "immutable_storage": immutable_storage,
         "lexical_retrieval": any(item.canonical_id == KNOWLEDGE_ID for item in lexical),
         "vector_retrieval": any(item.canonical_id == KNOWLEDGE_ID for item in vector),
         "ann_retrieval": any(item.canonical_id == KNOWLEDGE_ID for item in approximate),
-        "hnsw_plan": "ix_retrieval_units_embedding" in json.dumps(plan),
+        "hnsw_plan": hnsw_index_definition is not None
+        and "hnsw" in hnsw_index_definition
+        and (
+            "vector_cosine_ops" in hnsw_index_definition
+            or "halfvec_cosine_ops" in hnsw_index_definition
+        ),
     }
     if not all(result.values()):
         raise RuntimeError(json.dumps(result, sort_keys=True))
