@@ -2,23 +2,22 @@
 
 OpenKnowledge is a self-hosted service that sits between coding agents and LLM inference backends and gives them a persistent, shared knowledge base. It runs as three cooperating components: a FastAPI gateway API, a background worker, and a Next.js management console, backed by one PostgreSQL database with the pgvector extension. The Compose project name and Python package are both `openknowledge`.
 
-On the client side the gateway speaks the OpenAI chat protocol (`/v1/chat/completions`) and the Anthropic messages protocol (`/v1/messages`), both in JSON and Server-Sent Events streaming mode. Tools such as Cursor, Continue, or Roo Code, and any custom harness, can point at it without code changes. On the backend side it forwards traffic to any OpenAI-compatible inference server, for example vLLM, Ollama, or a hosted endpoint, and to any OpenAI-compatible embeddings endpoint.
+On the client side the gateway speaks the OpenAI chat protocol (`/v1/chat/completions`) and the Anthropic messages protocol (`/v1/messages`), both in JSON and Server-Sent Events streaming mode. Any OpenAI-compatible client, including coding-agent harnesses, can point at it. On the backend side it forwards traffic to any OpenAI-compatible inference server, for example vLLM, Ollama, or a hosted endpoint, and to any OpenAI-compatible embeddings endpoint.
 
 The feature that separates it from a plain proxy is the knowledge subsystem. The gateway defines five knowledge tool schemas (`knowledge_search`, `knowledge_get`, `knowledge_save`, `knowledge_update`, `knowledge_delete`) and attaches `knowledge_search` to provider conversations, executing it internally against PostgreSQL:
 
 - `knowledge_search` runs hybrid retrieval, combining lexical full-text search and vector similarity, fused with weighted Reciprocal Rank Fusion.
 - The management console provides the explicit knowledge lifecycle operations; provider conversations receive retrieval only.
 
-The model uses this tool to carry context across sessions: project decisions, coding standards, environment details, user preferences. The client harness never sees the call. Tool calls that are not gateway-supported knowledge tools are passed straight back to the client, so existing agent workflows keep working unchanged.
+The model uses this tool to carry context across sessions: project decisions, coding standards, environment details, user preferences. The client harness never sees the `knowledge_search` call itself. Tool calls addressed to other tools are passed back to the client, so existing agent tool workflows keep working; calls that mix internal and external tools, or that invoke knowledge tools other than `knowledge_search`, are rejected with an error instead.
 
-Around this core the gateway provides a complete management plane: member accounts with password login and TOTP multi-factor authentication, browser sessions with rotating refresh tokens, personal API keys with scoped permissions, spaces for isolating knowledge per project or team, durable asynchronous document ingestion, an audit trail, and runtime-adjustable retrieval settings. A Next.js console exposes all of it in the browser.
+Around this core the gateway provides a complete management plane: member accounts with password login and TOTP multi-factor authentication, browser sessions with rotating refresh tokens, personal API keys with scoped permissions, spaces for isolating knowledge between projects or groups, durable asynchronous document ingestion, an audit trail, and runtime-adjustable retrieval settings. A Next.js console exposes all of it in the browser.
 
 ## Console
 
 Sign-in is invitation only, with no third-party identity provider. The dashboard shows space inventory, ingestion queue health, storage use, and retrieval readiness. Explore runs a single permission-aware search across every accessible space, merging lexical and vector candidates into one ranked set.
 
 ![Console sign-in](docs/images/login.png)
-![Dashboard with spaces, queue health, and retrieval readiness](docs/images/dashboard.png)
 ![Permission-aware hybrid search results](docs/images/explore.png)
 
 ## Key features
@@ -30,7 +29,7 @@ Sign-in is invitation only, with no third-party identity provider. The dashboard
 - Spaces and authorization. Knowledge is scoped per space with owner, editor, and reader roles, a global scope readable everywhere, and row-level security enforced in the database.
 - Durable ingestion. Uploads return immediately with an ingestion job; a leased background worker parses, chunks, embeds, and activates documents with retries and idempotency keys.
 - Identity. Argon2 password hashing, TOTP enrollment with recovery codes, per-account and per-IP login throttling, session families with refresh rotation and reuse detection.
-- Management API. A server-side, numeric-page `/api/v1` surface covers members, sessions, API keys, spaces, knowledge, sources, ingestion jobs, audit events, runtime settings, and confirmed AI management actions.
+- Management API. A server-side, page-number-paginated `/api/v1` surface covers members, sessions, API keys, spaces, knowledge, sources, ingestion jobs, audit events, runtime settings, and confirmed AI management actions.
 - Operational safety. Production configuration validation refuses wildcard CORS, debug logging, legacy static keys, or missing encryption material at startup; readiness fails closed when the schema is incompatible.
 - Observability. Structured JSON logs with trace correlation, a Prometheus `/metrics` endpoint, and an alert rule catalog under `deploy/prometheus/`.
 - Recovery tooling. Encrypted coordinated backups with checksums and a storage manifest, plus verified restore drills and monthly restore rehearsals driven from CI.
@@ -56,7 +55,7 @@ flowchart LR
     Browser --> Edge
     Edge -->|"/v1/* and /health*"| Gateway
     Edge -->|all other paths| Web
-    Web -->|"/api/* rewrite"| Gateway
+    Web -->|"/api/* and /healthz/* rewrites"| Gateway
     Gateway --> PG
     Worker --> PG
     Gateway --> Store
@@ -129,7 +128,7 @@ web/                      Next.js management console
 
 ## Quick start
 
-The full procedure, including native and Compose-based workflows, is in [docs/installation.md](docs/installation.md). In outline:
+Prerequisites: Python 3.11 or newer, PostgreSQL with the pgvector extension (Compose and CI pin `pgvector/pgvector:pg17`), and Node.js 24 for the console. The full procedure, including Compose-based deployment, is in [docs/installation.md](docs/installation.md). In outline:
 
 ```bash
 # 1. Python environment
@@ -138,23 +137,28 @@ source .venv/bin/activate        # Windows PowerShell: .venv\Scripts\Activate.ps
 pip install --require-hashes -r requirements/dev.lock
 
 # 2. Configuration
-cp .env.example .env             # then edit DATABASE_URL and backend URLs
+cp .env.example .env             # then set DATABASE_URL, LLM_URL, EMBEDDING_URL,
+                                 # API_KEY_PEPPERS, and MFA_ENCRYPTION_KEYS at minimum
 
 # 3. Database migrations (PostgreSQL with pgvector must be reachable)
 python -m src.gateway.cli migrate
 python -m src.gateway.cli ensure-embedding-generation
 python -m src.gateway.cli check
 
-# 3b. Only when the embedding model dimension changes (re-run to resume)
-python -m src.gateway.cli set-embedding-dimension --dimension 768 --reembed
+# 3b. Only when the embedding model dimension changes: set EMBEDDING_DIMENSION
+# to the new value first, then run the resize (re-runnable; triggers a re-embed)
+python -m src.gateway.cli set-embedding-dimension --dimension 1024 --reembed
 python -m src.gateway.cli reembed-status
 
-# 4. First administrator (prints a temporary password)
+# 4. First administrator (prints a temporary password; it must be changed at
+# first login, and TOTP enrollment is required before the session is unrestricted)
 python -m src.gateway.cli bootstrap-super-admin --username admin --display-name "Admin"
 
-# 5. API and worker
+# 5. API and worker (the worker needs a distinct WORKER_DATABASE_URL role;
+# it is optional for manual testing, but ingestion jobs stay queued without it)
 uvicorn src.gateway.main:app --host 0.0.0.0 --port 8000
-python -m src.gateway.worker     # in a second terminal
+WORKER_DATABASE_URL=postgresql+asyncpg://gateway_worker:worker-password@localhost:5432/gateway_db \
+  python -m src.gateway.worker     # in a second terminal
 
 # 6. Web console (in a third terminal)
 cd web
@@ -162,7 +166,7 @@ npm ci
 npm run dev
 ```
 
-Interactive API documentation is served at `/docs` once the gateway runs.
+Interactive API documentation is served at `http://localhost:8000/docs` once the gateway runs. The console dev server is at `http://localhost:3000`.
 
 ## Configuration
 
@@ -172,7 +176,7 @@ All settings load from the environment and a `.env` file. Two templates exist: `
 
 Agent-facing `/v1` endpoints accept a personal API key as `Authorization: Bearer <key>` or `x-api-key: <key>`. Keys are created in the console or via `POST /api/v1/api-keys`, stored only as peppered hashes, and carry scopes such as `knowledge:read` and `knowledge:write`.
 
-The management console and `/api/v1/auth/*` use browser sessions: username and password (plus a TOTP or recovery code for super admins), an access cookie valid 15 minutes, a path-scoped refresh cookie with a 7-day idle and 30-day absolute lifetime, and CSRF protection on rotation. See [docs/security.md](docs/security.md) for the full model.
+The management console and `/api/v1/auth/*` use browser sessions: username and password (plus a TOTP or recovery code for super admins), an access cookie valid 15 minutes, a path-scoped refresh cookie with a 7-day idle and 30-day absolute lifetime, and CSRF protection on rotation. In production the access cookie carries the `__Host-` prefix and the refresh cookie the `__Secure-` prefix; local development uses unprefixed names. See [docs/security.md](docs/security.md) for the full model.
 
 ## API surface
 
@@ -184,16 +188,19 @@ The management console and `/api/v1/auth/*` use browser sessions: username and p
 | Management auth | `POST /api/v1/auth/login`, `refresh`, `step-up`, `password`, `mfa/totp/enroll`, `mfa/totp/confirm`, `logout` |
 | Management | `/api/v1/me`, `/spaces`, `/knowledge`, `/retrieval/search`, `/sources`, `/ingestion-jobs`, `/api-keys`, `/members`, `/sessions`, `/audit-events`, `/settings`, `/ai-tools`, `/ai-actions`, `/operations/summary` |
 
-The exported OpenAPI document at `/openapi.json` is the authoritative HTTP contract; the generated TypeScript client in `web/lib/generated/openapi.ts` is compiled from it and must stay in sync. Request and response details are in [docs/api.md](docs/api.md).
+The exported OpenAPI document at `/openapi.json` is the authoritative HTTP contract; the generated TypeScript client in `web/lib/generated/openapi.ts` is compiled from it and must stay in sync. The table above is an overview: the management surface also includes finer-grained routes for space administration, membership candidates, ownership transfer, password resets, settings drafts and rollback, source upload, and ingestion job cancel and retry. `/metrics` intentionally sits outside the OpenAPI schema. Request and response details are in [docs/api.md](docs/api.md).
 
 ## Testing
 
 ```bash
-pytest                                   # Python suite (unit tests run without services)
-pytest tests/integration                 # PostgreSQL integration suite
+pytest tests/unit                      # no services needed
+pytest                                 # everything (integration falls back to
+                                       # SQLite without PostgreSQL; pgvector
+                                       # behavior needs a real database)
+pytest tests/integration               # PostgreSQL integration suite
 python -m tests.e2e.harness.runner --tier all   # five-tier end-to-end suite
 
-cd web
+cd web                                 # web tests need `npm ci` first
 npm test -- --run                        # vitest component tests
 npm run test:browser                     # Playwright browser and accessibility tests
 ```
