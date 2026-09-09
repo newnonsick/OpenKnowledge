@@ -197,7 +197,7 @@ class DocumentIngestionWorker:
             except ValidationException as exc:
                 raise _IngestionFailure("parser_rejected", False) from exc
             chunks = self._chunker.chunk_semantic(parsed.text)
-            if not chunks:
+            if not chunks or not parsed.text.strip():
                 raise _IngestionFailure("empty_document", False)
             if len(chunks) > self._max_chunks:
                 raise _IngestionFailure("chunk_limit_exceeded", False)

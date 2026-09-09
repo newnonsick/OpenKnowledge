@@ -1852,6 +1852,8 @@ export interface components {
         };
         /** OpenAIModelObject */
         OpenAIModelObject: {
+            /** Context Window */
+            context_window?: number | null;
             /**
              * Created
              * @default 1700000000
@@ -2510,7 +2512,7 @@ export interface components {
              * Job State
              * @enum {string}
              */
-            job_state: "preparing" | "queued";
+            job_state: "preparing" | "queued" | "running" | "retry_wait" | "succeeded" | "failed" | "cancelled";
             /** Revision Id */
             revision_id: string;
         };

@@ -146,6 +146,7 @@ class OpenAIModelObject(BaseModel):
     created: int = 1700000000
     owned_by: str = "gateway"
     root: Optional[str] = None
+    context_window: Optional[int] = None
 
 class OpenAIModelListResponse(BaseModel):
 

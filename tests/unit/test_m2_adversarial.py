@@ -37,6 +37,7 @@ from src.gateway.domain.canonical import (
 from src.gateway.domain.exceptions import (
     AuthenticationException,
     ModelNotFoundException,
+    ValidationException,
 )
 from src.gateway.domain.identity import Principal, PrincipalKind, SystemRole
 from src.gateway.domain.tools import FunctionCall, FunctionDefinition, ToolCall, ToolDefinition
@@ -320,8 +321,9 @@ class TestModelRegistryAdversarial:
 class TestOpenAIConverterAdversarial:
     """Stress-test OpenAI protocol request/response/stream conversion."""
 
-    def test_malformed_tool_call_json_arguments_graceful_fallback(self):
-        # When model returns malformed JSON in tool call arguments
+    def test_malformed_tool_call_json_arguments_rejected(self):
+        # Malformed JSON in client-supplied tool call arguments must fail fast
+        # with 422 instead of being silently forwarded as raw_arguments.
         tc = OpenAIToolCall(
             id="call_corrupt",
             type="function",
@@ -338,13 +340,28 @@ class TestOpenAIConverterAdversarial:
             ],
         )
 
-        canonical = openai_request_to_canonical(req)
-        assert len(canonical.messages) == 1
-        asst = canonical.messages[0]
-        assert len(asst.tool_uses) == 1
-        assert asst.tool_uses[0].name == "bash"
-        # Should store raw arguments without raising an exception
-        assert "raw_arguments" in asst.tool_uses[0].input
+        with pytest.raises(ValidationException, match="valid JSON"):
+            openai_request_to_canonical(req)
+
+    def test_non_object_tool_call_json_arguments_rejected(self):
+        tc = OpenAIToolCall(
+            id="call_list",
+            type="function",
+            function=OpenAIFunctionCall(
+                name="bash",
+                arguments='["not", "an", "object"]',
+            ),
+        )
+
+        req = OpenAIChatCompletionRequest(
+            model="gpt-4o",
+            messages=[
+                OpenAIChatMessage(role="assistant", content=None, tool_calls=[tc]),
+            ],
+        )
+
+        with pytest.raises(ValidationException, match="JSON object"):
+            openai_request_to_canonical(req)
 
     def test_multi_system_messages_merging(self):
         req = OpenAIChatCompletionRequest(

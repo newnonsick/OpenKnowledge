@@ -875,6 +875,7 @@ async def execute_ai_tool(
             response_status=response_status,
             resource_ids=resource_ids,
         )
+        increment_metric("gateway_tool_events_total", event="direct", outcome="success")
     response.status_code = response_status
     return {
         "status": "executed",
@@ -1151,12 +1152,12 @@ async def list_space_members(
         .order_by(MemberModel.username_normalized)
     )
     if q is not None and q.strip():
-        pattern = f"%{q.strip()}%"
+        pattern = _contains_pattern(q)
         query = query.where(
             or_(
-                MemberModel.username.ilike(pattern),
-                MemberModel.username_normalized.ilike(pattern),
-                MemberModel.display_name.ilike(pattern),
+                MemberModel.username.ilike(pattern, escape="\\"),
+                MemberModel.username_normalized.ilike(pattern, escape="\\"),
+                MemberModel.display_name.ilike(pattern, escape="\\"),
             )
         )
     if role is not None:
@@ -1701,7 +1702,18 @@ async def list_sources(
             )
         )
     if status_filter is not None:
-        query = query.where(DocumentRevisionModel.status == status_filter)
+        latest_status = (
+            select(DocumentRevisionModel.status)
+            .where(DocumentRevisionModel.document_id == DocumentModel.id)
+            .order_by(DocumentRevisionModel.version.desc())
+            .limit(1)
+            .correlate(DocumentModel)
+            .scalar_subquery()
+        )
+        if status_filter == "pending":
+            query = query.where(or_(latest_status == status_filter, latest_status.is_(None)))
+        else:
+            query = query.where(latest_status == status_filter)
     documents, metadata = await _paginate(
         session,
         query,

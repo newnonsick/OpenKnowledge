@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends
 
 from src.gateway.application.services.model_registry import (
     ModelRegistryService,
@@ -50,13 +49,4 @@ async def get_model(
         return model_info
     except ModelNotFoundException as exc:
         logger.warning(f"Model not found: {model_id}")
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content={
-                "error": {
-                    "message": exc.message,
-                    "type": exc.error_type,
-                    "code": exc.code,
-                }
-            },
-        )
+        raise exc

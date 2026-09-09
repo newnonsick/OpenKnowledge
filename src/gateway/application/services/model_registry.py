@@ -122,12 +122,14 @@ class ModelRegistryService:
         for alias, target in self.aliases.items():
 
             if alias not in self.models_metadata:
+                target_meta = self.models_metadata.get(target, {})
                 result.append({
                     "id": alias,
                     "object": "model",
                     "created": 1700000000,
                     "owned_by": "gateway-alias",
                     "root": target,
+                    "context_window": target_meta.get("context_window", get_settings().llm.context_window),
                 })
 
         return result

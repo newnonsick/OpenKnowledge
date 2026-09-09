@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.gateway.application.security.tokens import APIKeyCodec, SecretValue
 from src.gateway.application.services.audit_service import AuditService
 from src.gateway.domain.authorization import Action, AuthorizationContext, is_allowed
-from src.gateway.domain.exceptions import AuthenticationException, RecentAuthenticationRequiredException
+from src.gateway.domain.exceptions import AuthenticationException, AuthorizationException, RecentAuthenticationRequiredException
 from src.gateway.domain.identity import APIKeyStatus, MemberStatus, Principal, PrincipalKind, SystemRole
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
 from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeModel, MemberModel, PersonalAPIKeyModel, SessionFamilyModel
@@ -162,7 +162,7 @@ class APIKeyService:
         try:
             parsed = self._codec.parse(raw_key)
         except ValueError as exc:
-            raise AuthenticationException("Invalid API key.") from exc
+            raise AuthenticationException("Invalid API key provided.") from exc
         key = await self._session.scalar(
             select(PersonalAPIKeyModel).where(PersonalAPIKeyModel.public_id == parsed.public_id)
         )
@@ -174,10 +174,10 @@ class APIKeyService:
             or parsed.pepper_version != key.pepper_version
             or not self._codec.verify(raw_key, key.key_digest, pepper_version=key.pepper_version)
         ):
-            raise AuthenticationException("Invalid API key.")
+            raise AuthenticationException("Invalid API key provided.")
         member = await self._session.get(MemberModel, key.member_id)
         if member is None or member.status != MemberStatus.ACTIVE.value:
-            raise AuthenticationException("Invalid API key.")
+            raise AuthenticationException("Invalid API key provided.")
         scopes = frozenset(
             await self._session.scalars(
                 select(APIKeyScopeModel.scope).where(APIKeyScopeModel.api_key_id == key.id)
@@ -206,11 +206,11 @@ class APIKeyService:
             .with_for_update()
         )
         if key is None:
-            raise AuthenticationException("API key is unavailable.")
+            raise AuthorizationException()
         owns_key = actor.subject_id == str(key.member_id)
         may_manage = is_allowed(AuthorizationContext(actor), Action.API_KEY_MANAGE)
         if not actor.active or (not owns_key and actor.system_role is not SystemRole.SUPER_ADMIN) or not may_manage:
-            raise AuthenticationException("API key is unavailable.")
+            raise AuthorizationException()
         current_time = now or datetime.now(timezone.utc)
         key.status = APIKeyStatus.REVOKED.value
         key.revoked_at = key.revoked_at or current_time

@@ -32,7 +32,7 @@ def protocol_error_response(
         }
     else:
         error = {"message": message, "type": error_type, "code": code}
-        if details and request.url.path.startswith("/api/v1/"):
+        if details:
             error["details"] = details
         content = {
             "error": error,
@@ -117,6 +117,26 @@ def register_exception_handlers(app: FastAPI) -> None:
             "request_error",
             "http_error",
             message,
+        )
+
+    @app.exception_handler(404)
+    async def not_found_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        return protocol_error_response(
+            request,
+            404,
+            "not_found_error",
+            "route_not_found",
+            "The requested route does not exist.",
+        )
+
+    @app.exception_handler(405)
+    async def method_not_allowed_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        return protocol_error_response(
+            request,
+            405,
+            "invalid_request_error",
+            "method_not_allowed",
+            "The HTTP method is not allowed for the requested route.",
         )
 
     @app.exception_handler(Exception)

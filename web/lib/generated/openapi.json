@@ -2716,6 +2716,17 @@
       },
       "OpenAIModelObject": {
         "properties": {
+          "context_window": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Window"
+          },
           "created": {
             "default": 1700000000,
             "title": "Created",
@@ -4437,7 +4448,12 @@
           "job_state": {
             "enum": [
               "preparing",
-              "queued"
+              "queued",
+              "running",
+              "retry_wait",
+              "succeeded",
+              "failed",
+              "cancelled"
             ],
             "title": "Job State",
             "type": "string"

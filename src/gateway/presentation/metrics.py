@@ -179,6 +179,8 @@ class MetricsMiddleware:
             duration = perf_counter() - started
             self.registry.finish(method, route, status, duration)
             auth_event = self._auth_event(route)
+            if auth_event is None and route.startswith("/v1/") and status in (401, 403, 429):
+                auth_event = "agent_auth"
             if auth_event is not None:
                 if status == 429:
                     outcome = "throttled"

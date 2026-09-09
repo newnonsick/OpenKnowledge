@@ -8,6 +8,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Union
 
 from src.gateway.config import get_settings, settings
+from src.gateway.domain.exceptions import ValidationException
 from src.gateway.domain.canonical import (
     CanonicalBlock,
     CanonicalChatRequest,
@@ -94,9 +95,18 @@ def openai_request_to_canonical(
                     arguments_dict: Dict[str, Any] = {}
                     if tc.function.arguments:
                         try:
-                            arguments_dict = json.loads(tc.function.arguments)
-                        except Exception:
-                            arguments_dict = {"raw_arguments": tc.function.arguments}
+                            parsed_arguments = json.loads(tc.function.arguments)
+                        except Exception as exc:
+                            raise ValidationException(
+                                "Tool call arguments must be valid JSON.",
+                                details={"tool_call_id": tc.id},
+                            ) from exc
+                        if not isinstance(parsed_arguments, dict):
+                            raise ValidationException(
+                                "Tool call arguments must be a JSON object.",
+                                details={"tool_call_id": tc.id},
+                            )
+                        arguments_dict = parsed_arguments
                     blocks.append(
                         CanonicalToolUseBlock(
                             id=tc.id,

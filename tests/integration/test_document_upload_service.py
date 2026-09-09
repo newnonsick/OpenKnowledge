@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 from uuid import UUID
 from uuid import uuid4
 
@@ -229,3 +230,44 @@ async def test_concurrent_identical_upload_retry_converges_on_postgres(tmp_path)
             assert await session.scalar(select(func.count()).select_from(IngestionJobModel)) == 1
             assert await session.scalar(select(func.count()).select_from(JobOutboxModel)) == 1
         assert not tuple(path for path in (tmp_path / "staging").rglob("*") if path.is_file())
+
+
+async def test_idempotent_replay_after_terminal_state_returns_live_state(tmp_path) -> None:
+    from src.gateway.presentation.schemas.management_responses import SourceUploadReceipt
+
+    async with TestEnvironment(storage_dir=tmp_path) as env:
+        storage = LocalVersionedObjectStorage(tmp_path)
+        service = DocumentUploadService(env.session_factory, storage, max_upload_bytes=1024)
+        principal = _principal()
+
+        def payload():
+            return dict(
+                principal=principal,
+                space_id="test_ws",
+                display_name="Replay",
+                original_filename="replay.txt",
+                mime_type="text/plain",
+                chunks=_chunks(b"replay body"),
+                idempotency_key="replay-terminal",
+            )
+
+        first = await service.upload_new(**payload())
+        assert first.job_state == "queued"
+
+        async with env.session_factory.begin() as session:
+            job = await session.get(IngestionJobModel, first.job_id)
+            job.state = "succeeded"
+            job.finished_at = datetime.now(timezone.utc)
+
+        second = await service.upload_new(**payload())
+        assert second.document_id == first.document_id
+        assert second.revision_id == first.revision_id
+        assert second.job_id == first.job_id
+        assert second.job_state == "succeeded"
+        SourceUploadReceipt(
+            document_id=str(second.document_id),
+            revision_id=str(second.revision_id),
+            job_id=str(second.job_id),
+            job_state=second.job_state,
+            duplicate_candidate_revision_id=None,
+        )

@@ -270,3 +270,58 @@ async def test_personal_key_and_website_cookie_bind_database_principal() -> None
     assert rejected_unsafe_response.status_code == 403
     assert accepted_unsafe_response.status_code == 200
     assert accepted_unsafe_response.json() == {"subject_id": str(member_id)}
+
+
+async def test_api_key_revoke_hides_foreign_and_missing_keys() -> None:
+    from src.gateway.domain.exceptions import AuthorizationException
+
+    now = datetime(2026, 8, 20, 11, 0, tzinfo=timezone.utc)
+    owner_id = uuid4()
+    stranger_id = uuid4()
+    codec = APIKeyCodec(SecretValue("test-deployment-pepper"))
+
+    async with isolated_postgres_database() as (_, factory):
+        async with factory.begin() as session:
+            for mid, name in ((owner_id, "key-owner"), (stranger_id, "key-stranger")):
+                session.add(
+                    MemberModel(
+                        id=mid,
+                        username=name,
+                        username_normalized=name,
+                        display_name=name,
+                        status=MemberStatus.ACTIVE.value,
+                        system_role=SystemRole.MEMBER.value,
+                        force_password_change=False,
+                    )
+                )
+            website_session = await SessionService(session).issue(
+                member_principal(owner_id),
+                now=now,
+                step_up_at=now,
+            )
+            created = await APIKeyService(session, codec).create(
+                owner_id,
+                family_id=website_session.family_id,
+                name="Phone",
+                scopes={"knowledge:read"},
+                request_id="hiding-create",
+                now=now,
+            )
+
+        async with factory.begin() as session:
+            with pytest.raises(AuthorizationException):
+                await APIKeyService(session, codec).revoke(
+                    member_principal(stranger_id),
+                    created.key_id,
+                    request_id="foreign-revoke",
+                    now=now,
+                )
+
+        async with factory.begin() as session:
+            with pytest.raises(AuthorizationException):
+                await APIKeyService(session, codec).revoke(
+                    member_principal(owner_id),
+                    uuid4(),
+                    request_id="missing-revoke",
+                    now=now,
+                )

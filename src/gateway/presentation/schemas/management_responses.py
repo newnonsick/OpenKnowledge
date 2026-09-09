@@ -297,7 +297,7 @@ class SourceUploadReceipt(ContractModel):
     document_id: str
     revision_id: str
     job_id: str
-    job_state: Literal["preparing", "queued"]
+    job_state: IngestionJobState
     duplicate_candidate_revision_id: str | None
 
 
