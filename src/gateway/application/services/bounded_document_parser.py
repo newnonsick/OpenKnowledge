@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import dataclass
 import multiprocessing
 from pathlib import Path
+import time
 
 from src.gateway.application.parsers import get_parser_for_file
 from src.gateway.application.parsers.code_parser import CODE_EXTENSIONS
@@ -116,24 +118,46 @@ class BoundedDocumentParser:
         )
         process.start()
         child.close()
+        deadline = time.monotonic() + self._timeout_seconds
         try:
-            await asyncio.to_thread(process.join, self._timeout_seconds)
-            if process.is_alive():
+            try:
+                message = await asyncio.wait_for(
+                    asyncio.to_thread(parent.recv),
+                    timeout=self._timeout_seconds,
+                )
+            except TimeoutError:
                 process.terminate()
                 await asyncio.to_thread(process.join, 2)
                 raise ParserTimeoutException()
-            if process.exitcode != 0 or not parent.poll():
-                raise ValidationException("Document parsing failed.")
-            state, text, parser_version = parent.recv()
+            except (EOFError, OSError) as exc:
+                raise ValidationException("Document parsing failed.") from exc
+            try:
+                state, text, parser_version = message
+            except (TypeError, ValueError) as exc:
+                raise ValidationException("Document parsing failed.") from exc
             if state != "ok" or text is None or parser_version is None:
+                raise ValidationException("Document parsing failed.")
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                await asyncio.to_thread(process.join, remaining)
+            if process.is_alive():
+                process.terminate()
+                await asyncio.to_thread(process.join, 2)
+                return ParsedDocument(text=text, parser_version=parser_version)
+            if process.exitcode != 0:
                 raise ValidationException("Document parsing failed.")
             return ParsedDocument(text=text, parser_version=parser_version)
         finally:
             parent.close()
             if process.is_alive():
                 process.terminate()
-                await asyncio.to_thread(process.join, 2)
-            process.close()
+                await asyncio.shield(asyncio.to_thread(process.join, 2))
+                if process.is_alive():
+                    process.kill()
+                    await asyncio.shield(asyncio.to_thread(process.join, 2))
+            if not process.is_alive():
+                with contextlib.suppress(ValueError):
+                    process.close()
 
     def _validate_media(self, filename: str, mime_type: str, content: bytes) -> str:
         suffix = Path(filename).suffix.lower()
