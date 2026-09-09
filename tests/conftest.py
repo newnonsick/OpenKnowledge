@@ -9,6 +9,11 @@ from src.gateway.config import Settings
 from src.gateway.infrastructure.storage.local_storage import LocalStorageAdapter
 
 
+collect_ignore = []
+if os.environ.get("OPENKNOWLEDGE_LIVE_E2E") != "1":
+    collect_ignore.append(str(Path(__file__).parent / "e2e" / "live"))
+
+
 @pytest.fixture
 def temp_storage_dir(tmp_path: Path) -> Path:
     """Fixture providing an isolated temporary storage directory."""

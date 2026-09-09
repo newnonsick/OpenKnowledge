@@ -442,6 +442,8 @@ class TestEnvironmentAdversarial:
         """Verify os.environ is strictly saved and restored without residual leakage."""
         sentinel_key = "MY_SPECIAL_GATEWAY_SENTINEL_VAR"
         orig_key = "HOST"
+        had_orig_host = orig_key in os.environ
+        saved_orig_host = os.environ.get(orig_key)
         os.environ[sentinel_key] = "original_val"
         os.environ[orig_key] = "192.168.1.100"
 
@@ -454,7 +456,7 @@ class TestEnvironmentAdversarial:
         # Mock engine creation to isolate env var lifecycle from SQLite schema creation
         with patch.object(TestEnvironment, "start", autospec=True) as mock_start, \
              patch.object(TestEnvironment, "stop", autospec=True) as mock_stop:
-            
+
             env = TestEnvironment(env_overrides=custom_overrides)
             env.temp_dir = tempfile.TemporaryDirectory(prefix="gateway_test_storage_")
             env.storage_path = Path(env.temp_dir.name)
@@ -477,6 +479,10 @@ class TestEnvironmentAdversarial:
         assert os.environ[orig_key] == "192.168.1.100"
         assert "NEW_TEST_VAR" not in os.environ
         del os.environ[sentinel_key]
+        if had_orig_host:
+            os.environ[orig_key] = saved_orig_host
+        else:
+            del os.environ[orig_key]
 
     @pytest.mark.asyncio
     async def test_temp_storage_cleanup_on_exit(self):
@@ -505,7 +511,7 @@ class TestEnvironmentAdversarial:
         del os.environ["HOST"]
         get_settings.cache_clear()
         restored_settings = get_settings()
-        assert restored_settings.gateway.host == "0.0.0.0"
+        assert restored_settings.gateway.host == orig_host
 
 
 # ==============================================================================
