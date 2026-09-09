@@ -65,7 +65,7 @@ flowchart LR
     Worker --> Emb
 ```
 
-The gateway process serves both the agent-facing protocol endpoints and the management API. The web console is a separate Node process that proxies its `/api/*` routes to the gateway and keeps browser sessions in `__Host-` prefixed cookies. The worker is an independent process that claims ingestion jobs, dispatches outbox events, reconciles object storage, and optionally executes retention purges. PostgreSQL is the only persistent store; uploaded files live in a shared storage volume referenced by the database.
+The gateway process serves both the agent-facing protocol endpoints and the management API. The web console is a separate Node process that proxies its `/api/*` and `/healthz/*` routes to the gateway and keeps browser sessions in httpOnly cookies (`__Host-` and `__Secure-` prefixed in production). The worker is an independent process that claims ingestion jobs, dispatches outbox events, reconciles object storage, and optionally executes retention purges. PostgreSQL is the only persistent store; uploaded files live in a shared storage volume referenced by the database.
 
 A detailed component and data-flow description is in [docs/architecture.md](docs/architecture.md).
 
@@ -151,7 +151,8 @@ python -m src.gateway.cli set-embedding-dimension --dimension 1024 --reembed
 python -m src.gateway.cli reembed-status
 
 # 4. First administrator (prints a temporary password; it must be changed at
-# first login, and TOTP enrollment is required before the session is unrestricted)
+# first login, and TOTP enrollment is required before the session is unrestricted;
+# pass --allow-secret-output when stdout is not an interactive terminal)
 python -m src.gateway.cli bootstrap-super-admin --username admin --display-name "Admin"
 
 # 5. API and worker (the worker needs a distinct WORKER_DATABASE_URL role;
@@ -194,14 +195,14 @@ The exported OpenAPI document at `/openapi.json` is the authoritative HTTP contr
 
 ```bash
 pytest tests/unit                      # no services needed
-pytest                                 # everything (integration falls back to
-                                       # SQLite without PostgreSQL; pgvector
-                                       # behavior needs a real database)
+pytest                                 # everything (needs PostgreSQL with
+                                       # pgvector; some suites fall back to
+                                       # SQLite without one)
 pytest tests/integration               # PostgreSQL integration suite
 python -m tests.e2e.harness.runner --tier all   # five-tier end-to-end suite
 
 cd web                                 # web tests need `npm ci` first
-npm test -- --run                        # vitest component tests
+npm test                                 # vitest component tests
 npm run test:browser                     # Playwright browser and accessibility tests
 ```
 
