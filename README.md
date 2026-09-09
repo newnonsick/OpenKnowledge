@@ -4,14 +4,22 @@ OpenKnowledge is a self-hosted service that sits between coding agents and LLM i
 
 On the client side the gateway speaks the OpenAI chat protocol (`/v1/chat/completions`) and the Anthropic messages protocol (`/v1/messages`), both in JSON and Server-Sent Events streaming mode. Tools such as Cursor, Continue, or Roo Code, and any custom harness, can point at it without code changes. On the backend side it forwards traffic to any OpenAI-compatible inference server, for example vLLM, Ollama, or a hosted endpoint, and to any OpenAI-compatible embeddings endpoint.
 
-The feature that separates it from a plain proxy is the knowledge subsystem. The gateway attaches five internal tools to every conversation and executes them itself against PostgreSQL:
+The feature that separates it from a plain proxy is the knowledge subsystem. The gateway defines five knowledge tool schemas (`knowledge_search`, `knowledge_get`, `knowledge_save`, `knowledge_update`, `knowledge_delete`) and attaches `knowledge_search` to provider conversations, executing it internally against PostgreSQL:
 
 - `knowledge_search` runs hybrid retrieval, combining lexical full-text search and vector similarity, fused with weighted Reciprocal Rank Fusion.
-- The management console provides explicit knowledge lifecycle operations; provider conversations receive retrieval only.
+- The management console provides the explicit knowledge lifecycle operations; provider conversations receive retrieval only.
 
 The model uses this tool to carry context across sessions: project decisions, coding standards, environment details, user preferences. The client harness never sees the call. Tool calls that are not gateway-supported knowledge tools are passed straight back to the client, so existing agent workflows keep working unchanged.
 
 Around this core the gateway provides a complete management plane: member accounts with password login and TOTP multi-factor authentication, browser sessions with rotating refresh tokens, personal API keys with scoped permissions, spaces for isolating knowledge per project or team, durable asynchronous document ingestion, an audit trail, and runtime-adjustable retrieval settings. A Next.js console exposes all of it in the browser.
+
+## Console
+
+Sign-in is invitation only, with no third-party identity provider. The dashboard shows space inventory, ingestion queue health, storage use, and retrieval readiness. Explore runs a single permission-aware search across every accessible space, merging lexical and vector candidates into one ranked set.
+
+![Console sign-in](docs/images/login.png)
+![Dashboard with spaces, queue health, and retrieval readiness](docs/images/dashboard.png)
+![Permission-aware hybrid search results](docs/images/explore.png)
 
 ## Key features
 
@@ -65,7 +73,7 @@ A detailed component and data-flow description is in [docs/architecture.md](docs
 ## Repository layout
 
 ```
-alembic/                  Database migrations (001 through 018)
+alembic/                  Database migrations (001 through 021)
 deploy/                   Caddyfile, PostgreSQL init and grant scripts, Prometheus alerts
 docs/                     Additional documentation
 requirements/             Hash-pinned lockfiles (runtime.lock, dev.lock) and policy
@@ -73,7 +81,9 @@ scripts/                  Backup, restore, recovery verification, OpenAPI export
 src/gateway/
   main.py                 FastAPI app factory, middleware stack, lifespan
   worker.py               Background worker entry point
-  cli.py                  migrate, current, check, bootstrap-super-admin, recover-super-admin
+  cli.py                  migrate, current, check, ensure-embedding-generation,
+                          set-embedding-dimension, reembed-status,
+                          bootstrap-super-admin, recover-super-admin
   config.py               Settings loaded from environment and .env
   observability.py        Structured JSON logging and trace headers
   domain/                 Canonical types, entities, tools, prompts, identity, exceptions
