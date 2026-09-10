@@ -32,7 +32,7 @@ Errors use a consistent JSON shape:
 
 Rejected requests on `/v1/messages` return the Anthropic error shape; other paths return the OpenAI error shape. Every response carries a `request_id` that also appears in logs for correlation.
 
-Management list endpoints use server-side numeric pagination with `page` and `page_size` query parameters. Responses contain `items`, the effective `page`, the effective `page_size`, `total_items`, and `total_pages`; an out-of-range page is clamped to the last available page, so the returned `page` may differ from the requested one. Page numbers start at 1 and `page_size` is limited to 100. Management endpoints under `/api/v1` (other than the session endpoints under `/api/v1/auth/*` and the read-only `POST /api/v1/retrieval/search`) require an `Idempotency-Key` header so retries do not duplicate work: 1 to 128 characters on most routes, up to 255 on `POST /api/v1/sources/upload`.
+Management list endpoints use server-side numeric pagination with `page` and `page_size` query parameters. Responses contain `items`, the effective `page`, the effective `page_size`, `total_items`, and `total_pages`; an out-of-range page is clamped to the last available page, so the returned `page` may differ from the requested one. Page numbers start at 1 and `page_size` is limited to 100. Management endpoints under `/api/v1` that mutate state (POST, PUT, PATCH, DELETE outside `/api/v1/auth/*`, which uses cookies and CSRF instead) require an `Idempotency-Key` header so retries do not duplicate work: 1 to 128 characters on most routes, up to 255 on `POST /api/v1/sources/upload`. Read-only GET routes and the read-only `POST /api/v1/retrieval/search` take no such header.
 
 ## Health and metrics
 
@@ -59,7 +59,7 @@ curl https://gateway.example.com/v1/chat/completions \
   }'
 ```
 
-Responses follow the OpenAI schema. The orchestrator resolves internal knowledge tool calls before answering, so tool activity is invisible to the client. External tool calls come back with `finish_reason: tool_use` for the client to execute. A `workspace_id` field in the request body scopes the conversation to a specific space.
+Responses follow the OpenAI schema. The orchestrator resolves internal knowledge tool calls before answering, so tool activity is invisible to the client. External tool calls come back with `finish_reason: tool_calls` for the client to execute. A `workspace_id` field in the request body scopes the conversation to a specific space.
 
 Streaming: add `"stream": true`. Events are `chat.completion.chunk` objects terminated by `data: [DONE]`. Reasoning output arrives as `reasoning_content` inside `delta` when the backend produces it.
 

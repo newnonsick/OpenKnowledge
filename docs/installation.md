@@ -58,8 +58,8 @@ Edit `.env` and at minimum set:
 
 - `DATABASE_URL` to your PostgreSQL instance.
 - `LLM_URL` and `EMBEDDING_URL` to your inference endpoints.
-- `API_KEY_PEPPERS` to a random value of at least 32 characters. Personal API keys are hashed with this pepper; changing it later invalidates existing keys.
-- `MFA_ENCRYPTION_KEYS` to a generated Fernet key. It backs TOTP factor secrets and is required in production.
+- `API_KEY_PEPPERS` as a JSON map of version number to pepper string, for example `{"1":"<at least 32 random characters>"}`. Personal API keys are hashed with this pepper; changing it later invalidates existing keys.
+- `MFA_ENCRYPTION_KEYS` as a JSON map of version number to a base64url-encoded 32-byte Fernet key, for example `{"1":"<generated Fernet key>"}`. It backs TOTP factor secrets and is required in production.
 
 The full variable reference is in [configuration.md](configuration.md).
 
