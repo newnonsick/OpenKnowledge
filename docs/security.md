@@ -7,7 +7,7 @@ This document describes authentication, authorization, session handling, secrets
 Every authenticated request resolves to a principal of one of these kinds:
 
 - Session principal: a logged-in member, authenticated by the `__Host-openknowledge-access` cookie.
-- API key principal: a member or automation actor, authenticated by a personal API key (`openknowledge_v` prefix) in `Authorization: Bearer` or `x-api-key`.
+- API key principal: a member or automation actor, authenticated by a personal API key (`openknowledge_v` prefix) in `Authorization: Bearer`. The `x-api-key` header applies only to legacy static keys.
 - Legacy static key principal: development-only static keys, active only when explicitly enabled.
 
 The authentication middleware (`src/gateway/presentation/auth.py`) processes all non-public paths. Public paths are exactly:

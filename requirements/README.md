@@ -1,6 +1,6 @@
 # Dependency Locks
 
-The dependency ranges in `pyproject.toml` are the source contract. Regenerate the Python 3.12 locks with pip-tools 7.5.0:
+The dependency ranges in `pyproject.toml` are the source contract. Regenerate the Python 3.13 locks with pip-tools 7.5.0:
 
 ```powershell
 python -m piptools compile pyproject.toml --generate-hashes --strip-extras --output-file requirements/runtime.lock

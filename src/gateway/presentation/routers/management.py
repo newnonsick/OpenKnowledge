@@ -1033,7 +1033,7 @@ async def list_admin_spaces(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=100),
     q: str | None = Query(default=None, min_length=1, max_length=255),
-    principal: Principal = Depends(require_scope("members:admin")),
+    principal: Principal = Depends(require_scope("members:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     if principal.system_role is not SystemRole.SUPER_ADMIN:
@@ -1316,7 +1316,7 @@ async def emergency_transfer_space_ownership(
     payload: EmergencyOwnershipTransferRequest,
     request: Request,
     idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
-    principal: Principal = Depends(require_scope("members:admin")),
+    principal: Principal = Depends(require_scope("members:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     reservation = await _reserve(

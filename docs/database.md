@@ -4,7 +4,7 @@ The system uses one PostgreSQL database with the pgvector extension as its only 
 
 ## Schema areas
 
-The schema is versioned through Alembic migrations `001` through `018` under `alembic/versions/`. The tables, as enumerated by the privilege grants in `deploy/grant-runtime.sql`, group into these areas:
+The schema is versioned through Alembic migrations `001` through `021` under `alembic/versions/`. The tables, as enumerated by the privilege grants in `deploy/grant-runtime.sql`, group into these areas:
 
 | Area | Tables | Purpose |
 |---|---|---|

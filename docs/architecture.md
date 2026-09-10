@@ -4,12 +4,12 @@ This document describes the runtime components of OpenKnowledge, how they commun
 
 ## Components
 
-The deployed system consists of six units, matching the services defined in `compose.yaml`:
+The deployed system consists of six runtime units, corresponding to the long-running services and shared state in `compose.yaml` (which additionally defines the one-shot `migrate` and `permissions` jobs):
 
 | Component | Process | Responsibility |
 |---|---|---|
 | Edge | Caddy 2 | Public TLS termination on ports 80 and 443; routes `/v1/*` and `/health*` to the gateway and everything else to the web console |
-| Web console | Next.js standalone server, port 3000 | Browser UI for the management plane; rewrites `/api/*` to the gateway |
+| Web console | Next.js standalone server, port 3000 | Browser UI for the management plane; rewrites `/api/*` and `/healthz/*` to the gateway |
 | Gateway API | `uvicorn src.gateway.main:app`, port 8000 | Agent protocol endpoints, management API, authentication, chat orchestration, retrieval |
 | Worker | `python -m src.gateway.worker` | Ingestion jobs, outbox dispatch, storage reconciliation, optional retention purges |
 | Database | PostgreSQL 17 with pgvector | Single persistent store for all state |
@@ -59,7 +59,7 @@ On shutdown the gateway closes the database engine and the shared HTTP client po
 A request on `POST /v1/chat/completions` or `POST /v1/messages` passes through the following stages:
 
 1. Authentication by the middleware, then protocol conversion. The OpenAI or Anthropic payload is translated into the internal canonical message format; protocol-specific details stop at the presentation layer.
-2. The orchestrator appends the five knowledge tool schemas to whatever tools the client sent and forwards the combined list upstream, together with the composed system prompt. The system prompt directive (configurable or disable-able through `KNOWLEDGE_SYSTEM_PROMPT_*`) tells the model when to search, save, update, and delete.
+2. The orchestrator appends the `knowledge_search` tool schema to whatever tools the client sent and forwards the combined list upstream, together with the composed system prompt. The five knowledge tool schemas are defined in the domain layer, but only `knowledge_search` is attached to provider conversations; the remaining lifecycle tools are served through the management console. The system prompt directive (configurable or disable-able through `KNOWLEDGE_SYSTEM_PROMPT_*`) tells the model when to search.
 3. The upstream call goes through the resilience wrapper: bounded concurrency (bulkhead), bounded retries with exponential backoff for transient failures (connection errors, 408, 429, 5xx), and a circuit breaker that opens after consecutive failures and probes recovery after a cool-down.
 4. If the model responds with only internal tool calls, the gateway executes them against the database, appends the results to the conversation, and calls the model again. The client sees none of these round trips.
 5. If the model responds with an external tool call, the gateway returns it to the client and ends the turn. The client executes the tool and returns the result with its next request, as in any OpenAI- or Anthropic-style agent loop.

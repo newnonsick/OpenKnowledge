@@ -13,6 +13,7 @@ Markers declared in `pyproject.toml`:
 | `live_provider` | Tests that call configured live model providers |
 | `tier1` to `tier5` | End-to-end tier classification |
 | `feature(id)` | Feature identifier covered by a test, for example `F7` |
+| `live_e2e` | Live end-to-end tests against a running server, collected only with `OPENKNOWLEDGE_LIVE_E2E=1` |
 
 ```bash
 pytest                                # everything
@@ -33,8 +34,8 @@ pytest tests/integration
 
 Directory inventory:
 
-- `tests/unit` (47 test modules): domain logic, converters, orchestrator budgets, config and runtime safety, login throttle, identity security, parsers, RRF, readiness, resilience, streaming, OpenAPI contract, release assets, and more.
-- `tests/integration` (36 test modules plus the `postgres_test_database.py` harness): full PostgreSQL behavior, including RLS isolation, worker role privileges, migration release flow, session rotation, retention, restore drills, retrieval quality gates, and live provider tests (marked `live_provider`).
+- `tests/unit` (50 test modules): domain logic, converters, orchestrator budgets, config and runtime safety, login throttle, identity security, parsers, RRF, readiness, resilience, streaming, OpenAPI contract, release assets, and more.
+- `tests/integration` (38 test modules plus the `postgres_test_database.py` harness): full PostgreSQL behavior, including RLS isolation, worker role privileges, migration release flow, session rotation, retention, restore drills, retrieval quality gates, and live provider tests (marked `live_provider`).
 
 Coverage is configured over `src/gateway`:
 

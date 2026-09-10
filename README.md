@@ -175,7 +175,7 @@ All settings load from the environment and a `.env` file. Two templates exist: `
 
 ## Authentication in brief
 
-Agent-facing `/v1` endpoints accept a personal API key as `Authorization: Bearer <key>` or `x-api-key: <key>`. Keys are created in the console or via `POST /api/v1/api-keys`, stored only as peppered hashes, and carry scopes such as `knowledge:read` and `knowledge:write`.
+Agent-facing `/v1` endpoints accept a personal API key as `Authorization: Bearer <key>`. Keys are created in the console or via `POST /api/v1/api-keys`, stored only as peppered hashes, and carry scopes such as `knowledge:read` and `knowledge:write`. The `x-api-key` header is honored only for the optional legacy static keys (`GATEWAY_API_KEYS`), which are disabled by default and rejected in production.
 
 The management console and `/api/v1/auth/*` use browser sessions: username and password (plus a TOTP or recovery code for super admins), an access cookie valid 15 minutes, a path-scoped refresh cookie with a 7-day idle and 30-day absolute lifetime, and CSRF protection on rotation. In production the access cookie carries the `__Host-` prefix and the refresh cookie the `__Secure-` prefix; local development uses unprefixed names. See [docs/security.md](docs/security.md) for the full model.
 

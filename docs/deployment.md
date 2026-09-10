@@ -4,7 +4,7 @@ This document describes the production deployment defined by the repository, the
 
 ## Compose topology
 
-`compose.yaml` defines the production stack (project name `openknowledge`) with six long-running or one-shot services:
+`compose.yaml` defines the production stack (project name `openknowledge`) with seven services, including two one-shot jobs (`migrate`, `permissions`):
 
 | Service | Image | Notes |
 |---|---|---|
@@ -16,12 +16,12 @@ This document describes the production deployment defined by the repository, the
 | `web` | Built from `web/Dockerfile` | Next.js standalone server on port 3000; `GATEWAY_INTERNAL_URL` points at the gateway |
 | `edge` | `caddy:2.10-alpine`, digest-pinned | Publishes host ports 80, 443 (TCP and UDP for HTTP/3); serves `{$PUBLIC_DOMAIN}` with automatic TLS |
 
-Hardening applied to every application container: non-root user, read-only root filesystem with tmpfs on `/tmp`, all Linux capabilities dropped, `no-new-privileges`, CPU, memory, and PID limits. The `data` network is marked internal, so the database and worker are unreachable from outside the host.
+Hardening applied to the application containers: read-only root filesystem with tmpfs on `/tmp`, all Linux capabilities dropped, `no-new-privileges`, CPU, memory, and PID limits; the built images run as non-root users (uid 10001 for the gateway image, the `node` user for the web image). The `data` network is marked internal, so the database and worker are unreachable from outside the host.
 
 The `edge` routes by path:
 
 - `/v1/*` and `/health*` go to the gateway (agent traffic and health probes).
-- Everything else goes to the web console, which proxies its `/api/*` routes to the gateway internally.
+- Everything else goes to the web console, which proxies its `/api/*` and `/healthz/*` routes to the gateway internally.
 
 ## Images
 
@@ -39,7 +39,7 @@ The web image is a three-stage build on `node:24-bookworm-slim`: dependency inst
 docker compose --env-file .env.production up --build -d
 ```
 
-The startup order is enforced by dependencies: `postgres` becomes healthy, `migrate` completes, `permissions` completes, then `gateway` (which must pass its readiness health check) and `worker` start, then `web`, and finally the edge accepts traffic.
+The startup order is enforced by dependencies: `postgres` becomes healthy, `migrate` completes, `permissions` completes, then `gateway` starts once it passes its readiness health check; `worker` and `web` both wait for a healthy gateway, and the edge starts after `web` is created.
 
 4. Bootstrap the first super admin from the gateway container:
 
@@ -72,7 +72,6 @@ All workflows live in `.github/workflows` and pin actions by commit hash.
 | `live-provider-quality.yml` | Weekly schedule and manual | Exercises the configured live LLM and embedding endpoints (`live-provider-quality` environment): fixture version, semantic recall, ANN target recall, and ANN-to-exact overlap. |
 | `restore-drill.yml` | Monthly schedule and manual | Restores the newest backup into an isolated database and verifies readiness, integrity, retrieval, and recovery time. |
 | `production-restore-rehearsal.yml` | Monthly schedule and manual | Full rehearsal on a self-hosted `recovery` runner in the `production-recovery` environment: off-host backup, separate age identity, fresh database, checksum and age verification, restore, migrations, readiness, and metric publication. |
-| `legacy-contracts.yml` | Monthly schedule and manual | Evidence run of the quarantined pre-v1 contract tests excluded from the release gate until their 2026-10-31 deadline. |
 
 A release is blocked by test or compilation failure, a high or critical vulnerability finding, container misconfiguration, detected secrets, or failure to produce the SBOM artifacts. A skipped or unconfigured scheduled workflow (for example, a missing recovery runner) counts as a failed control, not a pass.
 

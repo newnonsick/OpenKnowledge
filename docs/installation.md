@@ -40,7 +40,7 @@ Development install (includes pytest and related tooling):
 pip install --require-hashes -r requirements/dev.lock
 ```
 
-The compatibility `requirements.txt` at the repository root simply points to `requirements/dev.lock`. Dependency ranges live in `pyproject.toml`; reviewed, hash-pinned resolutions for Python 3.12 are kept under `requirements/`. The regeneration procedure with pip-tools is documented in `requirements/README.md`.
+The compatibility `requirements.txt` at the repository root simply points to `requirements/dev.lock`. Dependency ranges live in `pyproject.toml`; reviewed, hash-pinned resolutions for Python 3.13 are kept under `requirements/`. The regeneration procedure with pip-tools is documented in `requirements/README.md`.
 
 To verify the lockfile matches the manifest on Windows PowerShell:
 
@@ -59,6 +59,7 @@ Edit `.env` and at minimum set:
 - `DATABASE_URL` to your PostgreSQL instance.
 - `LLM_URL` and `EMBEDDING_URL` to your inference endpoints.
 - `API_KEY_PEPPERS` to a random value of at least 32 characters. Personal API keys are hashed with this pepper; changing it later invalidates existing keys.
+- `MFA_ENCRYPTION_KEYS` to a generated Fernet key. It backs TOTP factor secrets and is required in production.
 
 The full variable reference is in [configuration.md](configuration.md).
 

@@ -41,7 +41,7 @@ Confirm the URL scheme is `postgresql+asyncpg://`, that pgvector is installed in
 
 ### Login returns 429
 
-The login throttle engaged: five failures per account in 15 minutes, twenty per IP, or two hundred globally. Wait for the retry window named in the response or clear the bucket in `login_throttle_buckets` during development.
+The login throttle engaged: five failures per account in 15 minutes, twenty per IP in 15 minutes, or two hundred globally in one minute. Wait for the retry window named in the response or clear the bucket in `login_throttle_buckets` during development.
 
 ### Browser sessions never establish; console redirects to `/login` in a loop
 

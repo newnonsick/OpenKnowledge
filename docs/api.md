@@ -13,7 +13,7 @@ The exported OpenAPI document at `/openapi.json` is the authoritative contract, 
 Authentication:
 
 - Protocol and management endpoints accept `Authorization: Bearer <api-key>` (personal API keys, prefix `openknowledge_v`).
-- Protocol endpoints additionally accept `x-api-key: <api-key>`.
+- The `x-api-key` header is honored only for the optional legacy static keys, which are disabled by default and rejected in production.
 - Management endpoints called from the browser use the `__Host-openknowledge-access` session cookie set at login.
 - The login and refresh endpoints are public; everything else except the health endpoints, `/docs`, `/openapi.json`, `/redoc`, `/favicon.ico`, and `/metrics` requires authentication.
 
@@ -32,7 +32,7 @@ Errors use a consistent JSON shape:
 
 Rejected requests on `/v1/messages` return the Anthropic error shape; other paths return the OpenAI error shape. Every response carries a `request_id` that also appears in logs for correlation.
 
-Management list endpoints use server-side numeric pagination with `page` and `page_size` query parameters. Responses contain `items`, the requested `page`, the effective `page_size`, `total_items`, and `total_pages`; an out-of-range page returns an empty `items` array while preserving the requested page metadata. Page numbers start at 1 and `page_size` is limited to 100. Mutating management endpoints that create resources accept an `Idempotency-Key` header (required where noted) so retries do not duplicate work.
+Management list endpoints use server-side numeric pagination with `page` and `page_size` query parameters. Responses contain `items`, the effective `page`, the effective `page_size`, `total_items`, and `total_pages`; an out-of-range page is clamped to the last available page, so the returned `page` may differ from the requested one. Page numbers start at 1 and `page_size` is limited to 100. Management endpoints that mutate state require an `Idempotency-Key` header (1 to 128 characters) so retries do not duplicate work. The read-only `POST /api/v1/retrieval/search` is the exception.
 
 ## Health and metrics
 
@@ -68,7 +68,7 @@ Streaming: add `"stream": true`. Events are `chat.completion.chunk` objects term
 ```bash
 curl https://gateway.example.com/v1/messages \
   -H "Content-Type: application/json" \
-  -H "x-api-key: openknowledge_v.example-key" \
+  -H "Authorization: Bearer openknowledge_v.example-key" \
   -d '{
     "model": "default",
     "max_tokens": 1024,
@@ -108,7 +108,7 @@ Returns the registered models. The `default` alias resolves to the configured ba
 
 Login responses report `requires_password_change` and `requires_mfa_enrollment` flags that the console uses to drive its first-use flows.
 
-Cookies set by these endpoints:
+Cookies set by these endpoints (production names; local development uses unprefixed `openknowledge-access` and `openknowledge-refresh`):
 
 | Cookie | Purpose | Lifetime |
 |---|---|---|
