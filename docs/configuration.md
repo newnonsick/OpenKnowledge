@@ -70,10 +70,10 @@ Any OpenAI-compatible chat completion endpoint.
 | `LLM_MAX_CONCURRENCY` | `20` | Process-wide concurrent request limit (1 to 500). |
 | `LLM_BULKHEAD_TIMEOUT_SECONDS` | `1.0` | Maximum wait for a concurrency slot (above 0 to 30). |
 | `LLM_CIRCUIT_FAILURE_THRESHOLD` | `5` | Consecutive failures before the circuit opens (1 to 100). |
-| `LLM_CIRCUIT_RECOVERY_SECONDS` | `30.0` | Open-circuit interval before a recovery probe (0 to 600). |
+| `LLM_CIRCUIT_RECOVERY_SECONDS` | `30.0` | Open-circuit interval before a recovery probe (above 0 to 600). |
 | `LLM_TEMPERATURE` | `0.7` | Default sampling temperature. |
 | `LLM_MAX_TOKENS` | unset | Default completion token limit. |
-| `LLM_EXTRA_HEADERS` | unset | Additional HTTP headers sent to the LLM provider, as a JSON object or comma-separated `Name: value` pairs. |
+| `LLM_EXTRA_HEADERS` | unset | Additional HTTP headers sent to the LLM provider, as a JSON object. A blank or non-JSON value is ignored. |
 
 ## Embedding backend
 

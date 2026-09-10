@@ -32,7 +32,7 @@ The codebase is organized in four layers with dependencies pointing inward:
 
 `create_app` in `src/gateway/main.py` builds the FastAPI application. Before the app object is created it runs `validate_runtime_safety`, which rejects unsafe production configurations (see [security.md](security.md)). The middleware stack, in order of registration:
 
-1. `APIKeyAuthMiddleware`: authenticates every request that is not on a public path. It resolves browser sessions from the access cookie, personal API keys from bearer tokens or `x-api-key`, and optionally legacy static keys. It binds the authenticated principal into the request and the database session context used by row-level security.
+1. `APIKeyAuthMiddleware`: authenticates every request that is not on a public path. It resolves browser sessions from the access cookie, personal API keys from bearer tokens, and optionally legacy static keys from bearer tokens or `x-api-key`. It binds the authenticated principal into the request and the database session context used by row-level security.
 2. `CORSMiddleware`: allows only the explicitly configured origins.
 3. `TrustedHostMiddleware`: rejects requests with a `Host` header outside the allowlist.
 4. `SecurityHeadersMiddleware`: adds defensive response headers.

@@ -32,7 +32,7 @@ Errors use a consistent JSON shape:
 
 Rejected requests on `/v1/messages` return the Anthropic error shape; other paths return the OpenAI error shape. Every response carries a `request_id` that also appears in logs for correlation.
 
-Management list endpoints use server-side numeric pagination with `page` and `page_size` query parameters. Responses contain `items`, the effective `page`, the effective `page_size`, `total_items`, and `total_pages`; an out-of-range page is clamped to the last available page, so the returned `page` may differ from the requested one. Page numbers start at 1 and `page_size` is limited to 100. Management endpoints that mutate state require an `Idempotency-Key` header (1 to 128 characters) so retries do not duplicate work. The read-only `POST /api/v1/retrieval/search` is the exception.
+Management list endpoints use server-side numeric pagination with `page` and `page_size` query parameters. Responses contain `items`, the effective `page`, the effective `page_size`, `total_items`, and `total_pages`; an out-of-range page is clamped to the last available page, so the returned `page` may differ from the requested one. Page numbers start at 1 and `page_size` is limited to 100. Management endpoints under `/api/v1` (other than the session endpoints under `/api/v1/auth/*` and the read-only `POST /api/v1/retrieval/search`) require an `Idempotency-Key` header so retries do not duplicate work: 1 to 128 characters on most routes, up to 255 on `POST /api/v1/sources/upload`.
 
 ## Health and metrics
 
@@ -103,7 +103,7 @@ Returns the registered models. The `default` alias resolves to the configured ba
 | POST | `/api/v1/auth/step-up` | `password` plus optional second factor | Re-authenticates and extends step-up authorization for 10 minutes. Required before sensitive operations such as activating settings drafts. |
 | POST | `/api/v1/auth/password` | current credentials plus new `password` and `confirmation` | Changes the authenticated member's password and issues replacement session cookies. An unrestricted member supplies `current_password`; an unrestricted super admin also supplies `current_totp_code` or `recovery_code`. A restricted first-use session supplies only the new `password` and `confirmation`. Prior website sessions are revoked while personal API keys are preserved. |
 | POST | `/api/v1/auth/mfa/totp/enroll` | current credentials | Starts TOTP enrollment, returns the shared secret and an `otpauth://` provisioning URI that the console renders as a QR code. |
-| POST | `/api/v1/auth/mfa/confirm` | `factor_id`, `code`, current credentials | Completes enrollment, returns recovery codes and the first personal API key. |
+| POST | `/api/v1/auth/mfa/totp/confirm` | `factor_id`, `code`, current credentials | Completes enrollment, returns recovery codes and the first personal API key. |
 | POST | `/api/v1/auth/logout` | empty | Revokes the session family and clears cookies. |
 
 Login responses report `requires_password_change` and `requires_mfa_enrollment` flags that the console uses to drive its first-use flows.

@@ -57,7 +57,7 @@ Super admins must present a TOTP code or a recovery code with their password. If
 
 ### API key authentication returns 401 despite a valid-looking key
 
-Personal API keys are shown once; only peppered hashes are stored. Recreating the same key name does not reproduce the secret. If `API_KEY_PEPPERS` changed since the key was created, the hash can no longer be verified; issue a new key. Also confirm the key is sent as `Authorization: Bearer ...` or `x-api-key`, not both.
+Personal API keys are shown once; only peppered hashes are stored. Recreating the same key name does not reproduce the secret. If `API_KEY_PEPPERS` changed since the key was created, the hash can no longer be verified; issue a new key. Also confirm the key is sent as `Authorization: Bearer ...`. (`x-api-key` applies only to legacy static keys, not personal keys.)
 
 ## Data and ingestion
 
