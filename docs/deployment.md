@@ -91,7 +91,7 @@ The operational cadence (hourly backups, monthly verified restores, one-hour RPO
 ## Monitoring and alerting
 
 - The gateway exposes Prometheus metrics at `/metrics`: request counters and latency by route and status, active request gauge, and authentication events. Logs are structured JSON with request ids and W3C trace headers.
-- `deploy/prometheus/alerts.yml` ships the alert catalog: readiness failure, SLO error-budget burn, repeated authentication throttling, refresh-token reuse, ingestion queue growth, terminal ingestion failures, dependency failure, stale backup age, certificate expiry, and failed or stale restore rehearsals.
+- `deploy/prometheus/alerts.yml` ships the alert catalog: gateway unavailability, upstream circuit and bulkhead events, SLO error-budget burn, repeated authentication throttling, refresh-token reuse, ingestion queue growth, terminal ingestion failures, dependency failure, stale backup age, stale restore drills, and certificate expiry.
 - The intended collection setup, described in [operations.md](operations.md), scrapes backup and restore timestamps through a host-only node-exporter textfile collector and TLS expiry through a blackbox probe.
 
 ## Migration procedure in production
