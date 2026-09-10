@@ -88,7 +88,7 @@ curl https://gateway.example.com/v1/models \
   -H "Authorization: Bearer openknowledge_v.example-key"
 ```
 
-Returns the registered models. The `default` alias resolves to the configured backend model; unregistered names fall back to it rather than failing.
+Returns the registered models. The `default` alias resolves to the configured backend model; an empty name or a registered alias resolves the same way, while an unregistered name is rejected with a not-found error.
 
 ### Retired endpoint
 
@@ -209,7 +209,7 @@ Parsing and embedding happen asynchronously in the worker. Track progress throug
 | POST | `/api/v1/api-keys` | Create a key; requires `Idempotency-Key`. The secret is returned once. |
 | DELETE | `/api/v1/api-keys/{key_id}` | Revoke a key; requires `Idempotency-Key`. |
 
-Available scopes include `knowledge:read`, `knowledge:write`, `spaces:read`, `spaces:write`, `spaces:members`, `api_keys:write`, `sessions:write`, and `members:write`.
+Personal API keys can carry `chat:write`, `knowledge:read`, `knowledge:write`, `spaces:read`, `spaces:write`, `spaces:members`, `api_keys:write`, `settings:read`, and `settings:write`. The `sessions:write` and `members:write` gates on member, session, and audit routes accept browser sessions only; they cannot be granted to an API key.
 
 ### Members, sessions, audit
 

@@ -4,7 +4,7 @@ OpenKnowledge is a self-hosted service that sits between coding agents and LLM i
 
 On the client side the gateway speaks the OpenAI chat protocol (`/v1/chat/completions`) and the Anthropic messages protocol (`/v1/messages`), both in JSON and Server-Sent Events streaming mode. Any OpenAI-compatible client, including coding-agent harnesses, can point at it. On the backend side it forwards traffic to any OpenAI-compatible inference server, for example vLLM, Ollama, or a hosted endpoint, and to any OpenAI-compatible embeddings endpoint.
 
-The feature that separates it from a plain proxy is the knowledge subsystem. The gateway defines five knowledge tool schemas (`knowledge_search`, `knowledge_get`, `knowledge_save`, `knowledge_update`, `knowledge_delete`) and attaches `knowledge_search` to provider conversations, executing it internally against PostgreSQL:
+The feature that separates it from a plain proxy is the knowledge subsystem. The gateway defines five knowledge tool schemas (`knowledge_search`, `knowledge_get`, `knowledge_save`, `knowledge_update`, `knowledge_delete`) and attaches `knowledge_search` to provider conversations for callers permitted to search (browser sessions and personal keys carrying `knowledge:read`), executing it internally against PostgreSQL:
 
 - `knowledge_search` runs hybrid retrieval, combining lexical full-text search and vector similarity, fused with weighted Reciprocal Rank Fusion.
 - The management console provides the explicit knowledge lifecycle operations; provider conversations receive retrieval only.
