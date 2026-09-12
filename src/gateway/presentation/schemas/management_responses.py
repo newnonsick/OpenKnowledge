@@ -326,6 +326,45 @@ class RetrievalResult(ContractModel):
     explanation: RetrievalExplanation
 
 
+class EvidenceDetail(ContractModel):
+    kind: Literal["knowledge_revision", "document_chunk"]
+    space_id: str
+    canonical_id: str
+    revision_id: str
+    chunk_id: str | None
+    title: str
+    content: str
+    version: int | None
+    superseded: bool
+    citation_uri: str
+
+
+class ContextSnippetDetail(ContractModel):
+    rank: int
+    title: str
+    snippet: str
+    truncated: bool
+    space_id: str
+    canonical_id: str
+    revision_id: str
+    citation_uri: str
+    version: int | None
+    superseded: bool
+
+
+class ContextPackageDetail(ContractModel):
+    query: str
+    snippets: list[ContextSnippetDetail]
+    total_chars: int
+    budget_chars: int
+    omitted_count: int
+    omitted_reason: str | None
+    abstained: bool
+    degraded: bool
+    estimation_method: str
+    generated_at: datetime
+
+
 class SourceUploadReceipt(ContractModel):
     document_id: str
     revision_id: str

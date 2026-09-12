@@ -1,0 +1,102 @@
+{
+  "version": 2,
+  "minimum_lexical_recall": 1.0,
+  "cases": [
+    {
+      "id": "thai-valve-procedure",
+      "slice": "thai",
+      "query": "วาล์วน้ำสีฟ้าปิดทางไหน",
+      "space_index": 0,
+      "slot": 0,
+      "title": "ขั้นตอนวาล์วน้ำ",
+      "content": "วาล์วน้ำสีฟ้าปิดตามเข็มนาฬิกา ห้ามเปิดทิ้งไว้ข้ามคืน"
+    },
+    {
+      "id": "thai-near-duplicate",
+      "slice": "thai_distractor",
+      "query": "วาล์วน้ำสีฟ้าปิดทางไหน",
+      "space_index": 0,
+      "slot": 1,
+      "title": "บันทึกวาล์ว",
+      "content": "วาล์วน้ำสีฟ้าปิดทางไหนสำหรับวาล์วรุ่นเก่า คำตอบเก่าคือปิดทวนเข็มนาฬิกา",
+      "distractor_for": "thai-valve-procedure"
+    },
+    {
+      "id": "english-runbook",
+      "slice": "english",
+      "query": "database nightly backup runbook",
+      "space_index": 1,
+      "slot": 0,
+      "title": "Backup runbook",
+      "content": "The nightly database backup runs at 02:00 and verifies checksums before upload"
+    },
+    {
+      "id": "english-stale-superseded",
+      "slice": "stale",
+      "query": "database nightly backup runbook",
+      "space_index": 1,
+      "slot": 1,
+      "title": "Backup runbook legacy",
+      "content": "The nightly database backup runs at 04:00 without verification",
+      "superseded_by": "english-runbook"
+    },
+    {
+      "id": "code-retry-guard",
+      "slice": "code",
+      "query": "ingestion retry backoff lease heartbeat",
+      "space_index": 2,
+      "slot": 0,
+      "title": "Ingestion retry",
+      "content": "def claim_next(lease_seconds):\n    acquire lease\n    heartbeat every interval\n    retry with backoff on transient failure"
+    },
+    {
+      "id": "code-distractor",
+      "slice": "code_distractor",
+      "query": "ingestion retry backoff lease heartbeat",
+      "space_index": 2,
+      "slot": 1,
+      "title": "Unrelated scheduler",
+      "content": "def cron_midnight():\n    rotate logs\n    compact segments",
+      "distractor_for": "code-retry-guard"
+    },
+    {
+      "id": "conflict-current-policy",
+      "slice": "conflict",
+      "query": "office quiet hours policy",
+      "space_index": 3,
+      "slot": 0,
+      "title": "Quiet hours current",
+      "content": "Office quiet hours are 22:00 to 07:00 effective this quarter"
+    },
+    {
+      "id": "conflict-outdated-policy",
+      "slice": "conflict",
+      "query": "office quiet hours policy",
+      "space_index": 3,
+      "slot": 1,
+      "title": "Quiet hours legacy",
+      "content": "Office quiet hours are 23:00 to 06:00 per last year memo",
+      "superseded_by": "conflict-current-policy"
+    },
+    {
+      "id": "acl-restricted-secret",
+      "slice": "acl",
+      "query": "HIDDEN-ORCHID-XYZZY-ACL-9",
+      "space_index": 4,
+      "slot": 0,
+      "title": "Restricted note",
+      "content": "HIDDEN-ORCHID-XYZZY-ACL-9 restricted to the hidden space",
+      "visible_to": "hidden_member"
+    },
+    {
+      "id": "no-answer-query",
+      "slice": "no_answer",
+      "query": "ZQLX-nebula-harbor-404",
+      "space_index": 5,
+      "slot": 0,
+      "title": "Unrelated filler",
+      "content": "Harbor maintenance window notes without the query token",
+      "expect_empty": true
+    }
+  ]
+}

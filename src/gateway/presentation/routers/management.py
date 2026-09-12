@@ -17,6 +17,12 @@ from src.gateway.application.services.audit_service import AuditService
 from src.gateway.application.services.authorized_retrieval_service import AuthorizedRetrievalService
 from src.gateway.application.services.authorization_service import AuthorizationService
 from src.gateway.application.services.document_upload_service import DocumentUploadService
+from src.gateway.application.services.context_assembly_service import (
+    AssembleContextQuery,
+    ContextAssembler,
+    context_package_response,
+)
+from src.gateway.application.services.evidence_service import EvidenceReference, EvidenceService, evidence_response
 from src.gateway.application.services.idempotency_service import IdempotencyService, ReservationStatus
 from src.gateway.application.services.ingestion_job_service import IngestionJobService
 from src.gateway.application.services.knowledge_management_service import KnowledgeManagementService
@@ -65,11 +71,13 @@ from src.gateway.presentation.schemas.management_responses import (
     AuditEvent,
     ClientCapabilities,
     ConfirmedAIAction,
+    ContextPackageDetail,
     CreatedAPIKey,
     CreatedMember,
     CreatedSpace,
     CredentialQuotaUsage,
     CurrentMember,
+    EvidenceDetail,
     IngestionJob,
     IngestionMutation,
     KnowledgeDetail,
@@ -1800,6 +1808,113 @@ async def search_retrieval(
         ),
     )
     return search_payload
+
+
+class EvidenceResolveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    citation_uri: str = Field(min_length=1, max_length=1024)
+
+
+@router.post("/evidence/resolve", response_model=EvidenceDetail)
+async def resolve_evidence(
+    payload: EvidenceResolveRequest,
+    principal: Principal = Depends(require_scope("knowledge:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "knowledge.read")
+    resolved = await EvidenceService(session).resolve(
+        UseCaseContext(principal=principal),
+        payload.citation_uri,
+    )
+    return evidence_response(resolved)
+
+
+@router.get(
+    "/evidence/knowledge/{item_id}/revisions/{revision_id}",
+    response_model=EvidenceDetail,
+)
+async def fetch_knowledge_evidence(
+    item_id: UUID,
+    revision_id: UUID,
+    principal: Principal = Depends(require_scope("knowledge:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "knowledge.read")
+    space_id = await _evidence_space(session, "knowledge", item_id)
+    fetched = await EvidenceService(session).fetch(
+        UseCaseContext(principal=principal),
+        EvidenceReference("knowledge_revision", space_id, item_id, revision_id),
+    )
+    return evidence_response(fetched)
+
+
+@router.get(
+    "/evidence/documents/{document_id}/revisions/{revision_id}",
+    response_model=EvidenceDetail,
+)
+async def fetch_document_evidence(
+    document_id: UUID,
+    revision_id: UUID,
+    chunk_id: UUID | None = Query(default=None),
+    principal: Principal = Depends(require_scope("knowledge:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "knowledge.read")
+    space_id = await _evidence_space(session, "document", document_id)
+    fetched = await EvidenceService(session).fetch(
+        UseCaseContext(principal=principal),
+        EvidenceReference("document_chunk", space_id, document_id, revision_id, chunk_id),
+    )
+    return evidence_response(fetched)
+
+
+async def _evidence_space(session: AsyncSession, kind: str, canonical_id: UUID) -> str:
+    if kind == "knowledge":
+        item = await session.get(KnowledgeItemModel, canonical_id)
+        if item is None:
+            raise AuthorizationException()
+        return item.workspace_id
+    document = await session.get(DocumentModel, canonical_id)
+    if document is None:
+        raise AuthorizationException()
+    return document.space_id
+
+
+class ContextAssembleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=1000)
+    space_ids: list[str] | None = Field(default=None, max_length=100)
+    active_space_id: str | None = Field(default=None, max_length=64)
+    semantic_policy: Literal["prefer", "required", "disabled"] = "prefer"
+    max_sources: int = Field(default=8, ge=1, le=25)
+    max_snippet_chars: int = Field(default=600, ge=100, le=4000)
+    max_total_chars: int = Field(default=8000, ge=500, le=60000)
+    tags: list[KnowledgeTag] | None = Field(default=None, max_length=32)
+
+
+@router.post("/context/assemble", response_model=ContextPackageDetail)
+async def assemble_context(
+    payload: ContextAssembleRequest,
+    principal: Principal = Depends(require_scope("knowledge:read")),
+) -> dict:
+    require_profile_route(principal, "knowledge.search")
+    policy = await _active_policy(principal)
+    package = await ContextAssembler().assemble(
+        UseCaseContext(principal=principal, policy=policy),
+        AssembleContextQuery(
+            query=payload.query,
+            space_ids=tuple(payload.space_ids) if payload.space_ids is not None else None,
+            active_space_id=payload.active_space_id,
+            semantic_policy=payload.semantic_policy,
+            max_sources=payload.max_sources,
+            max_snippet_chars=payload.max_snippet_chars,
+            max_total_chars=payload.max_total_chars,
+            tags=tuple(payload.tags) if payload.tags is not None else None,
+        ),
+    )
+    return context_package_response(package)
 
 
 @router.post("/sources/upload", status_code=status.HTTP_202_ACCEPTED, response_model=SourceUploadReceipt)
