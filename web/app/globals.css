@@ -1027,6 +1027,7 @@ html[data-theme="dark"] .prompt-icon { color: var(--accent); }
 .health-chip { flex: 0 0 auto; max-width: 100%; padding: 7px 12px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-strong); font-size: 11.5px; font-weight: 600; overflow-wrap: anywhere; }
 html[data-theme="dark"] .health-chip { color: var(--accent); }
 .health-chip.degraded { background: var(--amber-soft); color: var(--amber); }
+.health-chip.disabled { background: var(--surface-soft); color: var(--ink-faint); }
 .result-list { display: grid; gap: 10px; }
 .result-card {
   display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: start; gap: 14px;

@@ -59,7 +59,7 @@ curl https://gateway.example.com/v1/chat/completions \
   }'
 ```
 
-Responses follow the OpenAI schema. The orchestrator resolves internal knowledge tool calls before answering, so tool activity is invisible to the client. External tool calls come back with `finish_reason: tool_calls` for the client to execute. A `workspace_id` field in the request body scopes the conversation to a specific space.
+Responses follow the OpenAI schema. The orchestrator resolves internal knowledge tool calls before answering, so tool activity is invisible to the client. External tool calls come back with `finish_reason: tool_calls` for the client to execute. A `workspace_id` field in the request body sets a hard request space scope for the conversation: `global` (the default) searches every space the caller can access, while any other workspace restricts retrieval to that space. Per-call space filters such as the `knowledge_search` tool `workspace_id` argument may narrow this scope but never widen it; a filter outside the scope yields no results. The scope is intersected with the caller's space membership, so inaccessible spaces stay invisible even inside the scope.
 
 Streaming: add `"stream": true`. Events are `chat.completion.chunk` objects terminated by `data: [DONE]`. Reasoning output arrives as `reasoning_content` inside `delta` when the backend produces it.
 
@@ -158,7 +158,7 @@ Space roles are `owner`, `editor`, and `reader`. Owners manage membership and ca
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/v1/retrieval/search` | Hybrid search over knowledge and document chunks, honoring the caller's space authorization and the active runtime settings. |
+| POST | `/api/v1/retrieval/search` | Hybrid search over knowledge and document chunks, honoring the caller's space authorization and the active runtime settings. `active_space_id` sets a hard request space scope (omitted means every accessible space); `space_ids` may narrow that scope but never widen it. |
 
 ```bash
 curl https://gateway.example.com/api/v1/retrieval/search \
@@ -232,6 +232,18 @@ Personal API keys can carry `chat:write`, `knowledge:read`, `knowledge:write`, `
 | POST | `/api/v1/settings/drafts` | Create a draft revision (validated, not live). |
 | POST | `/api/v1/settings/drafts/{draft_id}/activate` | Activate a draft (step-up required). |
 | POST | `/api/v1/settings/rollback/{target_revision}` | Roll back to a previous revision (step-up required). |
+
+The active revision is loaded fresh for every request, so activation and rollback take effect on the next request while in-flight requests finish under the snapshot they started with. There is no cross-request policy cache to invalidate. Settings writes require the `settings:write` scope plus a recent step-up; other scopes cannot change the policy.
+
+Runtime policy flags and the surfaces they govern:
+
+| Flag | Off behavior |
+|---|---|
+| `knowledge_tools_enabled` | Knowledge search is unavailable: `POST /api/v1/retrieval/search`, the `knowledge.search.v1`, `retrieval.explain.v1`, and `knowledge.read.v1` AI tools (hidden from discovery), and the chat `knowledge_search` tool (not advertised; direct calls fail). Plain knowledge CRUD reads are unchanged. |
+| `mutation_tools_enabled` | Knowledge writes are unavailable: `POST/PUT/DELETE /api/v1/knowledge`, source upload/archive, ingestion job cancel/retry, and every state-changing AI tool including confirmation-gated proposals. |
+| `destructive_tools_require_confirmation` | When false, confirmation-gated AI tools (`spaces.archive.v1`, `spaces.members.set.v1`, `knowledge.archive.v1`, `ingestion_jobs.cancel.v1`, `ingestion_jobs.retry.v1`, `settings.propose.v1`) execute immediately for website sessions instead of returning a pending action; discovery reports them as `confirmation: none`. Non-session callers still receive a pending action, which only a session of the same member can confirm. The confirmation requirement is bound at proposal time. |
+| `semantic_retrieval_enabled` | Vector retrieval is forced off on every surface: requests behave as `semantic_policy: disabled` even when another policy is asked for. |
+| `retrieval_explanations_enabled` | Detailed retrieval explanations are redacted: `retrieval.explain.v1` is hidden and rejected, health/explanation payloads keep only the status and abstention flag, and chat search results omit health details. |
 
 ### AI management actions
 

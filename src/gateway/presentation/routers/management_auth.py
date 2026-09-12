@@ -342,6 +342,17 @@ async def refresh(
         csrf_token=request.headers.get("X-CSRF-Token"),
         require_csrf=True,
     )
+    if rotation.status is RefreshStatus.REUSE_DETECTED:
+        await session.commit()
+        raise AuthenticationException("Invalid session.")
+    if rotation.status is RefreshStatus.ALREADY_ROTATED:
+        await session.commit()
+        if rotation.access_expires_at is None:
+            raise AuthenticationException("Invalid session.")
+        return SessionRefresh(
+            status="refreshed",
+            access_expires_at=rotation.access_expires_at,
+        )
     if rotation.status is not RefreshStatus.ROTATED or rotation.session is None:
         raise AuthenticationException("Invalid session.")
     _apply_session_cookies(response, rotation.session)

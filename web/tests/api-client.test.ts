@@ -162,4 +162,29 @@ describe("apiRequest", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("replays a generated idempotent read-only search after a session refresh", async () => {
+    const searchBody = { query: "family", limit: 5, semantic_policy: "prefer" as const };
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: "invalid_api_key" } }), { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "refreshed", access_expires_at: "2026-08-20T12:15:00Z" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ hits: [], query: "family", health: { semantic_status: "active", degraded_reasons: [] }, explanation: { effective_space_ids: [], abstained: true } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const search = (body: typeof searchBody) => contractData(contractClient.POST("/api/v1/retrieval/search", {
+      body,
+      params: { header: { "Idempotency-Key": "search-retry-key" } },
+    }));
+    const result = await search(searchBody);
+
+    expect(result).toEqual({ hits: [], query: "family", health: { semantic_status: "active", degraded_reasons: [] }, explanation: { effective_space_ids: [], abstained: true } });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const firstSearch = new Request(fetchMock.mock.calls[0][0] as Request);
+    const retrySearch = new Request(fetchMock.mock.calls[2][0] as Request);
+    expect(firstSearch.headers.get("Idempotency-Key")).toBe("search-retry-key");
+    expect(retrySearch.headers.get("Idempotency-Key")).toBe("search-retry-key");
+    expect(await firstSearch.json()).toEqual(searchBody);
+    expect(await retrySearch.json()).toEqual(searchBody);
+  });
 });

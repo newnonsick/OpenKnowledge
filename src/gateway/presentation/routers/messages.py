@@ -43,7 +43,7 @@ from src.gateway.domain.exceptions import (
 from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.adapters.http_llm_client import HttpLLMClient
 from src.gateway.infrastructure.persistence.retrieval_unit_repository import PostgresRetrievalUnitRepository
-from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings
+from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings, load_active_runtime_policy
 from src.gateway.presentation.converters.anthropic_converter import (
     anthropic_request_to_canonical,
     canonical_response_to_anthropic,
@@ -163,6 +163,7 @@ def get_chat_orchestrator(
     return ChatOrchestratorService(
         llm_client=llm_client,
         retrieval_service=retrieval_service,
+        runtime_policy_provider=load_active_runtime_policy,
     )
 
 @router.post(

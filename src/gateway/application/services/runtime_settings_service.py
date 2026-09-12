@@ -98,6 +98,46 @@ class RuntimeSettingsRevision:
     activated_at: datetime | None
 
 
+@dataclass(frozen=True, slots=True)
+class EffectiveRuntimePolicy:
+    revision: int
+    knowledge_tools_enabled: bool
+    mutation_tools_enabled: bool
+    destructive_tools_require_confirmation: bool
+    semantic_retrieval_enabled: bool
+    retrieval_explanations_enabled: bool
+    retrieval: RetrievalRuntimeSettings
+
+    @classmethod
+    def default(cls) -> EffectiveRuntimePolicy:
+        return cls(
+            revision=0,
+            knowledge_tools_enabled=True,
+            mutation_tools_enabled=True,
+            destructive_tools_require_confirmation=True,
+            semantic_retrieval_enabled=True,
+            retrieval_explanations_enabled=True,
+            retrieval=RetrievalRuntimeSettings(),
+        )
+
+    @classmethod
+    def from_revision(cls, revision: RuntimeSettingsRevision) -> EffectiveRuntimePolicy:
+        return cls(
+            revision=revision.revision,
+            knowledge_tools_enabled=revision.values.tools.knowledge_tools_enabled,
+            mutation_tools_enabled=revision.values.tools.mutation_tools_enabled,
+            destructive_tools_require_confirmation=revision.values.tools.destructive_tools_require_confirmation,
+            semantic_retrieval_enabled=revision.values.features.semantic_retrieval_enabled,
+            retrieval_explanations_enabled=revision.values.features.retrieval_explanations_enabled,
+            retrieval=revision.values.retrieval,
+        )
+
+    def effective_semantic_policy(self, requested: str) -> str:
+        if not self.semantic_retrieval_enabled:
+            return "disabled"
+        return requested
+
+
 class RuntimeSettingsService:
     def __init__(
         self,

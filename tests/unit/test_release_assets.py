@@ -124,3 +124,40 @@ def test_compose_services_have_explicit_resource_and_process_limits() -> None:
     assert compose.count("mem_limit:") == 7
     assert compose.count("cpus:") == 7
     assert compose.count("pids_limit:") == 7
+
+
+def test_compose_gateway_has_no_worker_or_admin_secrets() -> None:
+    compose = read("compose.yaml")
+    gateway = compose.split("  gateway:")[1].split("\n  worker:")[0]
+    assert "WORKER_DATABASE_URL" not in gateway
+    assert "POSTGRES_PASSWORD" not in gateway
+    assert "GATEWAY_WORKER_DB_PASSWORD" not in gateway
+    assert "DATABASE_URL: postgresql+asyncpg://gateway_runtime:" in gateway
+
+
+def test_compose_worker_has_no_gateway_runtime_secret() -> None:
+    compose = read("compose.yaml")
+    worker = compose.split("\n  worker:")[1].split("\n  web:")[0]
+    assert "WORKER_DATABASE_URL: postgresql+asyncpg://gateway_worker:" in worker
+    assert "gateway_runtime:" not in worker
+    assert "POSTGRES_PASSWORD" not in worker
+
+
+def test_compose_healthcheck_sends_allowed_host() -> None:
+    compose = read("compose.yaml")
+    assert "headers={'Host':" in compose or 'headers={"Host":' in compose
+
+
+def test_compose_worker_has_controlled_egress_without_exposing_postgres() -> None:
+    compose = read("compose.yaml")
+    worker = compose.split("\n  worker:")[1].split("\n  web:")[0]
+    assert "host.docker.internal" in worker
+    assert "networks: [data]" in worker
+    assert "ports:" not in worker
+
+
+def test_dockerfile_initializes_storage_ownership_for_application_user() -> None:
+    dockerfile = read("Dockerfile")
+    assert "mkdir -p /data/storage" in dockerfile
+    assert "chown gateway:gateway /data/storage" in dockerfile
+    assert dockerfile.index("chown gateway:gateway /data/storage") < dockerfile.index("USER 10001:10001")

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.gateway.application.security.passwords import PasswordService
 from src.gateway.application.services.api_key_service import APIKeyService
+from src.gateway.application.services.action_review_service import review_pending_action
 from src.gateway.application.services.ai_management_service import AIManagementService
 from src.gateway.application.services.audit_service import AuditService
 from src.gateway.application.services.authorized_retrieval_service import AuthorizedRetrievalService
@@ -20,12 +21,12 @@ from src.gateway.application.services.idempotency_service import IdempotencyServ
 from src.gateway.application.services.ingestion_job_service import IngestionJobService
 from src.gateway.application.services.knowledge_management_service import KnowledgeManagementService
 from src.gateway.application.services.member_administration_service import MemberAdministrationService
-from src.gateway.application.services.runtime_settings_service import RuntimeSettingsService, RuntimeSettingsRevision, RuntimeSettingsValues
+from src.gateway.application.services.runtime_settings_service import EffectiveRuntimePolicy, RuntimeSettingsService, RuntimeSettingsRevision, RuntimeSettingsValues
 from src.gateway.application.services.session_service import SessionService
 from src.gateway.application.services.space_service import SpaceService
 from src.gateway.config import get_settings
 from src.gateway.domain.exceptions import AuthenticationException, AuthorizationException, ResourceConflictException, ValidationException
-from src.gateway.domain.authorization import Action
+from src.gateway.domain.authorization import Action, narrow_requested_spaces, resolve_request_space_scope
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SpaceRole, SystemRole
 from src.gateway.domain.entities import KnowledgeItem as DomainKnowledgeItem
 from src.gateway.infrastructure.database import get_db_session, get_session_factory
@@ -38,7 +39,7 @@ from src.gateway.infrastructure.persistence.retrieval_unit_repository import Pos
 from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeModel, AuditEventModel, MemberModel, MFAFactorModel, PendingAIActionModel, PersonalAPIKeyModel, SessionCredentialModel, SessionFamilyModel, SpaceMembershipModel
 from src.gateway.infrastructure.persistence.models import Workspace
 from src.gateway.infrastructure.persistence.runtime_settings_models import RuntimeSettingRevisionModel
-from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings
+from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings, load_active_runtime_policy
 from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
 from src.gateway.presentation.authorization import require_principal, require_scope
 from src.gateway.presentation.request_context import get_request_id
@@ -49,6 +50,7 @@ from src.gateway.presentation.schemas.management_responses import (
     AIToolExecution,
     AIToolList,
     AuditEvent,
+    ClientCapabilities,
     ConfirmedAIAction,
     CreatedAPIKey,
     CreatedMember,
@@ -62,6 +64,7 @@ from src.gateway.presentation.schemas.management_responses import (
     OperationSummary,
     Page,
     PendingAIAction,
+    PendingAIActionDetail,
     ResetMemberPassword,
     RetrievalResult,
     RuntimeSettings,
@@ -73,7 +76,7 @@ from src.gateway.presentation.schemas.management_responses import (
     SpaceMembership,
     SpaceSummary,
 )
-from src.gateway.observability import increment_metric, set_metric_gauge
+from src.gateway.observability import increment_metric
 
 
 def default_retrieval_embedding_client():
@@ -119,10 +122,6 @@ async def operations_summary(
         job_counts = {}
         referenced_bytes = 0
     ingestion = {state: job_counts.get(state, 0) for state in states}
-    for state, depth in ingestion.items():
-        set_metric_gauge("gateway_ingestion_queue_depth", depth, state=state)
-    set_metric_gauge("gateway_storage_bytes", referenced_bytes, kind="referenced")
-    set_metric_gauge("gateway_dependency_available", 1, dependency="database")
     generation_active = await session.scalar(
         select(EmbeddingGenerationModel.id).where(
             EmbeddingGenerationModel.purpose == "retrieval",
@@ -214,6 +213,7 @@ class RetrievalSearchRequest(BaseModel):
     active_space_id: str | None = Field(default=None, max_length=64)
     semantic_policy: Literal["prefer", "required", "disabled"] = "prefer"
     limit: int = Field(default=20, ge=1, le=50)
+    tags: list[KnowledgeTag] | None = Field(default=None, max_length=32)
 
 
 class RuntimeSettingsDraftRequest(BaseModel):
@@ -281,6 +281,7 @@ class AIKnowledgeSearchArguments(BaseModel):
     active_space_id: str | None = Field(default=None, max_length=64)
     semantic_policy: Literal["prefer", "required", "disabled"] = "prefer"
     limit: int = Field(default=20, ge=1, le=50)
+    tags: list[Annotated[str, Field(min_length=1, max_length=80)]] | None = Field(default=None, max_length=32)
 
 
 class AIKnowledgeReadArguments(BaseModel):
@@ -509,16 +510,55 @@ async def _upload_chunks(file: UploadFile):
         yield chunk
 
 
-async def _ai_retrieval_result(principal: Principal, arguments: AIKnowledgeSearchArguments) -> dict:
+async def _active_policy(principal: Principal) -> EffectiveRuntimePolicy:
+    return await load_active_runtime_policy(principal)
+
+
+def _require_knowledge_tools(policy: EffectiveRuntimePolicy) -> None:
+    if not policy.knowledge_tools_enabled:
+        raise AuthorizationException()
+
+
+def _require_mutation_tools(policy: EffectiveRuntimePolicy) -> None:
+    if not policy.mutation_tools_enabled:
+        raise AuthorizationException()
+
+
+def _redact_explanation(result: dict) -> dict:
+    result["health"] = {
+        "semantic_status": result["health"]["semantic_status"],
+        "degraded_reasons": [],
+        "embedding_generation_id": None,
+        "embedding_coverage": None,
+    }
+    result["explanation"] = {
+        "effective_space_ids": [],
+        "abstained": result["explanation"]["abstained"],
+        "active_space_id": None,
+    }
+    return result
+
+
+async def _ai_retrieval_result(
+    principal: Principal,
+    arguments: AIKnowledgeSearchArguments,
+    policy: EffectiveRuntimePolicy,
+) -> dict:
+    default_ws = get_settings().gateway.default_workspace_id
+    request_scope = resolve_request_space_scope(arguments.active_space_id, default_ws)
     result = await _retrieval_service().search(
         principal,
         arguments.query,
-        requested_space_ids=set(arguments.space_ids) if arguments.space_ids is not None else None,
+        requested_space_ids=narrow_requested_spaces(
+            request_scope,
+            set(arguments.space_ids) if arguments.space_ids is not None else None,
+        ),
         active_space_id=arguments.active_space_id,
-        semantic_policy=arguments.semantic_policy,
+        semantic_policy=policy.effective_semantic_policy(arguments.semantic_policy),
         limit=arguments.limit,
+        tags=list(arguments.tags) if arguments.tags is not None else None,
     )
-    return {
+    payload = {
         "query": result.query,
         "hits": [
             {
@@ -549,6 +589,9 @@ async def _ai_retrieval_result(principal: Principal, arguments: AIKnowledgeSearc
             "active_space_id": result.explanation.active_space_id,
         },
     }
+    if not policy.retrieval_explanations_enabled:
+        return _redact_explanation(payload)
+    return payload
 
 
 async def _ai_resource_space_ids(
@@ -653,19 +696,45 @@ async def _ai_job_page(session: AsyncSession, principal: Principal, arguments: A
 async def list_ai_tools(
     principal: Principal = Depends(require_principal),
 ) -> dict:
+    policy = await _active_policy(principal)
     return {
         "items": [
             {
                 "name": name,
                 "description": description,
-                "confirmation": confirmation,
+                "confirmation": (
+                    "none"
+                    if confirmation == "required" and not policy.destructive_tools_require_confirmation
+                    else confirmation
+                ),
                 "parameters": argument_model.model_json_schema(),
             }
             for name, (scope, confirmation, description, argument_model) in AI_TOOL_DEFINITIONS.items()
             if ("*" in principal.scopes or scope in principal.scopes)
             and (name != "settings.propose.v1" or principal.system_role is SystemRole.SUPER_ADMIN)
+            and _ai_tool_allowed(name, policy)
         ]
     }
+
+
+def _ai_tool_allowed(tool_name: str, policy: EffectiveRuntimePolicy) -> bool:
+    if tool_name in {"knowledge.search.v1", "retrieval.explain.v1", "knowledge.read.v1"}:
+        if not policy.knowledge_tools_enabled:
+            return False
+    if tool_name == "retrieval.explain.v1":
+        return policy.retrieval_explanations_enabled
+    if tool_name in {
+        "knowledge.create.v1",
+        "knowledge.update.v1",
+        "spaces.archive.v1",
+        "spaces.members.set.v1",
+        "knowledge.archive.v1",
+        "ingestion_jobs.cancel.v1",
+        "ingestion_jobs.retry.v1",
+        "settings.propose.v1",
+    }:
+        return policy.mutation_tools_enabled
+    return True
 
 
 @router.post(
@@ -689,6 +758,17 @@ async def execute_ai_tool(
     scope, confirmation, _, argument_model = definition
     if "*" not in principal.scopes and scope not in principal.scopes:
         raise AuthorizationException()
+    policy = await _active_policy(principal)
+    if not _ai_tool_allowed(tool_name, policy):
+        raise AuthorizationException()
+    confirmation_required = (
+        confirmation == "required" and policy.destructive_tools_require_confirmation
+    )
+    direct_destructive = (
+        confirmation == "required"
+        and not policy.destructive_tools_require_confirmation
+        and principal.kind is PrincipalKind.SESSION
+    )
     try:
         arguments = argument_model.model_validate(payload.arguments)
     except PydanticValidationError as exc:
@@ -703,7 +783,7 @@ async def execute_ai_tool(
     )
     if reservation.status is ReservationStatus.REPLAY:
         increment_metric("gateway_tool_events_total", event="duplicate", outcome="replayed")
-    if confirmation == "required":
+    if confirmation_required or (confirmation == "required" and not direct_destructive):
         if reservation.status is ReservationStatus.REPLAY:
             if not reservation.resource_ids:
                 raise ResourceConflictException()
@@ -807,7 +887,7 @@ async def execute_ai_tool(
         result = {"items": items, **metadata}
         resource_ids = [item["member_id"] for item in items]
     elif tool_name in {"knowledge.search.v1", "retrieval.explain.v1"}:
-        result = await _ai_retrieval_result(principal, arguments)
+        result = await _ai_retrieval_result(principal, arguments, policy)
         resource_ids = [hit["canonical_id"] for hit in result["hits"]]
     elif tool_name == "knowledge.read.v1":
         item = await KnowledgeManagementService(session).get(arguments.item_id)
@@ -867,6 +947,43 @@ async def execute_ai_tool(
         result = _settings_payload(await RuntimeSettingsService(session).active())
         if result["id"] is not None:
             resource_ids = [result["id"]]
+    elif tool_name in {
+        "spaces.archive.v1",
+        "spaces.members.set.v1",
+        "knowledge.archive.v1",
+        "ingestion_jobs.cancel.v1",
+        "ingestion_jobs.retry.v1",
+        "settings.propose.v1",
+    }:
+        if not direct_destructive:
+            raise AuthorizationException()
+        if reservation.status is ReservationStatus.REPLAY:
+            if not reservation.resource_ids:
+                raise ResourceConflictException()
+            action = await session.get(PendingAIActionModel, UUID(reservation.resource_ids[0]))
+            if action is None:
+                raise ResourceConflictException("The pending AI action is unavailable.")
+        else:
+            manager = AIManagementService(session)
+            pending = await manager.propose(
+                principal,
+                tool_name=tool_name,
+                command=normalized,
+                request_id=get_request_id(request),
+            )
+            action = await manager.confirm_and_execute(
+                principal,
+                pending.action_id,
+                request_id=get_request_id(request),
+            )
+            await IdempotencyService(session).complete(
+                reservation.record_id,
+                response_status=200,
+                resource_ids=[str(action.id)],
+            )
+            increment_metric("gateway_tool_events_total", event="direct", outcome="success")
+        result = {"pending_action_id": str(action.id), "status": action.state}
+        resource_ids = [str(action.id)]
     else:
         raise ValidationException("Unknown or unavailable AI tool.")
     if reservation.status is not ReservationStatus.REPLAY:
@@ -966,6 +1083,17 @@ async def list_ai_actions(
     }
 
 
+@router.get("/ai-actions/{action_id}", response_model=PendingAIActionDetail)
+async def review_ai_action(
+    action_id: UUID,
+    principal: Principal = Depends(require_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    if principal.kind is not PrincipalKind.SESSION:
+        raise AuthorizationException()
+    return await review_pending_action(session, principal, action_id)
+
+
 @router.get("/me", response_model=CurrentMember)
 async def me(
     principal: Principal = Depends(require_scope("spaces:read")),
@@ -987,6 +1115,17 @@ async def me(
         "system_role": member.system_role,
         "requires_password_change": member.force_password_change,
         "mfa_enabled": mfa_enabled,
+    }
+
+
+@router.get("/capabilities", response_model=ClientCapabilities)
+async def capabilities(
+    principal: Principal = Depends(require_principal),
+) -> dict:
+    gateway = get_settings().gateway
+    return {
+        "max_upload_bytes": gateway.max_upload_bytes,
+        "max_request_body_bytes": gateway.max_request_body_bytes,
     }
 
 
@@ -1469,6 +1608,7 @@ async def create_knowledge(
     principal: Principal = Depends(require_scope("knowledge:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    _require_mutation_tools(await _active_policy(principal))
     reservation = await _reserve(
         session,
         principal,
@@ -1522,6 +1662,7 @@ async def update_knowledge(
     principal: Principal = Depends(require_scope("knowledge:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    _require_mutation_tools(await _active_policy(principal))
     reservation = await _reserve(
         session,
         principal,
@@ -1562,6 +1703,7 @@ async def delete_knowledge(
     principal: Principal = Depends(require_scope("knowledge:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> Response:
+    _require_mutation_tools(await _active_policy(principal))
     reservation = await _reserve(
         session,
         principal,
@@ -1588,16 +1730,25 @@ async def delete_knowledge(
 async def search_retrieval(
     payload: RetrievalSearchRequest,
     principal: Principal = Depends(require_scope("knowledge:read")),
+    idempotency_key: str | None = Header(default=None, min_length=1, max_length=128, alias="Idempotency-Key"),
 ) -> dict:
+    policy = await _active_policy(principal)
+    _require_knowledge_tools(policy)
+    default_ws = get_settings().gateway.default_workspace_id
+    request_scope = resolve_request_space_scope(payload.active_space_id, default_ws)
     result = await _retrieval_service().search(
         principal,
         payload.query,
-        requested_space_ids=set(payload.space_ids) if payload.space_ids is not None else None,
+        requested_space_ids=narrow_requested_spaces(
+            request_scope,
+            set(payload.space_ids) if payload.space_ids is not None else None,
+        ),
         active_space_id=payload.active_space_id,
-        semantic_policy=payload.semantic_policy,
+        semantic_policy=policy.effective_semantic_policy(payload.semantic_policy),
         limit=payload.limit,
+        tags=list(payload.tags) if payload.tags is not None else None,
     )
-    return {
+    search_payload = {
         "query": result.query,
         "hits": [
             {
@@ -1628,6 +1779,9 @@ async def search_retrieval(
             "active_space_id": result.explanation.active_space_id,
         },
     }
+    if not policy.retrieval_explanations_enabled:
+        return _redact_explanation(search_payload)
+    return search_payload
 
 
 @router.post("/sources/upload", status_code=status.HTTP_202_ACCEPTED, response_model=SourceUploadReceipt)
@@ -1638,6 +1792,7 @@ async def upload_source(
     idempotency_key: str = Header(min_length=1, max_length=255, alias="Idempotency-Key"),
     principal: Principal = Depends(require_scope("knowledge:write")),
 ) -> dict:
+    _require_mutation_tools(await _active_policy(principal))
     filename = file.filename or "uploaded-source"
     gateway = get_settings().gateway
     receipt = await DocumentUploadService(
@@ -1761,6 +1916,7 @@ async def archive_source(
     principal: Principal = Depends(require_scope("knowledge:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> Response:
+    _require_mutation_tools(await _active_policy(principal))
     reservation = await _reserve(
         session,
         principal,
@@ -1874,6 +2030,7 @@ async def _mutate_ingestion_job(
     principal: Principal,
     session: AsyncSession,
 ) -> dict:
+    _require_mutation_tools(await _active_policy(principal))
     job = await session.get(IngestionJobModel, job_id)
     if job is None:
         raise AuthorizationException()

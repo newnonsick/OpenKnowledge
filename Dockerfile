@@ -13,6 +13,7 @@ WORKDIR /app
 COPY --chown=gateway:gateway alembic alembic
 COPY --chown=gateway:gateway src src
 COPY --chown=gateway:gateway alembic.ini pyproject.toml ./
+RUN mkdir -p /data/storage && chown gateway:gateway /data/storage
 USER 10001:10001
 EXPOSE 8000
 CMD ["uvicorn", "src.gateway.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ActivityConsole, AiActionsConsole, ExploreConsole, IngestionConsole, KnowledgeConsole, PeopleConsole, SettingsConsole, SourcesConsole, SpacesConsole } from "@/components/management-console";
 import { apiMultipart, apiRequest } from "@/lib/api-client";
+import { invalidateClientCapabilities } from "@/lib/client-capabilities";
 import { invalidateAccessibleSpaces } from "@/lib/space-options";
 
 const currentMember = vi.hoisted(() => ({ display_name: "Mai", id: "admin-1", mfa_enabled: false, system_role: "member" as "member" | "super_admin" }));
@@ -175,6 +176,7 @@ describe("management console", () => {
     vi.mocked(apiRequest).mockReset();
     vi.mocked(apiMultipart).mockReset();
     invalidateAccessibleSpaces();
+    invalidateClientCapabilities();
   });
 
   it("creates a private space and refreshes the accessible list", async () => {
@@ -685,8 +687,61 @@ describe("management console", () => {
     expect(screen.getByText("Semantic layer unavailable · lexical results remain active")).toBeInTheDocument();
     expect(apiRequest).toHaveBeenCalledWith("/api/v1/retrieval/search", {
       body: { limit: 20, query: "water", semantic_policy: "prefer" },
+      idempotent: true,
       method: "POST",
     });
+  });
+
+  it.each([
+    ["active", "Semantic + lexical retrieval active"],
+    ["degraded", "Semantic layer unavailable · lexical results remain active"],
+    ["disabled", "Semantic retrieval disabled · lexical results only"],
+  ])("renders the %s semantic retrieval state distinctly", async (status, copy) => {
+    navigation.search = "";
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }] } as never;
+      }
+      if (path === "/api/v1/retrieval/search" && options?.method === "POST") {
+        return {
+          hits: [],
+          health: { semantic_status: status, degraded_reasons: [] },
+          explanation: { effective_space_ids: ["global"], abstained: true },
+        } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<ExploreConsole />);
+    fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "valve" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search knowledge" }));
+    const chip = await screen.findByText(copy);
+    expect(chip).toHaveClass("health-chip");
+    expect(chip).toHaveClass(status === "active" ? "active" : status);
+  });
+
+  it("replays the read-only search body after a session refresh", async () => {
+    navigation.search = "";
+    const bodies: unknown[] = [];
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }] } as never;
+      }
+      if (path === "/api/v1/retrieval/search" && options?.method === "POST") {
+        expect(options?.idempotent).toBe(true);
+        bodies.push(options?.body);
+        return {
+          hits: [{ canonical_id: "note-9", source_type: "knowledge_revision", space_id: "global", title: "Valve", content_excerpt: "Close it.", rank: 1, rank_score: 0.7 }],
+          health: { semantic_status: "active", degraded_reasons: [] },
+          explanation: { effective_space_ids: ["global"], abstained: false },
+        } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<ExploreConsole />);
+    fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "valve" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search knowledge" }));
+    expect(await screen.findByRole("heading", { name: "Valve" })).toBeInTheDocument();
+    expect(bodies).toEqual([{ limit: 20, query: "valve", semantic_policy: "prefer" }]);
   });
 
   it("keeps prior explore results visible with a refining indicator during a follow-up search", async () => {
@@ -1527,5 +1582,98 @@ describe("management console", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Review spaces.members.set.v1 for private, member-2" }));
     expect(screen.getByText(/changes who can access this space/i)).toBeInTheDocument();
     expect(screen.queryByText(/permanently removes it from unified search/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the typed before/after change from the review endpoint", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path === "/api/v1/spaces?limit=100") {
+        return { items: [{ id: "private", name: "Private", role: "owner", revision: 1 }] } as never;
+      }
+      if (path === "/api/v1/ai-tools") {
+        return { items: [] } as never;
+      }
+      if (path === "/api/v1/ai-actions?limit=25") {
+        return { items: [{ id: "action-3", tool_name: "spaces.members.set.v1", target_ids: ["private", "member-2"], expected_revision: 2, status: "pending", created_at: "2026-08-20T12:00:00Z", expires_at: "2026-08-20T12:10:00Z" }] } as never;
+      }
+      if (path === "/api/v1/ai-actions/action-3") {
+        return {
+          id: "action-3",
+          tool_name: "spaces.members.set.v1",
+          target_ids: ["private", "member-2"],
+          expected_revision: 2,
+          command_hash: "ab".repeat(32),
+          arguments: { space_id: "private", member_id: "member-2", role: "editor", expected_space_revision: 2 },
+          review: {
+            summary: "Change Ava in 'Private' from reader to editor",
+            change: {
+              kind: "membership",
+              before: { member_id: "member-2", role: "reader" },
+              after: { member_id: "member-2", role: "editor" },
+            },
+            impact: "This changes who can access this space.",
+            redacted: [],
+          },
+          status: "pending",
+        } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<AiActionsConsole />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Review spaces.members.set.v1 for private, member-2" }));
+    expect(await screen.findByText(/Change Ava in 'Private' from reader to editor/)).toBeInTheDocument();
+    expect(screen.getByText("Before")).toBeInTheDocument();
+    expect(screen.getByText("After")).toBeInTheDocument();
+    expect(screen.getByText(/"role": "reader"/)).toBeInTheDocument();
+    expect(screen.getByText(/"role": "editor"/)).toBeInTheDocument();
+  });
+
+  it("enforces the effective server upload limit from capabilities", async () => {
+    const requested: string[] = [];
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      requested.push(path);
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Shared", role: "editor", revision: 1 }] } as never;
+      }
+      if (path === "/api/v1/capabilities") {
+        return { max_upload_bytes: 12 * 1024 * 1024, max_request_body_bytes: 16 * 1024 * 1024 } as never;
+      }
+      if (path.startsWith("/api/v1/sources")) {
+        return { items: [] } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<SourcesConsole />);
+
+    await screen.findByRole("option", { name: "Shared" });
+    expect(requested).toContain("/api/v1/capabilities");
+    expect(screen.getByText(/Up to 12 MB per file/)).toBeInTheDocument();
+
+    const oversized = new File(["x".repeat(13 * 1024 * 1024)], "big.bin", { type: "application/octet-stream" });
+    fireEvent.change(screen.getByLabelText("Source file"), { target: { files: [oversized] } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("larger than the 12 MB server upload limit");
+    expect(screen.getByRole("button", { name: "Queue source" })).toBeDisabled();
+  });
+
+  it("rejects an oversized source at the effective server limit", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (path) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Shared", role: "editor", revision: 1 }] } as never;
+      }
+      if (path === "/api/v1/capabilities") {
+        return { max_upload_bytes: 12 * 1024 * 1024, max_request_body_bytes: 16 * 1024 * 1024 } as never;
+      }
+      if (path.startsWith("/api/v1/sources")) {
+        return { items: [] } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<SourcesConsole />);
+
+    await screen.findByRole("option", { name: "Shared" });
+    const acceptable = new File(["x".repeat(11 * 1024 * 1024)], "large.bin", { type: "application/octet-stream" });
+    fireEvent.change(screen.getByLabelText("Source file"), { target: { files: [acceptable] } });
+    expect(screen.getByRole("button", { name: "Queue source" })).toBeEnabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

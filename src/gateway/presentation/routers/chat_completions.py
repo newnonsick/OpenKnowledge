@@ -45,7 +45,7 @@ from src.gateway.domain.tools import ToolCall
 from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.adapters.http_llm_client import HttpLLMClient
 from src.gateway.infrastructure.persistence.retrieval_unit_repository import PostgresRetrievalUnitRepository
-from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings
+from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings, load_active_runtime_policy
 from src.gateway.presentation.converters.openai_converter import (
     canonical_response_to_openai,
     canonical_stream_chunk_to_openai,
@@ -153,6 +153,7 @@ def get_chat_orchestrator(
     return ChatOrchestratorService(
         llm_client=llm_client,
         retrieval_service=retrieval_service,
+        runtime_policy_provider=load_active_runtime_policy,
     )
 
 @router.post(
@@ -175,6 +176,18 @@ async def create_chat_completion(
 ) -> Union[OpenAIChatCompletionResponse, StreamingResponse, JSONResponse]:
 
     try:
+        if request.n is not None and request.n != 1:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={
+                    "error": {
+                        "message": "Only n=1 is supported. Resubmit with n=1 or omit n.",
+                        "type": "invalid_request_error",
+                        "param": "n",
+                        "code": "unsupported_n",
+                    }
+                },
+            )
 
         if not request.messages:
             return JSONResponse(

@@ -146,6 +146,8 @@ Retention executes only when `RETENTION_PURGE_ENABLED` is true, and the database
 | `RETENTION_OPERATIONAL_DAYS` | `30` | at least 30 | Minimum age before expired operational records are purged. |
 | `RETENTION_BATCH_SIZE` | `100` | 1 to 1000 | Rows per database batch. |
 | `RETENTION_MAX_BATCHES_PER_CYCLE` | `100` | 1 to 1000 | Batches per cycle; remaining work continues in the next cycle. |
+| `WORKER_METRICS_INTERVAL_SECONDS` | `60` | at least 5 | Interval between worker operational-metrics collections. |
+| `WORKER_METRICS_FILE` | _(empty)_ | absolute path or empty | Prometheus textfile the worker publishes its registry to; empty disables file publishing. |
 | `EMBEDDING_REEMBED_BATCH_SIZE` | `64` | 1 to 512 | Rows re-embedded per batch after an embedding dimension change. |
 
 ## Compose-level variables

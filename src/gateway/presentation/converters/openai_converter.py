@@ -167,8 +167,6 @@ def openai_request_to_canonical(
         extra_params["frequency_penalty"] = req.frequency_penalty
     if req.user is not None:
         extra_params["user"] = req.user
-    if req.n is not None and req.n != 1:
-        extra_params["n"] = req.n
 
     return CanonicalChatRequest(
         model=req.model,

@@ -5,6 +5,7 @@ import logging
 import os
 import signal
 import socket
+from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy.engine import make_url
@@ -12,6 +13,7 @@ from sqlalchemy.engine import make_url
 from src.gateway.application.services.bounded_document_parser import BoundedDocumentParser
 from src.gateway.application.services.document_ingestion_worker import DocumentIngestionWorker
 from src.gateway.application.services.job_outbox_dispatcher import JobOutboxDispatcher
+from src.gateway.application.services.operational_metrics_collector import OperationalMetricsCollector
 from src.gateway.application.services.retention_service import RetentionMaintenanceRunner, RetentionService
 from src.gateway.application.services.storage_consistency_service import StorageConsistencyService
 from src.gateway.application.services.storage_maintenance_runner import StorageMaintenanceRunner
@@ -20,7 +22,8 @@ from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbedd
 from src.gateway.infrastructure.database import close_db_engine, get_worker_session_factory, normalize_database_url, validate_worker_database_role
 from src.gateway.infrastructure.migrations import get_schema_status_async
 from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
-from src.gateway.observability import configure_logging
+from src.gateway.observability import configure_logging, metrics_registry_context
+from src.gateway.presentation.metrics import MetricsRegistry
 
 
 logger = logging.getLogger(__name__)
@@ -65,6 +68,15 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
         max_output_characters=settings.gateway.parser_max_output_characters,
     )
     worker_id = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:8]}"
+    registry = MetricsRegistry()
+    registry_token = metrics_registry_context.set(registry)
+    try:
+        await _run_worker_services(factory, worker_id, settings, storage, parser, registry, stop_event)
+    finally:
+        metrics_registry_context.reset(registry_token)
+
+
+async def _run_worker_services(factory, worker_id: str, settings, storage, parser, registry, stop_event) -> None:
     ingestion = DocumentIngestionWorker(
         factory,
         storage,
@@ -76,6 +88,13 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
         chunk_size=settings.gateway.ingestion_chunk_size,
         chunk_overlap=settings.gateway.ingestion_chunk_overlap,
         max_chunks=settings.gateway.ingestion_max_chunks,
+    )
+    metrics_file = settings.gateway.worker_metrics_file
+    operational_metrics = OperationalMetricsCollector(
+        factory,
+        registry,
+        interval_seconds=settings.gateway.worker_metrics_interval_seconds,
+        metrics_file=Path(metrics_file) if metrics_file else None,
     )
     outbox = JobOutboxDispatcher(
         factory,
@@ -114,6 +133,7 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
             )
         )
         tasks.create_task(maintenance.run_until_stopped(stopping))
+        tasks.create_task(operational_metrics.run_until_stopped(stopping))
         if settings.gateway.retention_purge_enabled:
             tasks.create_task(retention.run_until_stopped(stopping))
 

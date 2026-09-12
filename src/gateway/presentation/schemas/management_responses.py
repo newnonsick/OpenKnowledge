@@ -180,6 +180,32 @@ class PendingAIAction(ContractModel):
     status: Literal["pending"]
 
 
+class AIActionReviewChange(ContractModel):
+    kind: str
+    before: dict[str, Any]
+    after: dict[str, Any]
+
+
+class AIActionReview(ContractModel):
+    summary: str
+    change: AIActionReviewChange
+    impact: str
+    redacted: list[str] = Field(default_factory=list)
+
+
+class PendingAIActionDetail(ContractModel):
+    id: str
+    tool_name: str
+    target_ids: list[str]
+    expected_revision: int | None
+    command_hash: str
+    arguments: dict[str, Any]
+    review: AIActionReview
+    created_at: datetime | None = None
+    expires_at: datetime | None = None
+    status: str
+
+
 class ConfirmedAIAction(ContractModel):
     pending_action_id: str
     status: Literal["executed"]
@@ -194,6 +220,11 @@ class CurrentMember(ContractModel):
     system_role: SystemRole
     requires_password_change: bool
     mfa_enabled: bool
+
+
+class ClientCapabilities(ContractModel):
+    max_upload_bytes: int
+    max_request_body_bytes: int
 
 
 class SpaceSummary(ContractModel):

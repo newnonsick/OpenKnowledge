@@ -16,6 +16,7 @@ import { ApiError, apiMultipart, contractClient, contractData, idempotencyKey } 
 import type { components } from "@/lib/generated/openapi";
 import { usePagePagination } from "@/lib/use-page-pagination";
 import { loadAccessibleSpaces, invalidateAccessibleSpaces } from "@/lib/space-options";
+import { loadClientCapabilities } from "@/lib/client-capabilities";
 
 type Space = components["schemas"]["SpaceSummary"];
 type SpaceListResponse = components["schemas"]["Page_SpaceSummary_"];
@@ -57,7 +58,21 @@ const API_KEY_SCOPE_OPTIONS = [
 const DEFAULT_API_KEY_SCOPES = ["knowledge:read"];
 
 const SUPPORTED_SOURCE_EXTENSIONS = ".bash,.c,.cc,.cfg,.cjs,.conf,.cpp,.cs,.css,.csv,.cxx,.dart,.env,.erl,.ex,.exs,.geojson,.go,.gql,.graphql,.h,.hpp,.hs,.htm,.html,.hxx,.ini,.java,.js,.json,.jsonl,.jsx,.kt,.kts,.less,.log,.lua,.m,.markdown,.md,.mjs,.ndjson,.nim,.pdf,.php,.proto,.py,.pyi,.r,.rb,.rs,.rst,.sass,.scala,.scss,.sh,.sql,.svelte,.swift,.toml,.ts,.tsv,.tsx,.txt,.vue,.yaml,.yml,.zig,.zsh";
-const DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const FALLBACK_MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+function formatByteLimit(value: number) {
+  return `${Math.round(value / 1024 / 1024)} MB`;
+}
+
+function semanticHealthCopy(status: RetrievalResponse["health"]["semantic_status"]) {
+  if (status === "degraded") {
+    return "Semantic layer unavailable · lexical results remain active";
+  }
+  if (status === "disabled") {
+    return "Semantic retrieval disabled · lexical results only";
+  }
+  return "Semantic + lexical retrieval active";
+}
 
 const SETTINGS_SECTIONS = ["security", "api-keys", "sessions", "runtime"] as const;
 type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
@@ -918,6 +933,7 @@ export function ExploreConsole() {
           query: trimmed,
           semantic_policy: "prefer",
         },
+        params: { header: { "Idempotency-Key": idempotencyKey() } },
       }));
       if (!searchActiveRef.current) {
         return;
@@ -986,7 +1002,7 @@ export function ExploreConsole() {
         <section aria-busy={searching || undefined} aria-label={lastQuery ? `Results for ${lastQuery}` : "Search results"} className="search-results-section" ref={resultsRef}>
           <div className="results-toolbar">
             <div><p className="console-eyebrow">Ranked results</p><h2>{result.hits.length} {result.hits.length === 1 ? "match" : "matches"}{lastQuery ? ` for “${lastQuery}”` : ""}</h2></div>
-            <span className={`health-chip ${result.health.semantic_status}`}>{result.health.semantic_status === "degraded" ? "Semantic layer unavailable · lexical results remain active" : "Semantic + lexical retrieval active"}</span>
+            <span className={`health-chip ${result.health.semantic_status}`}>{semanticHealthCopy(result.health.semantic_status)}</span>
           </div>
           {result.hits.length === 0 ? <div className="console-empty result-empty"><Search size={23} /><strong>No confident match</strong><span>Try a more specific phrase or add the missing knowledge.</span></div> : null}
           <div className="result-list">
@@ -1036,7 +1052,15 @@ export function SourcesConsole() {
   const [dragging, setDragging] = useState(false);
   const dragCount = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [maxUploadBytes, setMaxUploadBytes] = useState(FALLBACK_MAX_UPLOAD_BYTES);
   const writableSpaces = spaces.filter((space) => space.role === "owner" || space.role === "editor");
+
+  function uploadTooLargeMessage(fileSize: number) {
+    if (fileSize > maxUploadBytes) {
+      return `That file is larger than the ${formatByteLimit(maxUploadBytes)} server upload limit. Choose a smaller file.`;
+    }
+    return null;
+  }
 
   const loadSourcePage = useCallback((page: number, signal: AbortSignal) => contractData(
     contractClient.GET("/api/v1/sources", {
@@ -1084,6 +1108,15 @@ export function SourcesConsole() {
         setSpacesLoading(false);
       }
     });
+    loadClientCapabilities().then((capabilities) => {
+      if (active) {
+        setMaxUploadBytes(capabilities.max_upload_bytes);
+      }
+    }).catch(() => {
+      if (active) {
+        setMaxUploadBytes(FALLBACK_MAX_UPLOAD_BYTES);
+      }
+    });
     return () => {
       active = false;
     };
@@ -1094,8 +1127,9 @@ export function SourcesConsole() {
     if (!file || !writableSpaces.some((space) => space.id === spaceId) || uploading) {
       return;
     }
-    if (file.size > DEFAULT_MAX_UPLOAD_BYTES) {
-      setUploadError(`That file is larger than the default ${Math.round(DEFAULT_MAX_UPLOAD_BYTES / 1024 / 1024)} MB server upload limit. Choose a smaller file.`);
+    const sizeError = uploadTooLargeMessage(file.size);
+    if (sizeError) {
+      setUploadError(sizeError);
       return;
     }
     const body = new FormData();
@@ -1215,14 +1249,14 @@ export function SourcesConsole() {
                 setDragging(false);
                 const dropped = event.dataTransfer.files?.[0];
                 if (dropped) {
-                  setUploadError(dropped.size > DEFAULT_MAX_UPLOAD_BYTES ? `That file is larger than the default ${Math.round(DEFAULT_MAX_UPLOAD_BYTES / 1024 / 1024)} MB server upload limit. Choose a smaller file.` : null);
+                  setUploadError(uploadTooLargeMessage(dropped.size));
                   setFile(dropped);
                   setQueued(false);
                 }
               }}
-            ><FileUp size={20} /><strong>{file ? file.name : "Choose a source file or drag it here"}</strong><span>{file ? `${Math.max(1, Math.round(file.size / 1024))} KB · select a different file to replace it` : "The configured server upload limit applies"}</span></label>
-            <input accept={SUPPORTED_SOURCE_EXTENSIONS} aria-label="Source file" className="visually-hidden" id="source-file" ref={fileInputRef} onChange={(event) => { const selected = event.target.files?.[0] || null; setUploadError(selected && selected.size > DEFAULT_MAX_UPLOAD_BYTES ? `That file is larger than the default ${Math.round(DEFAULT_MAX_UPLOAD_BYTES / 1024 / 1024)} MB server upload limit. Choose a smaller file.` : null); setFile(selected); setQueued(false); }} required={!file} type="file" />
-            <button className="primary-button" disabled={uploading || spacesLoading || !file || writableSpaces.length === 0 || file.size > DEFAULT_MAX_UPLOAD_BYTES} type="submit">{uploading ? <LoaderCircle className="spin" size={16} /> : <FileUp size={16} />} Queue source</button>
+            ><FileUp size={20} /><strong>{file ? file.name : "Choose a source file or drag it here"}</strong><span>{file ? `${Math.max(1, Math.round(file.size / 1024))} KB · select a different file to replace it` : `Up to ${formatByteLimit(maxUploadBytes)} per file`}</span></label>
+            <input accept={SUPPORTED_SOURCE_EXTENSIONS} aria-label="Source file" className="visually-hidden" id="source-file" ref={fileInputRef} onChange={(event) => { const selected = event.target.files?.[0] || null; setUploadError(selected ? uploadTooLargeMessage(selected.size) : null); setFile(selected); setQueued(false); }} required={!file} type="file" />
+            <button className="primary-button" disabled={uploading || spacesLoading || !file || writableSpaces.length === 0 || file.size > maxUploadBytes} type="submit">{uploading ? <LoaderCircle className="spin" size={16} /> : <FileUp size={16} />} Queue source</button>
           </form>
           {queued ? <p className="inline-success" role="status"><ShieldCheck size={14} /> Queued for durable ingestion — track it under Ingestion.</p> : null}
           {uploadError ? <p className="inline-error" role="alert">{uploadError}</p> : null}
@@ -2238,6 +2272,20 @@ export function ActivityConsole() {
 
 type AIManagementTool = components["schemas"]["AIToolDescriptor"];
 type PendingAIAction = components["schemas"]["PendingAIAction"];
+type PendingAIActionDetail = components["schemas"]["PendingAIActionDetail"];
+
+function formatReviewValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+  if (typeof value === "string") {
+    return value === "" ? "—" : value;
+  }
+  if (typeof value === "object") {
+    return JSON.stringify(value, null, 2);
+  }
+  return String(value);
+}
 
 function aiActionImpact(toolName: string) {
   if (toolName === "spaces.members.set.v1") {
@@ -2268,6 +2316,8 @@ export function AiActionsConsole() {
   const [toolsRetry, setToolsRetry] = useState(0);
   const [spacesFailed, setSpacesFailed] = useState(false);
   const [reviewing, setReviewing] = useState<PendingAIAction | null>(null);
+  const [reviewDetail, setReviewDetail] = useState<PendingAIActionDetail | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const reviewReturnFocusRef = useRef<HTMLButtonElement | null>(null);
@@ -2301,6 +2351,30 @@ export function AiActionsConsole() {
     };
   }, [toolsRetry]);
 
+  const openReview = useCallback((action: PendingAIAction) => {
+    setReviewing(action);
+    setReviewDetail(null);
+    setReviewLoading(true);
+    setError(null);
+    void contractData(contractClient.GET("/api/v1/ai-actions/{action_id}", {
+      params: { path: { action_id: action.id } },
+    })).then(
+      (detail) => {
+        setReviewDetail(detail);
+        setReviewLoading(false);
+      },
+      (reviewError) => {
+        setError(message(reviewError));
+        setReviewLoading(false);
+      },
+    );
+  }, []);
+
+  const closeReview = useCallback(() => {
+    setReviewing(null);
+    setReviewDetail(null);
+  }, []);
+
   const confirmAction = async () => {
     if (!reviewing || confirming) {
       return;
@@ -2311,7 +2385,7 @@ export function AiActionsConsole() {
       await contractData(contractClient.POST("/api/v1/ai-actions/{action_id}/confirm", {
         params: { header: { "Idempotency-Key": idempotencyKey() }, path: { action_id: reviewing.id } },
       }));
-      setReviewing(null);
+      closeReview();
       actionPages.reload();
     } catch (confirmError) {
       setError(message(confirmError));
@@ -2337,7 +2411,7 @@ export function AiActionsConsole() {
       </div>
       {actionPages.initialLoading || (actionPages.loading && pendingActions.length === 0) ? <section className="console-panel pending-ai-panel"><ListSkeleton compact rows={3} /></section> : null}
       {actionPages.error ? <section className="console-panel pending-ai-panel"><ListUnavailable detail={actionPages.error} label="pending actions" onRetry={() => void actionPages.reload()} /></section> : null}
-      {!actionPages.initialLoading && !actionPages.error && pendingActions.length > 0 ? <section className="console-panel pending-ai-panel"><div className="panel-heading"><div><span>Human approval</span><h2>Pending confirmation</h2></div><span className="count-pill">{actionPages.totalItems}</span></div><div aria-busy={actionPages.loading} className={`data-list${actionPages.loading ? " is-page-loading" : ""}`}>{pendingActions.map((action) => <article className="data-row" key={action.id}><span className="row-leading violet"><Sparkles size={17} /></span><div className="row-copy"><h3>{action.tool_name}</h3><p>{action.target_ids.join(", ")} · revision {action.expected_revision ?? "—"}</p></div><button aria-label={`Review ${action.tool_name} for ${action.target_ids.join(", ")}`} className="row-action-button" onClick={(event) => { reviewReturnFocusRef.current = event.currentTarget; setReviewing(action); }} type="button">Review</button></article>)}</div>{actionPages.totalPages > 1 ? <PaginationControls loading={actionPages.loading} loadingPage={actionPages.loadingPage} onPageChange={(nextPage) => void actionPages.goToPage(nextPage)} page={actionPages.page} pageSize={actionPages.pageSize} totalItems={actionPages.totalItems} totalPages={actionPages.totalPages} /> : null}<ConfirmationDialog busy={confirming} busyLabel="Executing AI action…" cancelLabel="Not now" confirmLabel="Confirm AI action" description={reviewing ? `${aiActionImpact(reviewing.tool_name)} Targets: ${reviewing.target_ids.join(", ") || "—"} · Expected revision: ${reviewing.expected_revision ?? "—"} · Expires ${formatDateTime(reviewing.expires_at)}.` : "Review this action before execution."} error={error} onCancel={() => setReviewing(null)} onConfirm={() => void confirmAction()} open={Boolean(reviewing)} returnFocusTarget={reviewReturnFocusRef.current} title={reviewing ? `Confirm ${reviewing.tool_name}` : "Confirm AI action"} tone="danger" /></section> : null}
+      {!actionPages.initialLoading && !actionPages.error && pendingActions.length > 0 ? <section className="console-panel pending-ai-panel"><div className="panel-heading"><div><span>Human approval</span><h2>Pending confirmation</h2></div><span className="count-pill">{actionPages.totalItems}</span></div><div aria-busy={actionPages.loading} className={`data-list${actionPages.loading ? " is-page-loading" : ""}`}>{pendingActions.map((action) => <article className="data-row" key={action.id}><span className="row-leading violet"><Sparkles size={17} /></span><div className="row-copy"><h3>{action.tool_name}</h3><p>{action.target_ids.join(", ")} · revision {action.expected_revision ?? "—"}</p></div><button aria-label={`Review ${action.tool_name} for ${action.target_ids.join(", ")}`} className="row-action-button" onClick={(event) => { reviewReturnFocusRef.current = event.currentTarget; openReview(action); }} type="button">Review</button></article>)}</div>{actionPages.totalPages > 1 ? <PaginationControls loading={actionPages.loading} loadingPage={actionPages.loadingPage} onPageChange={(nextPage) => void actionPages.goToPage(nextPage)} page={actionPages.page} pageSize={actionPages.pageSize} totalItems={actionPages.totalItems} totalPages={actionPages.totalPages} /> : null}<ConfirmationDialog busy={confirming} busyLabel="Executing AI action…" cancelLabel="Not now" confirmLabel="Confirm AI action" description={reviewing ? `${reviewDetail?.review.summary ?? aiActionImpact(reviewing.tool_name)} Targets: ${reviewing.target_ids.join(", ") || "—"} · Expected revision: ${reviewing.expected_revision ?? "—"} · Expires ${formatDateTime(reviewing.expires_at)}.` : "Review this action before execution."} error={error} onCancel={closeReview} onConfirm={() => void confirmAction()} open={Boolean(reviewing)} returnFocusTarget={reviewReturnFocusRef.current} title={reviewing ? `Confirm ${reviewing.tool_name}` : "Confirm AI action"} tone="danger">{reviewLoading ? <p className="list-context-line">Loading exact change…</p> : null}{reviewDetail ? <div className="console-form"><dl className="review-diff"><div><dt>Before</dt><dd><pre>{formatReviewValue(reviewDetail.review.change.before)}</pre></dd></div><div><dt>After</dt><dd><pre>{formatReviewValue(reviewDetail.review.change.after)}</pre></dd></div></dl><p className="list-context-line">{reviewDetail.review.impact}</p>{(reviewDetail.review.redacted ?? []).length > 0 ? <p className="list-context-line">Redacted fields: {(reviewDetail.review.redacted ?? []).join(", ")}. The impact above still applies.</p> : null}<p className="list-context-line">Bound to command {reviewDetail.command_hash.slice(0, 12)}… · Targets: {reviewDetail.target_ids.join(", ") || "—"}</p></div> : null}</ConfirmationDialog></section> : null}
       {!actionPages.initialLoading && !actionPages.loading && !actionPages.error && pendingActions.length === 0 ? <section className="console-panel pending-ai-panel"><div className="console-empty small"><Sparkles size={20} /><strong>No actions need approval</strong></div></section> : null}
       {error ? <p className="inline-error wide" role="alert">{error}</p> : null}
     </ConsoleShell>

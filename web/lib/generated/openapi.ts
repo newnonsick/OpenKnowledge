@@ -55,6 +55,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ai-actions/{action_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Review Ai Action */
+        get: operations["review_ai_action_api_v1_ai_actions__action_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ai-actions/{action_id}/confirm": {
         parameters: {
             query?: never;
@@ -271,6 +288,23 @@ export interface paths {
         put?: never;
         /** Step Up */
         post: operations["step_up_api_v1_auth_step_up_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Capabilities */
+        get: operations["capabilities_api_v1_capabilities_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -882,6 +916,29 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AIActionReview */
+        AIActionReview: {
+            change: components["schemas"]["AIActionReviewChange"];
+            /** Impact */
+            impact: string;
+            /** Redacted */
+            redacted?: string[];
+            /** Summary */
+            summary: string;
+        };
+        /** AIActionReviewChange */
+        AIActionReviewChange: {
+            /** After */
+            after: {
+                [key: string]: unknown;
+            };
+            /** Before */
+            before: {
+                [key: string]: unknown;
+            };
+            /** Kind */
+            kind: string;
+        };
         /** AIConfirmationRequired */
         AIConfirmationRequired: {
             /**
@@ -1374,6 +1431,13 @@ export interface components {
              * @default 2000
              */
             size: number;
+        };
+        /** ClientCapabilities */
+        ClientCapabilities: {
+            /** Max Request Body Bytes */
+            max_request_body_bytes: number;
+            /** Max Upload Bytes */
+            max_upload_bytes: number;
         };
         /** ConfirmedAIAction */
         ConfirmedAIAction: {
@@ -2176,6 +2240,30 @@ export interface components {
             /** Tool Name */
             tool_name: string;
         };
+        /** PendingAIActionDetail */
+        PendingAIActionDetail: {
+            /** Arguments */
+            arguments: {
+                [key: string]: unknown;
+            };
+            /** Command Hash */
+            command_hash: string;
+            /** Created At */
+            created_at?: string | null;
+            /** Expected Revision */
+            expected_revision: number | null;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Id */
+            id: string;
+            review: components["schemas"]["AIActionReview"];
+            /** Status */
+            status: string;
+            /** Target Ids */
+            target_ids: string[];
+            /** Tool Name */
+            tool_name: string;
+        };
         /** ResetMemberPassword */
         ResetMemberPassword: {
             /** Id */
@@ -2330,6 +2418,8 @@ export interface components {
             semantic_policy: "prefer" | "required" | "disabled";
             /** Space Ids */
             space_ids?: string[] | null;
+            /** Tags */
+            tags?: string[] | null;
         };
         /** RetrievalSummary */
         RetrievalSummary: {
@@ -2920,6 +3010,109 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_PendingAIAction_"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    review_ai_action_api_v1_ai_actions__action_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingAIActionDetail"];
                 };
             };
             /** @description Unauthorized */
@@ -4497,6 +4690,107 @@ export interface operations {
             };
         };
     };
+    capabilities_api_v1_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientCapabilities"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     list_ingestion_jobs_api_v1_ingestion_jobs_get: {
         parameters: {
             query?: {
@@ -5977,7 +6271,9 @@ export interface operations {
     search_retrieval_api_v1_retrieval_search_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };

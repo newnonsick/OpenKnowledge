@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
 umask 077
+restore_script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+. "$restore_script_dir/backup_timestamp.sh"
 : "${BACKUP_FILE:?}"
 : "${RESTORE_DATABASE_URL:?}"
 : "${RESTORE_STORAGE_DIR:?}"
@@ -48,11 +50,10 @@ if [ -n "${RESTORE_EXPECTED_BACKUP_SHA256:-}" ]; then
 fi
 if [ -n "${RESTORE_MAX_BACKUP_AGE_SECONDS:-}" ]; then
   backup_started_at="$(sed -n 's/^backup_started_at=//p' "$restore_tmp/BACKUP-METADATA")"
-  case "$backup_started_at" in
-    ????[0-1][0-9][0-3][0-9]T[0-2][0-9][0-5][0-9][0-5][0-9]Z) ;;
-    *) echo "Backup metadata timestamp is invalid" >&2; exit 1 ;;
-  esac
-  backup_epoch="$(date -u -d "$backup_started_at" +%s)"
+  if ! backup_epoch="$(parse_backup_timestamp "$backup_started_at")"; then
+    echo "Backup metadata timestamp is invalid" >&2
+    exit 1
+  fi
   current_epoch="$(date -u +%s)"
   backup_age="$((current_epoch - backup_epoch))"
   if [ "$backup_age" -lt 0 ] || [ "$backup_age" -gt "$RESTORE_MAX_BACKUP_AGE_SECONDS" ]; then

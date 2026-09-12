@@ -47,6 +47,7 @@ class SessionSecrets:
 class RefreshRotation:
     status: RefreshStatus
     session: SessionSecrets | None = None
+    access_expires_at: datetime | None = None
 
 
 class SessionService:
@@ -189,7 +190,19 @@ class SessionService:
             return RefreshRotation(RefreshStatus.EXPIRED)
         if credential.used_at is not None:
             if current_time - credential.used_at <= self._policy.concurrent_rotation_grace:
-                return RefreshRotation(RefreshStatus.ALREADY_ROTATED)
+                successor_access = await self._session.scalar(
+                    select(SessionCredentialModel)
+                    .where(
+                        SessionCredentialModel.family_id == family.id,
+                        SessionCredentialModel.credential_type == "access",
+                        SessionCredentialModel.revoked_at.is_(None),
+                    )
+                    .order_by(SessionCredentialModel.issued_at.desc())
+                )
+                return RefreshRotation(
+                    RefreshStatus.ALREADY_ROTATED,
+                    access_expires_at=successor_access.expires_at if successor_access else None,
+                )
             family.revoked_at = current_time
             family.revoke_reason = "refresh_reuse"
             await self._revoke_credentials(family.id, current_time)

@@ -513,6 +513,21 @@ class GatewaySettings(BaseSettings):
             "retention_max_batches_per_cycle",
         ),
     )
+    worker_metrics_interval_seconds: int = Field(
+        default=60,
+        ge=5,
+        validation_alias=AliasChoices(
+            "WORKER_METRICS_INTERVAL_SECONDS",
+            "worker_metrics_interval_seconds",
+        ),
+    )
+    worker_metrics_file: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "WORKER_METRICS_FILE",
+            "worker_metrics_file",
+        ),
+    )
     embedding_reembed_batch_size: int = Field(
         default=64,
         ge=1,

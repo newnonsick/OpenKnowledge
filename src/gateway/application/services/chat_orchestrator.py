@@ -8,12 +8,14 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, Union
 
 from src.gateway.application.ports.clients import ILLMClient
 from src.gateway.application.services.authorized_retrieval_service import AuthorizedRetrievalService
 from src.gateway.application.services.knowledge_service import KnowledgeService
 from src.gateway.application.services.retrieval_service import IRetrievalService
+from src.gateway.application.services.runtime_settings_service import EffectiveRuntimePolicy
 from src.gateway.config import get_settings
 from src.gateway.domain.canonical import (
     CanonicalBlock,
@@ -39,6 +41,7 @@ from src.gateway.domain.exceptions import (
     ValidationException,
 )
 from src.gateway.domain.prompts import compose_system_prompt
+from src.gateway.domain.authorization import narrow_requested_spaces, resolve_request_space_scope
 from src.gateway.domain.tools import (
     FunctionCall,
     get_internal_tool_definitions,
@@ -86,10 +89,12 @@ class ChatOrchestratorService(IChatOrchestrator):
         max_repeated_tool_signatures: Optional[int] = None,
         max_tool_wall_clock_seconds: Optional[float] = None,
         max_hidden_turn_bytes: int = 8 * 1024 * 1024,
+        runtime_policy_provider: Optional[Callable[[Any], Awaitable[EffectiveRuntimePolicy]]] = None,
     ) -> None:
         self.llm_client = llm_client
         self.knowledge_service = knowledge_service
         self.retrieval_service = retrieval_service
+        self._runtime_policy_provider = runtime_policy_provider
         self.max_tool_iterations = (
             max_tool_iterations
             if max_tool_iterations is not None
@@ -197,7 +202,7 @@ class ChatOrchestratorService(IChatOrchestrator):
         return next_total
 
     def _prepare_tools(
-        self, client_tools: List[ToolDefinition]
+        self, client_tools: List[ToolDefinition], policy: Optional[EffectiveRuntimePolicy] = None
     ) -> Tuple[List[ToolDefinition], Optional[List[Dict[str, Any]]]]:
 
         reserved = [
@@ -212,6 +217,9 @@ class ChatOrchestratorService(IChatOrchestrator):
 
         principal = get_bound_principal()
         search_allowed = principal is None or "*" in principal.scopes or "knowledge:read" in principal.scopes
+        effective_policy = policy or EffectiveRuntimePolicy.default()
+        if not effective_policy.knowledge_tools_enabled:
+            search_allowed = False
         internal_definitions = (
             [tool for tool in get_internal_tool_definitions() if tool.function.name == "knowledge_search"]
             if search_allowed
@@ -333,15 +341,26 @@ class ChatOrchestratorService(IChatOrchestrator):
 
         return upstream_msgs
 
+    async def _active_policy(self) -> EffectiveRuntimePolicy:
+        if self._runtime_policy_provider is None:
+            return EffectiveRuntimePolicy.default()
+        principal = get_bound_principal()
+        if principal is None:
+            return EffectiveRuntimePolicy.default()
+        return await self._runtime_policy_provider(principal)
+
     async def _execute_internal_tool(
         self,
         tool_call: ToolCall,
         workspace_id: str,
+        request_scope: frozenset[str] | None = None,
+        policy: EffectiveRuntimePolicy | None = None,
     ) -> CanonicalToolResultBlock:
 
         name = tool_call.function.name
         raw_args = tool_call.function.arguments
         call_id = tool_call.id
+        effective_policy = policy or EffectiveRuntimePolicy.default()
 
         try:
             if isinstance(raw_args, str):
@@ -386,6 +405,17 @@ class ChatOrchestratorService(IChatOrchestrator):
                     )
 
             if name == "knowledge_search" and self.retrieval_service is not None:
+                if not effective_policy.knowledge_tools_enabled:
+                    return CanonicalToolResultBlock(
+                        tool_use_id=call_id,
+                        content=json.dumps(
+                            {
+                                "error": "Knowledge tools are disabled by the active runtime policy.",
+                                "type": "tool_disabled",
+                            }
+                        ),
+                        is_error=True,
+                    )
                 query = str(args.get("query", ""))
                 if not query or not query.strip():
                     return CanonicalToolResultBlock(
@@ -408,16 +438,29 @@ class ChatOrchestratorService(IChatOrchestrator):
                         if principal is None:
                             raise AuthorizationException()
                         requested_workspace = args.get("workspace_id")
+                        requested_tags = args.get("tags")
+                        request_scope = (
+                            request_scope
+                            if request_scope is not None
+                            else resolve_request_space_scope(
+                                workspace_id, get_settings().gateway.default_workspace_id
+                            )
+                        )
                         response = await self.retrieval_service.search(
                             principal,
                             query,
-                            requested_space_ids=(
-                                {str(requested_workspace)}
-                                if requested_workspace
-                                else None
+                            requested_space_ids=narrow_requested_spaces(
+                                request_scope,
+                                {str(requested_workspace)} if requested_workspace else None,
                             ),
                             active_space_id=workspace_id,
                             limit=limit,
+                            semantic_policy=effective_policy.effective_semantic_policy("prefer"),
+                            tags=(
+                                [str(tag) for tag in requested_tags]
+                                if isinstance(requested_tags, list)
+                                else None
+                            ),
                         )
                         content_payload = [
                             {
@@ -439,6 +482,8 @@ class ChatOrchestratorService(IChatOrchestrator):
                             "embedding_coverage": response.health.embedding_coverage,
                             "abstained": response.explanation.abstained,
                         }
+                        if not effective_policy.retrieval_explanations_enabled:
+                            health_payload = None
                     else:
                         ws_id = args.get("workspace_id") or workspace_id
                         results = await self.retrieval_service.hybrid_search(
@@ -531,10 +576,12 @@ class ChatOrchestratorService(IChatOrchestrator):
         self,
         tool_call: ToolCall,
         workspace_id: str,
+        request_scope: frozenset[str] | None = None,
+        policy: EffectiveRuntimePolicy | None = None,
     ) -> CanonicalToolResultBlock:
         try:
             result = await asyncio.wait_for(
-                self._execute_internal_tool(tool_call, workspace_id),
+                self._execute_internal_tool(tool_call, workspace_id, request_scope, policy),
                 timeout=self.tool_timeout_seconds,
             )
         except TimeoutError as exc:
@@ -554,7 +601,9 @@ class ChatOrchestratorService(IChatOrchestrator):
 
         default_ws = get_settings().gateway.default_workspace_id
         effective_workspace = workspace_id if workspace_id != default_ws else (request.workspace_id or default_ws)
-        combined_tool_defs, upstream_tools = self._prepare_tools(request.tools)
+        request_scope = resolve_request_space_scope(effective_workspace, default_ws)
+        active_policy = await self._active_policy()
+        combined_tool_defs, upstream_tools = self._prepare_tools(request.tools, active_policy)
 
         conversation_messages: List[CanonicalMessage] = list(request.messages)
         iteration = 0
@@ -713,6 +762,8 @@ class ChatOrchestratorService(IChatOrchestrator):
                 result_block = await self._execute_internal_tool_bounded(
                     tc,
                     effective_workspace,
+                    request_scope,
+                    active_policy,
                 )
                 tool_result_blocks.append(result_block)
 
@@ -741,7 +792,9 @@ class ChatOrchestratorService(IChatOrchestrator):
 
         default_ws = get_settings().gateway.default_workspace_id
         effective_workspace = workspace_id if workspace_id != default_ws else (request.workspace_id or default_ws)
-        combined_tool_defs, upstream_tools = self._prepare_tools(request.tools)
+        request_scope = resolve_request_space_scope(effective_workspace, default_ws)
+        active_policy = await self._active_policy()
+        combined_tool_defs, upstream_tools = self._prepare_tools(request.tools, active_policy)
 
         conversation_messages: List[CanonicalMessage] = list(request.messages)
         iteration = 0
@@ -929,6 +982,8 @@ class ChatOrchestratorService(IChatOrchestrator):
                     result_block = await self._execute_internal_tool_bounded(
                         tc,
                         effective_workspace,
+                        request_scope,
+                        active_policy,
                     )
                     tool_result_blocks.append(result_block)
 

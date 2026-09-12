@@ -57,8 +57,10 @@ class AuthorizedRetrievalService:
         active_space_boost: float | None = None,
         exact_vector: bool = False,
         hnsw_ef_search: int | None = None,
+        tags: Sequence[str] | None = None,
     ) -> RetrievalResponse:
         normalized_query = query.strip()
+        normalized_tags = self._normalize_tags(tags)
         defaults = (
             await self._runtime_settings_provider(principal)
             if self._runtime_settings_provider is not None
@@ -183,6 +185,9 @@ class AuthorizedRetrievalService:
                 raise
             coverage = await coverage_task
             observe_metric("gateway_embedding_generation_coverage_ratio", coverage, outcome="success")
+            if normalized_tags:
+                lexical_candidates = self._filter_tags(lexical_candidates, normalized_tags)
+                vector_candidates = self._filter_tags(vector_candidates, normalized_tags)
             fusion_started = perf_counter()
             hits = self._fuse(
                 lexical_candidates,
@@ -226,6 +231,36 @@ class AuthorizedRetrievalService:
         finally:
             reset_principal(token)
             observe_metric("gateway_retrieval_duration_seconds", perf_counter() - total_started, phase="total", outcome=outcome)
+
+    @staticmethod
+    def _normalize_tags(tags: Sequence[str] | None) -> tuple[str, ...]:
+        if not tags:
+            return ()
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for raw in tags:
+            cleaned = raw.strip() if isinstance(raw, str) else ""
+            if not cleaned or len(cleaned) > 80 or cleaned in seen:
+                continue
+            seen.add(cleaned)
+            normalized.append(cleaned)
+            if len(normalized) >= 32:
+                break
+        return tuple(normalized)
+
+    @staticmethod
+    def _filter_tags(
+        candidates: list[RetrievalCandidate],
+        tags: tuple[str, ...],
+    ) -> list[RetrievalCandidate]:
+        wanted = set(tags)
+        kept: list[RetrievalCandidate] = []
+        for candidate in candidates:
+            raw_tags = candidate.source_metadata.get("tags") if candidate.source_metadata else None
+            candidate_tags = {str(tag) for tag in raw_tags} if isinstance(raw_tags, list) else set()
+            if candidate_tags & wanted:
+                kept.append(candidate)
+        return kept
 
     @staticmethod
     async def _timed_phase(phase: str, operation):

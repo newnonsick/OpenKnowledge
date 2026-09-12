@@ -77,3 +77,25 @@ def is_allowed(context: AuthorizationContext, action: Action) -> bool:
     if context.space_role is None:
         return False
     return action in _SPACE_ACTIONS[context.space_role]
+
+
+def resolve_request_space_scope(
+    request_workspace_id: str | None,
+    default_workspace_id: str,
+) -> frozenset[str] | None:
+    cleaned = (request_workspace_id or "").strip()
+    if not cleaned or cleaned == default_workspace_id:
+        return None
+    return frozenset({cleaned})
+
+
+def narrow_requested_spaces(
+    request_scope: frozenset[str] | None,
+    requested: set[str] | frozenset[str] | list[str] | tuple[str, ...] | None,
+) -> set[str] | None:
+    if requested is None:
+        return set(request_scope) if request_scope is not None else None
+    narrowed = {str(space_id) for space_id in requested if str(space_id).strip()}
+    if request_scope is not None:
+        narrowed &= set(request_scope)
+    return narrowed

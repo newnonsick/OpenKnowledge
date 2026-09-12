@@ -35,6 +35,13 @@ groups:
           severity: warning
         annotations:
           summary: Ingestion queue exceeds the family workload budget
+      - alert: GatewayWorkerMetricsMissing
+        expr: absent(gateway_ingestion_queue_depth) == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: No worker operational metrics have been collected recently
       - alert: GatewayIngestionTerminalFailures
         expr: increase(gateway_ingestion_events_total{event="terminal",outcome="failed"}[15m]) > 0
         labels:
