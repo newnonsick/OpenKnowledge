@@ -37,11 +37,13 @@ async def set_principal_context(connection, principal: Principal) -> None:
     await connection.execute(
         text(
             "SELECT set_config('app.principal_id', :member_id, true), "
-            "set_config('app.principal_restricted', :restricted, true)"
+            "set_config('app.principal_restricted', :restricted, true), "
+            "set_config('app.credential_id', :credential_id, true)"
         ),
         {
             "member_id": member_id,
             "restricted": "true" if principal.restricted else "false",
+            "credential_id": principal.credential_id or "",
         },
     )
 

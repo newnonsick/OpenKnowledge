@@ -87,11 +87,13 @@ def _install_bound_principal_context(session, transaction, connection) -> None:
     connection.execute(
         text(
             "SELECT set_config('app.principal_id', :member_id, true), "
-            "set_config('app.principal_restricted', :restricted, true)"
+            "set_config('app.principal_restricted', :restricted, true), "
+            "set_config('app.credential_id', :credential_id, true)"
         ),
         {
             "member_id": member_id,
             "restricted": "true" if principal.restricted else "false",
+            "credential_id": principal.credential_id or "",
         },
     )
 
@@ -242,6 +244,8 @@ async def _validate_runtime_database_connection(connection) -> None:
     runtime_tables = (
         "alembic_version",
         "api_key_scopes",
+        "api_key_space_grants",
+        "api_key_budget_usage",
         "audit_events",
         "compatibility_principals",
         "document_chunks",
@@ -308,6 +312,8 @@ async def _validate_runtime_database_connection(connection) -> None:
                     "gateway_is_initial_space_owner",
                     "gateway_can_change_membership",
                     "gateway_actor_super_admin",
+                    "gateway_key_space_grants",
+                    "gateway_key_may_use_space",
                 ]
             },
         )
@@ -332,6 +338,8 @@ async def _validate_runtime_database_connection(connection) -> None:
                     "gateway_is_initial_space_owner",
                     "gateway_can_change_membership",
                     "gateway_actor_super_admin",
+                    "gateway_key_space_grants",
+                    "gateway_key_may_use_space",
                 ]
             },
         )
@@ -359,6 +367,8 @@ async def _validate_runtime_database_connection(connection) -> None:
                     "gateway_is_initial_space_owner",
                     "gateway_can_change_membership",
                     "gateway_actor_super_admin",
+                    "gateway_key_space_grants",
+                    "gateway_key_may_use_space",
                 ],
             },
         )
@@ -367,6 +377,8 @@ async def _validate_runtime_database_connection(connection) -> None:
     required_privileges = {
         "alembic_version": ("SELECT",),
         "api_key_scopes": ("SELECT", "INSERT", "DELETE"),
+        "api_key_space_grants": ("SELECT", "INSERT", "DELETE"),
+        "api_key_budget_usage": ("SELECT", "INSERT", "UPDATE"),
         "audit_events": ("SELECT", "INSERT"),
         "compatibility_principals": ("SELECT",),
         "document_chunks": ("SELECT", "INSERT", "UPDATE", "DELETE"),
@@ -459,6 +471,8 @@ async def _validate_runtime_database_connection(connection) -> None:
         "public.gateway_is_initial_space_owner(text,uuid)",
         "public.gateway_can_change_membership(text,uuid,text)",
         "public.gateway_actor_super_admin()",
+        "public.gateway_key_space_grants(uuid)",
+        "public.gateway_key_may_use_space(uuid,text)",
     )
     for function_name in required_functions:
         allowed = await connection.scalar(

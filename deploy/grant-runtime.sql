@@ -2,10 +2,10 @@
 GRANT CONNECT ON DATABASE :DBNAME TO gateway_runtime, gateway_worker;
 GRANT USAGE ON SCHEMA public TO gateway_runtime, gateway_worker;
 GRANT SELECT ON alembic_version TO gateway_worker;
-GRANT SELECT ON alembic_version, api_key_scopes, audit_events, compatibility_principals, document_chunks, document_files, document_revision_chunks, document_revisions, documents, embedding_generations, idempotency_records, ingestion_jobs, knowledge_items, knowledge_revisions, login_throttle_buckets, members, mfa_factors, mfa_recovery_codes, password_credentials, pending_ai_actions, personal_api_keys, provenance_links, retrieval_units, runtime_setting_revisions, session_credentials, session_families, space_memberships, workspaces TO gateway_runtime;
-GRANT INSERT ON api_key_scopes, audit_events, document_chunks, document_files, document_revisions, documents, idempotency_records, ingestion_jobs, job_outbox, knowledge_items, knowledge_revisions, login_throttle_buckets, members, mfa_factors, mfa_recovery_codes, password_credentials, pending_ai_actions, personal_api_keys, provenance_links, retrieval_units, runtime_setting_revisions, session_credentials, session_families, space_memberships, workspaces TO gateway_runtime;
-GRANT UPDATE ON document_chunks, document_files, idempotency_records, knowledge_items, login_throttle_buckets, members, mfa_factors, mfa_recovery_codes, password_credentials, personal_api_keys, session_credentials, session_families TO gateway_runtime;
-GRANT DELETE ON api_key_scopes, document_chunks, document_files, knowledge_items, space_memberships TO gateway_runtime;
+GRANT SELECT ON alembic_version, api_key_scopes, api_key_space_grants, api_key_budget_usage, audit_events, compatibility_principals, document_chunks, document_files, document_revision_chunks, document_revisions, documents, embedding_generations, idempotency_records, ingestion_jobs, knowledge_items, knowledge_revisions, login_throttle_buckets, members, mfa_factors, mfa_recovery_codes, password_credentials, pending_ai_actions, personal_api_keys, provenance_links, retrieval_units, runtime_setting_revisions, session_credentials, session_families, space_memberships, workspaces TO gateway_runtime;
+GRANT INSERT ON api_key_scopes, api_key_space_grants, api_key_budget_usage, audit_events, document_chunks, document_files, document_revisions, documents, idempotency_records, ingestion_jobs, job_outbox, knowledge_items, knowledge_revisions, login_throttle_buckets, members, mfa_factors, mfa_recovery_codes, password_credentials, pending_ai_actions, personal_api_keys, provenance_links, retrieval_units, runtime_setting_revisions, session_credentials, session_families, space_memberships, workspaces TO gateway_runtime;
+GRANT UPDATE ON api_key_budget_usage, document_chunks, document_files, idempotency_records, knowledge_items, login_throttle_buckets, members, mfa_factors, mfa_recovery_codes, password_credentials, personal_api_keys, session_credentials, session_families TO gateway_runtime;
+GRANT DELETE ON api_key_scopes, api_key_space_grants, document_chunks, document_files, knowledge_items, space_memberships TO gateway_runtime;
 GRANT UPDATE (revoked_at) ON compatibility_principals TO gateway_runtime;
 GRANT UPDATE (display_name, current_revision_id, archived_at, revision, updated_at) ON documents TO gateway_runtime;
 GRANT UPDATE (staging_storage_key, storage_key) ON document_revisions TO gateway_runtime;
@@ -16,7 +16,7 @@ GRANT UPDATE (state, activation_reason, activated_by_member_id, activated_at) ON
 GRANT UPDATE (role, updated_at) ON space_memberships TO gateway_runtime;
 GRANT UPDATE (name, archived_at, revision) ON workspaces TO gateway_runtime;
 GRANT USAGE, SELECT ON login_throttle_buckets_id_seq TO gateway_runtime;
-GRANT EXECUTE ON FUNCTION gateway_actor_active(), gateway_has_space_role(text, text[]), gateway_is_initial_space_owner(text, uuid), gateway_can_change_membership(text, uuid, text), gateway_actor_super_admin() TO gateway_runtime;
+GRANT EXECUTE ON FUNCTION gateway_actor_active(), gateway_has_space_role(text, text[]), gateway_is_initial_space_owner(text, uuid), gateway_can_change_membership(text, uuid, text), gateway_actor_super_admin(), gateway_key_space_grants(uuid), gateway_key_may_use_space(uuid, text) TO gateway_runtime;
 GRANT SELECT ON document_revision_chunks, document_revisions, documents, embedding_generations, ingestion_jobs, job_outbox, members, operational_alerts, retrieval_units, space_memberships, workspaces TO gateway_worker;
 GRANT INSERT ON document_revision_chunks, job_outbox, operational_alerts, retrieval_units TO gateway_worker;
 GRANT UPDATE (current_revision_id, revision, updated_at) ON documents TO gateway_worker;

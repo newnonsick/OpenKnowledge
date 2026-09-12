@@ -27,6 +27,7 @@ from src.gateway.infrastructure.readiness import ReadinessProbe
 from src.gateway.observability import configure_logging
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
 from src.gateway.presentation.errors import register_exception_handlers
+from src.gateway.presentation.quotas import QuotaMiddleware
 from src.gateway.presentation.request_context import RequestContextMiddleware
 from src.gateway.presentation.request_limits import RequestBodyLimitMiddleware
 from src.gateway.presentation.metrics import MetricsMiddleware, MetricsRegistry
@@ -169,6 +170,7 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
     )
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(QuotaMiddleware)
     app.add_middleware(SettingsContextMiddleware)
     app.add_middleware(
         RequestBodyLimitMiddleware,

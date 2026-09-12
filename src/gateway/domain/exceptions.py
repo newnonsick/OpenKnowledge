@@ -109,6 +109,28 @@ class RateLimitException(GatewayException):
             details={"retry_after_seconds": max(1, retry_after_seconds)},
         )
 
+class QuotaExceededException(GatewayException):
+
+    def __init__(
+        self,
+        retry_after_seconds: int,
+        *,
+        quota: str = "requests",
+        limit: int | None = None,
+    ) -> None:
+        details: dict[str, object] = {"retry_after_seconds": max(1, retry_after_seconds)}
+        if limit is not None:
+            details["quota_limit"] = limit
+        super().__init__(
+            message="Quota exceeded. Try again later.",
+            status_code=429,
+            error_type="rate_limit_error",
+            code="quota_exceeded",
+            details=details,
+        )
+        self.quota = quota
+
+
 class ResourceConflictException(GatewayException):
 
     def __init__(

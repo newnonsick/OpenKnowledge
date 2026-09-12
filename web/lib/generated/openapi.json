@@ -606,6 +606,24 @@
             "title": "Name",
             "type": "string"
           },
+          "permission_profile": {
+            "anyOf": [
+              {
+                "enum": [
+                  "reader",
+                  "project_contributor",
+                  "trusted_maintainer",
+                  "import_worker",
+                  "human_admin"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Permission Profile"
+          },
           "scopes": {
             "items": {
               "type": "string"
@@ -614,6 +632,21 @@
             "minItems": 1,
             "title": "Scopes",
             "type": "array"
+          },
+          "space_grants": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Space Grants"
           }
         },
         "required": [
@@ -685,6 +718,20 @@
             },
             "title": "Scopes",
             "type": "array"
+          },
+          "space_grants": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Space Grants"
           },
           "status": {
             "enum": [
@@ -1367,6 +1414,17 @@
             "title": "Id",
             "type": "string"
           },
+          "permission_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Permission Profile"
+          },
           "public_id": {
             "title": "Public Id",
             "type": "string"
@@ -1381,6 +1439,20 @@
           "secret": {
             "title": "Secret",
             "type": "string"
+          },
+          "space_grants": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Space Grants"
           }
         },
         "required": [
@@ -1460,6 +1532,92 @@
           "revision"
         ],
         "title": "CreatedSpace",
+        "type": "object"
+      },
+      "CredentialQuotaUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "concurrent_in_flight": {
+            "title": "Concurrent In Flight",
+            "type": "integer"
+          },
+          "concurrent_limit": {
+            "title": "Concurrent Limit",
+            "type": "integer"
+          },
+          "credential_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Id"
+          },
+          "request_count": {
+            "title": "Request Count",
+            "type": "integer"
+          },
+          "requests_limit": {
+            "title": "Requests Limit",
+            "type": "integer"
+          },
+          "space_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Space Id"
+          },
+          "storage_bytes": {
+            "title": "Storage Bytes",
+            "type": "integer"
+          },
+          "storage_limit": {
+            "title": "Storage Limit",
+            "type": "integer"
+          },
+          "token_count": {
+            "title": "Token Count",
+            "type": "integer"
+          },
+          "tokens_limit": {
+            "title": "Tokens Limit",
+            "type": "integer"
+          },
+          "window_started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Started At"
+          }
+        },
+        "required": [
+          "credential_id",
+          "space_id",
+          "window_started_at",
+          "request_count",
+          "token_count",
+          "storage_bytes",
+          "requests_limit",
+          "tokens_limit",
+          "storage_limit",
+          "concurrent_limit",
+          "concurrent_in_flight"
+        ],
+        "title": "CredentialQuotaUsage",
         "type": "object"
       },
       "CurrentMember": {
@@ -1555,6 +1713,7 @@
               "login_throttled",
               "model_not_found",
               "parser_timeout",
+              "quota_exceeded",
               "recent_authentication_required",
               "resource_conflict",
               "resource_not_found",
@@ -1636,6 +1795,17 @@
               }
             ],
             "title": "Item Id"
+          },
+          "quota_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quota Limit"
           },
           "retry_after_seconds": {
             "anyOf": [
@@ -10002,6 +10172,139 @@
           }
         ],
         "summary": "Operations Summary",
+        "tags": [
+          "Management"
+        ]
+      }
+    },
+    "/api/v1/quotas/usage": {
+      "get": {
+        "operationId": "quota_usage_api_v1_quotas_usage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "space_id",
+            "required": false,
+            "schema": {
+              "default": "global",
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Space Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialQuotaUsage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Quota Usage",
         "tags": [
           "Management"
         ]

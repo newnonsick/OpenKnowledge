@@ -4,13 +4,13 @@ The system uses one PostgreSQL database with the pgvector extension as its only 
 
 ## Schema areas
 
-The schema is versioned through Alembic migrations `001` through `021` under `alembic/versions/`. The tables, as enumerated by the privilege grants in `deploy/grant-runtime.sql`, group into these areas:
+The schema is versioned through Alembic migrations `001` through `022` under `alembic/versions/`. The tables, as enumerated by the privilege grants in `deploy/grant-runtime.sql`, group into these areas:
 
 | Area | Tables | Purpose |
 |---|---|---|
 | Knowledge | `knowledge_items`, `knowledge_revisions` | Items with immutable, hash-chained revisions |
 | Documents and ingestion | `documents`, `document_revisions`, `document_revision_chunks`, `document_chunks`, `document_files`, `retrieval_units`, `embedding_generations`, `ingestion_jobs`, `job_outbox` | Durable source ingestion pipeline, from upload through activation |
-| Identity | `members`, `password_credentials`, `mfa_factors`, `mfa_recovery_codes`, `session_families`, `session_credentials`, `personal_api_keys`, `api_key_scopes`, `compatibility_principals` | Accounts, MFA, session families, personal API keys, legacy principals |
+| Identity | `members`, `password_credentials`, `mfa_factors`, `mfa_recovery_codes`, `session_families`, `session_credentials`, `personal_api_keys`, `api_key_scopes`, `api_key_space_grants`, `api_key_budget_usage`, `compatibility_principals` | Accounts, MFA, session families, personal API keys with space grants and budget usage, legacy principals |
 | Authorization | `workspaces` (spaces), `space_memberships` | Spaces and per-member roles |
 | Operations | `audit_events`, `runtime_setting_revisions`, `idempotency_records`, `login_throttle_buckets`, `pending_ai_actions`, `operational_alerts` | Audit trail, runtime settings, idempotency, throttling, confirmed AI actions |
 | Migration bookkeeping | `alembic_version` | Current schema revision |

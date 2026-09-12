@@ -579,6 +579,51 @@ class GatewaySettings(BaseSettings):
         ),
         description="Maximum wall-clock duration for one orchestrated chat request",
     )
+    quota_requests_per_minute: int = Field(
+        default=120,
+        gt=0,
+        validation_alias=AliasChoices(
+            "QUOTA_REQUESTS_PER_MINUTE",
+            "quota_requests_per_minute",
+        ),
+        description="Requests allowed per minute per credential and space",
+    )
+    quota_concurrent_requests: int = Field(
+        default=8,
+        gt=0,
+        validation_alias=AliasChoices(
+            "QUOTA_CONCURRENT_REQUESTS",
+            "quota_concurrent_requests",
+        ),
+        description="Concurrent in-flight requests allowed per credential and space",
+    )
+    quota_tokens_per_minute: int = Field(
+        default=60000,
+        gt=0,
+        validation_alias=AliasChoices(
+            "QUOTA_TOKENS_PER_MINUTE",
+            "quota_tokens_per_minute",
+        ),
+        description="Chat tokens allowed per minute per credential and space",
+    )
+    quota_storage_bytes: int = Field(
+        default=1073741824,
+        gt=0,
+        validation_alias=AliasChoices(
+            "QUOTA_STORAGE_BYTES",
+            "quota_storage_bytes",
+        ),
+        description="Stored upload bytes allowed per credential and space",
+    )
+    quota_burst_requests: int = Field(
+        default=20,
+        gt=0,
+        validation_alias=AliasChoices(
+            "QUOTA_BURST_REQUESTS",
+            "quota_burst_requests",
+        ),
+        description="Burst requests absorbed before per-credential rate limiting engages",
+    )
     knowledge_system_prompt_enabled: bool = Field(
         default=True,
         validation_alias=AliasChoices(

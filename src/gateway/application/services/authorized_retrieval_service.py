@@ -296,6 +296,7 @@ class AuthorizedRetrievalService:
             return await AuthorizationService(session).effective_space_ids(
                 member_id,
                 requested=requested,
+                principal=principal,
             )
 
     @staticmethod

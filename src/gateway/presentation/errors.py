@@ -63,6 +63,9 @@ def _gateway_details(exc: GatewayException) -> dict[str, Any] | None:
     retry_after = exc.details.get("retry_after_seconds")
     if isinstance(retry_after, int) and not isinstance(retry_after, bool):
         details["retry_after_seconds"] = max(1, retry_after)
+    quota_limit = exc.details.get("quota_limit")
+    if isinstance(quota_limit, int) and not isinstance(quota_limit, bool):
+        details["quota_limit"] = quota_limit
     item_id = exc.details.get("item_id")
     if isinstance(item_id, str):
         details["item_id"] = item_id[:255]

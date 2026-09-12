@@ -63,7 +63,8 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                 await connection.execute(text(f'GRANT USAGE ON SCHEMA public TO "{runtime_role}"'))
                 await connection.execute(
                     text(
-                        "GRANT SELECT ON alembic_version, api_key_scopes, audit_events, "
+                        "GRANT SELECT ON alembic_version, api_key_scopes, api_key_space_grants, "
+                        "api_key_budget_usage, audit_events, "
                         "compatibility_principals, document_chunks, document_files, "
                         "document_revision_chunks, document_revisions, documents, "
                         "embedding_generations, idempotency_records, ingestion_jobs, "
@@ -76,7 +77,7 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                 )
                 await connection.execute(
                     text(
-                        "GRANT INSERT ON api_key_scopes, audit_events, "
+                        "GRANT INSERT ON api_key_scopes, api_key_space_grants, api_key_budget_usage, audit_events, "
                         "document_chunks, document_files, document_revisions, documents, "
                         "idempotency_records, ingestion_jobs, job_outbox, knowledge_items, "
                         "knowledge_revisions, login_throttle_buckets, members, mfa_factors, "
@@ -88,7 +89,7 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                 )
                 await connection.execute(
                     text(
-                        "GRANT UPDATE ON document_chunks, document_files, "
+                        "GRANT UPDATE ON api_key_budget_usage, document_chunks, document_files, "
                         "idempotency_records, knowledge_items, "
                         "login_throttle_buckets, members, mfa_factors, mfa_recovery_codes, "
                         "password_credentials, personal_api_keys, session_credentials, session_families "
@@ -97,7 +98,7 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                 )
                 await connection.execute(
                     text(
-                        "GRANT DELETE ON api_key_scopes, document_chunks, document_files, "
+                        "GRANT DELETE ON api_key_scopes, api_key_space_grants, document_chunks, document_files, "
                         f'knowledge_items, space_memberships TO "{runtime_role}"'
                     )
                 )
@@ -155,7 +156,9 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                         "gateway_has_space_role(text, text[]), "
                         "gateway_is_initial_space_owner(text, uuid), "
                         "gateway_can_change_membership(text, uuid, text), "
-                        "gateway_actor_super_admin() "
+                        "gateway_actor_super_admin(), "
+                        "gateway_key_space_grants(uuid), "
+                        "gateway_key_may_use_space(uuid, text) "
                         f'TO "{runtime_role}"'
                     )
                 )

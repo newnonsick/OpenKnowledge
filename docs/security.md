@@ -68,9 +68,41 @@ Client IPs are derived from trusted proxies only when `TRUSTED_PROXY_CIDRS` is c
 ## Personal API keys
 
 - Keys are created with an optional scope set and optional expiry; the secret is returned exactly once and stored as a peppered hash.
+- Keys may carry explicit space grants (`space_grants`): a key created with grants is restricted to the intersection of the owner's member spaces and the granted spaces. Keys created without grants keep all member spaces. A grant for a space the owner cannot access, or for an unknown space, is rejected at creation.
+- Grants are enforced in the authorization service (`authorize_space`, `effective_space_ids`) and in row-level security: `gateway_has_space_role` additionally requires `gateway_key_may_use_space` for the bound credential id, so direct database reads through the runtime role respect grants.
+- Revocation, expiry, member deactivation, and membership removal propagate: resolution re-intersects grants with live memberships, so a removed grant or role takes effect on the next request.
+- An optional permission profile (`reader`, `project_contributor`, `trusted_maintainer`, `import_worker`, `human_admin`) narrows the key's operation scopes; scopes outside the profile are rejected at creation.
 - Peppers are versioned (`API_KEY_PEPPERS`, `ACTIVE_API_KEY_PEPPER_VERSION`) so rotation does not invalidate all keys at once.
 - The first personal key for a new member is issued during the first-use flow (password change or MFA confirmation) and bound to that session family.
 - Creation and revocation are idempotent through the `Idempotency-Key` header and audited.
+
+## Permission profiles
+
+Routine autonomous work runs without opening the console when the credential's profile allows the operation:
+
+| Profile | Routine allow without re-confirmation | Outside the grant |
+|---|---|---|
+| Reader | Search/fetch/context in granted spaces | Write/archive/admin |
+| Project contributor agent | Create observations and update items per resource policy with OCC | Membership changes, global publishing, purge |
+| Trusted project maintainer | Create/update/soft archive within project grants within limits | Identity/admin/retention and data outside the project |
+| Import worker | Upsert source/revisions under its connector identity | Canonical decisions outside its own sources |
+| Human administrator | Sensitive control operations under the recent-auth policy | No automatic read access to every space |
+
+Denied operations have no self-approval path: pending AI actions can only be confirmed by a website session of the same member, and automation credentials never hold approver secrets. Sensitive control operations (member administration, membership changes, space archival, key and session management, settings changes) require a session principal even for the trusted maintainer profile; the policy matrix lives in `src/gateway/domain/permission_profiles.py` with parity enforcement in `src/gateway/application/services/permission_service.py` across REST and AI-tool surfaces.
+
+## Credential and space budgets
+
+Per-credential, per-space budgets keep one agent from starving others:
+
+| Budget | Default | Meaning |
+|---|---|---|
+| `QUOTA_REQUESTS_PER_MINUTE` | `120` | Requests per minute per credential and space |
+| `QUOTA_CONCURRENT_REQUESTS` | `8` | Concurrent in-flight requests per credential and space |
+| `QUOTA_TOKENS_PER_MINUTE` | `60000` | Chat completion tokens per minute per credential and space |
+| `QUOTA_STORAGE_BYTES` | `1073741824` | Stored upload bytes per credential and space |
+| `QUOTA_BURST_REQUESTS` | `20` | Burst requests absorbed before rate limiting engages |
+
+Exceeded budgets return `429 quota_exceeded` with a `Retry-After` header and a `retry_after_seconds` detail. Current usage is visible at `GET /api/v1/quotas/usage?space_id=...`. Token usage is recorded for non-streaming chat completions, storage usage for source uploads, and per-minute request counters persist per API key for operator visibility. Budgets are configured through the environment (see [configuration.md](configuration.md)).
 
 ## Authorization
 

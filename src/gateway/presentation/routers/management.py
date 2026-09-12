@@ -24,10 +24,22 @@ from src.gateway.application.services.member_administration_service import Membe
 from src.gateway.application.services.runtime_settings_service import EffectiveRuntimePolicy, RuntimeSettingsService, RuntimeSettingsRevision, RuntimeSettingsValues
 from src.gateway.application.services.session_service import SessionService
 from src.gateway.application.services.space_service import SpaceService
+from src.gateway.application.use_cases import (
+    CreateKnowledgeCommand,
+    DeleteKnowledgeCommand,
+    KnowledgeCommands,
+    RetrievalQueries,
+    SearchKnowledgeQuery,
+    UpdateKnowledgeCommand,
+    UseCaseContext,
+    redact_retrieval_payload,
+    retrieval_payload,
+)
+from src.gateway.application.services.permission_service import require_profile_route, require_profile_tool
 from src.gateway.config import get_settings
 from src.gateway.domain.exceptions import AuthenticationException, AuthorizationException, ResourceConflictException, ValidationException
 from src.gateway.domain.authorization import Action, narrow_requested_spaces, resolve_request_space_scope
-from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SpaceRole, SystemRole
+from src.gateway.domain.identity import MemberStatus, PermissionProfile, Principal, PrincipalKind, SpaceRole, SystemRole
 from src.gateway.domain.entities import KnowledgeItem as DomainKnowledgeItem
 from src.gateway.infrastructure.database import get_db_session, get_session_factory
 from src.gateway.presentation.api_keys import configured_api_key_codec
@@ -36,13 +48,14 @@ from src.gateway.infrastructure.persistence.ingestion_models import DocumentMode
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
 from src.gateway.infrastructure.persistence.models import KnowledgeItem as KnowledgeItemModel, KnowledgeRevision as KnowledgeRevisionModel
 from src.gateway.infrastructure.persistence.retrieval_unit_repository import PostgresRetrievalUnitRepository
-from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeModel, AuditEventModel, MemberModel, MFAFactorModel, PendingAIActionModel, PersonalAPIKeyModel, SessionCredentialModel, SessionFamilyModel, SpaceMembershipModel
+from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeModel, APIKeySpaceGrantModel, AuditEventModel, MemberModel, MFAFactorModel, PendingAIActionModel, PersonalAPIKeyModel, SessionCredentialModel, SessionFamilyModel, SpaceMembershipModel
 from src.gateway.infrastructure.persistence.models import Workspace
 from src.gateway.infrastructure.persistence.runtime_settings_models import RuntimeSettingRevisionModel
 from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings, load_active_runtime_policy
 from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
 from src.gateway.presentation.authorization import require_principal, require_scope
 from src.gateway.presentation.request_context import get_request_id
+from src.gateway.application.services.quota_service import quota_service_from_settings
 from src.gateway.presentation.schemas.management_responses import (
     MANAGEMENT_ERROR_RESPONSES,
     AdminSpaceSummary,
@@ -55,6 +68,7 @@ from src.gateway.presentation.schemas.management_responses import (
     CreatedAPIKey,
     CreatedMember,
     CreatedSpace,
+    CredentialQuotaUsage,
     CurrentMember,
     IngestionJob,
     IngestionMutation,
@@ -100,7 +114,8 @@ async def operations_summary(
     principal: Principal = Depends(require_scope("settings:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal))
+    require_profile_route(principal, "settings.inspect")
+    space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal), principal=principal)
     states = ("queued", "retry_wait", "running", "cancellation_requested", "succeeded", "failed", "cancelled")
     if space_ids:
         job_rows = await session.execute(
@@ -169,6 +184,8 @@ class APIKeyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     scopes: list[str] = Field(min_length=1, max_length=16)
     expires_at: datetime | None = None
+    space_grants: list[str] | None = Field(default=None, max_length=100)
+    permission_profile: Literal["reader", "project_contributor", "trusted_maintainer", "import_worker", "human_admin"] | None = None
 
 
 class MemberCreateRequest(BaseModel):
@@ -514,6 +531,20 @@ async def _active_policy(principal: Principal) -> EffectiveRuntimePolicy:
     return await load_active_runtime_policy(principal)
 
 
+async def _record_upload_storage(principal: Principal, space_id: str, revision_id) -> None:
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            revision = await session.get(DocumentRevisionModel, revision_id)
+            size_bytes = int(revision.size_bytes or 0) if revision is not None else 0
+        if size_bytes > 0:
+            from src.gateway.presentation.quota_usage import record_storage_usage
+
+            await record_storage_usage(principal, space_id=space_id, storage_bytes=size_bytes)
+    except Exception:
+        return
+
+
 def _require_knowledge_tools(policy: EffectiveRuntimePolicy) -> None:
     if not policy.knowledge_tools_enabled:
         raise AuthorizationException()
@@ -602,7 +633,7 @@ async def _ai_resource_space_ids(
     if arguments.space_id is not None:
         await AuthorizationService(session).authorize_space(principal, arguments.space_id, Action.CONTENT_READ)
         return (arguments.space_id,)
-    return await AuthorizationService(session).effective_space_ids(_actor_id(principal))
+    return await AuthorizationService(session).effective_space_ids(_actor_id(principal), principal=principal)
 
 
 async def _ai_source_page(session: AsyncSession, principal: Principal, arguments: AIListResourcesArguments) -> dict:
@@ -713,6 +744,7 @@ async def list_ai_tools(
             if ("*" in principal.scopes or scope in principal.scopes)
             and (name != "settings.propose.v1" or principal.system_role is SystemRole.SUPER_ADMIN)
             and _ai_tool_allowed(name, policy)
+            and _profile_tool_visible(principal, name)
         ]
     }
 
@@ -737,6 +769,14 @@ def _ai_tool_allowed(tool_name: str, policy: EffectiveRuntimePolicy) -> bool:
     return True
 
 
+def _profile_tool_visible(principal: Principal, tool_name: str) -> bool:
+    try:
+        require_profile_tool(principal, tool_name)
+    except AuthorizationException:
+        return False
+    return True
+
+
 @router.post(
     "/ai-tools/{tool_name}",
     status_code=status.HTTP_202_ACCEPTED,
@@ -755,6 +795,7 @@ async def execute_ai_tool(
     definition = AI_TOOL_DEFINITIONS.get(tool_name)
     if definition is None:
         raise ValidationException("Unknown or unavailable AI tool.")
+    require_profile_tool(principal, tool_name)
     scope, confirmation, _, argument_model = definition
     if "*" not in principal.scopes and scope not in principal.scopes:
         raise AuthorizationException()
@@ -1129,6 +1170,44 @@ async def capabilities(
     }
 
 
+@router.get("/quotas/usage", response_model=CredentialQuotaUsage)
+async def quota_usage(
+    space_id: str = Query(default="global", min_length=1, max_length=64),
+    principal: Principal = Depends(require_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    await AuthorizationService(session).authorize_space(principal, space_id, Action.CONTENT_READ)
+    service = quota_service_from_settings(get_settings().gateway)
+    observed = await service.usage(session, principal, space_id=space_id)
+    if observed is None:
+        return {
+            "credential_id": principal.credential_id,
+            "space_id": space_id,
+            "window_started_at": None,
+            "request_count": 0,
+            "token_count": 0,
+            "storage_bytes": 0,
+            "requests_limit": service.policy.requests_per_minute,
+            "tokens_limit": service.policy.tokens_per_minute,
+            "storage_limit": service.policy.storage_bytes,
+            "concurrent_limit": service.policy.concurrent_requests,
+            "concurrent_in_flight": await service.in_flight(principal, space_id=space_id),
+        }
+    return {
+        "credential_id": observed.credential_id,
+        "space_id": observed.space_id,
+        "window_started_at": observed.window_started_at.isoformat() if observed.window_started_at else None,
+        "request_count": observed.request_count,
+        "token_count": observed.token_count,
+        "storage_bytes": observed.storage_bytes,
+        "requests_limit": observed.requests_limit,
+        "tokens_limit": observed.tokens_limit,
+        "storage_limit": observed.storage_limit,
+        "concurrent_limit": observed.concurrent_limit,
+        "concurrent_in_flight": observed.concurrent_in_flight,
+    }
+
+
 @router.get("/spaces", response_model=Page[SpaceSummary])
 async def list_spaces(
     page: int = Query(default=1, ge=1),
@@ -1137,6 +1216,7 @@ async def list_spaces(
     principal: Principal = Depends(require_scope("spaces:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "space.list")
     member_id = _actor_id(principal)
     query = (
         select(Workspace, SpaceMembershipModel.role)
@@ -1226,6 +1306,7 @@ async def create_space(
     principal: Principal = Depends(require_scope("spaces:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "space.create")
     reservation = await _reserve(
         session,
         principal,
@@ -1276,6 +1357,7 @@ async def list_space_members(
     principal: Principal = Depends(require_scope("spaces:members")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "space.members.list")
     actor_membership = await session.scalar(
         select(SpaceMembershipModel).where(
             SpaceMembershipModel.space_id == space_id,
@@ -1327,6 +1409,7 @@ async def list_space_member_candidates(
     principal: Principal = Depends(require_scope("spaces:members")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "space.members.list")
     actor_membership = await session.scalar(
         select(SpaceMembershipModel).where(
             SpaceMembershipModel.space_id == space_id,
@@ -1385,6 +1468,7 @@ async def set_space_membership(
     principal: Principal = Depends(require_scope("spaces:members")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "space.members.set")
     reservation = await _reserve(
         session,
         principal,
@@ -1417,6 +1501,7 @@ async def transfer_space_ownership(
     principal: Principal = Depends(require_scope("spaces:members")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "space.members.set")
     reservation = await _reserve(
         session,
         principal,
@@ -1532,6 +1617,7 @@ async def archive_space(
     principal: Principal = Depends(require_scope("spaces:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> Response:
+    require_profile_route(principal, "space.archive")
     reservation = await _reserve(
         session,
         principal,
@@ -1563,7 +1649,8 @@ async def list_knowledge(
     principal: Principal = Depends(require_scope("knowledge:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    effective_space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal))
+    require_profile_route(principal, "knowledge.search")
+    effective_space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal), principal=principal)
     if space_id is not None:
         if space_id not in effective_space_ids:
             return {"items": [], **_page_metadata(page=page, page_size=page_size, total_items=0)}
@@ -1608,36 +1695,23 @@ async def create_knowledge(
     principal: Principal = Depends(require_scope("knowledge:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    _require_mutation_tools(await _active_policy(principal))
-    reservation = await _reserve(
-        session,
-        principal,
-        "knowledge.create",
-        idempotency_key,
-        payload.model_dump(mode="json"),
+    require_profile_route(principal, "knowledge.create")
+    outcome = await KnowledgeCommands(session).create(
+        UseCaseContext(
+            principal=principal,
+            policy=await _active_policy(principal),
+            request_id=get_request_id(request),
+            idempotency_key=idempotency_key,
+        ),
+        CreateKnowledgeCommand(
+            space_id=payload.space_id,
+            title=payload.title,
+            content=payload.content,
+            tags=tuple(payload.tags),
+        ),
     )
-    knowledge = KnowledgeManagementService(session)
-    if reservation.status is ReservationStatus.REPLAY:
-        if not reservation.resource_ids:
-            raise ResourceConflictException()
-        existing = await knowledge.get(UUID(reservation.resource_ids[0]))
-        if existing is None:
-            raise ResourceConflictException()
-        return _knowledge_payload(existing)
-    created = await knowledge.create(
-        principal,
-        space_id=payload.space_id,
-        title=payload.title.strip(),
-        content=payload.content,
-        tags=[tag.strip() for tag in payload.tags if tag.strip()],
-        request_id=get_request_id(request),
-    )
-    await IdempotencyService(session).complete(
-        reservation.record_id,
-        response_status=201,
-        resource_ids=[str(created.id)],
-    )
-    return _knowledge_payload(created)
+    assert outcome.value is not None
+    return _knowledge_payload(outcome.value)
 
 
 @router.get("/knowledge/{item_id}", response_model=KnowledgeDetail)
@@ -1646,10 +1720,11 @@ async def get_knowledge(
     principal: Principal = Depends(require_scope("knowledge:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    item = await KnowledgeManagementService(session).get(item_id)
-    if item is None:
-        raise AuthorizationException()
-    await AuthorizationService(session).authorize_space(principal, item.workspace_id, Action.CONTENT_READ)
+    require_profile_route(principal, "knowledge.read")
+    item = await KnowledgeCommands(session).get(
+        UseCaseContext(principal=principal),
+        item_id,
+    )
     return _knowledge_payload(item)
 
 
@@ -1662,36 +1737,25 @@ async def update_knowledge(
     principal: Principal = Depends(require_scope("knowledge:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    _require_mutation_tools(await _active_policy(principal))
-    reservation = await _reserve(
-        session,
-        principal,
-        "knowledge.update",
-        idempotency_key,
-        {"item_id": str(item_id), **payload.model_dump(mode="json")},
+    require_profile_route(principal, "knowledge.update")
+    outcome = await KnowledgeCommands(session).update(
+        UseCaseContext(
+            principal=principal,
+            policy=await _active_policy(principal),
+            request_id=get_request_id(request),
+            idempotency_key=idempotency_key,
+        ),
+        UpdateKnowledgeCommand(
+            item_id=item_id,
+            expected_version=payload.expected_version,
+            title=payload.title,
+            content=payload.content,
+            tags=tuple(payload.tags),
+            change_summary=payload.change_summary,
+        ),
     )
-    knowledge = KnowledgeManagementService(session)
-    if reservation.status is ReservationStatus.REPLAY:
-        current = await knowledge.get(item_id)
-        if current is None:
-            raise ResourceConflictException()
-        return _knowledge_payload(current)
-    updated = await knowledge.update(
-        principal,
-        item_id,
-        expected_version=payload.expected_version,
-        title=payload.title.strip(),
-        content=payload.content,
-        tags=[tag.strip() for tag in payload.tags if tag.strip()],
-        change_summary=payload.change_summary,
-        request_id=get_request_id(request),
-    )
-    await IdempotencyService(session).complete(
-        reservation.record_id,
-        response_status=200,
-        resource_ids=[str(item_id)],
-    )
-    return _knowledge_payload(updated)
+    assert outcome.value is not None
+    return _knowledge_payload(outcome.value)
 
 
 @router.delete("/knowledge/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1703,26 +1767,16 @@ async def delete_knowledge(
     principal: Principal = Depends(require_scope("knowledge:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> Response:
-    _require_mutation_tools(await _active_policy(principal))
-    reservation = await _reserve(
-        session,
-        principal,
-        "knowledge.delete",
-        idempotency_key,
-        {"item_id": str(item_id), "expected_version": expected_version},
-    )
-    if reservation.status is not ReservationStatus.REPLAY:
-        await KnowledgeManagementService(session).delete(
-            principal,
-            item_id,
-            expected_version=expected_version,
+    require_profile_route(principal, "knowledge.delete")
+    await KnowledgeCommands(session).delete(
+        UseCaseContext(
+            principal=principal,
+            policy=await _active_policy(principal),
             request_id=get_request_id(request),
-        )
-        await IdempotencyService(session).complete(
-            reservation.record_id,
-            response_status=204,
-            resource_ids=[str(item_id)],
-        )
+            idempotency_key=idempotency_key,
+        ),
+        DeleteKnowledgeCommand(item_id=item_id, expected_version=expected_version),
+    )
     return Response(status_code=204)
 
 
@@ -1732,55 +1786,19 @@ async def search_retrieval(
     principal: Principal = Depends(require_scope("knowledge:read")),
     idempotency_key: str | None = Header(default=None, min_length=1, max_length=128, alias="Idempotency-Key"),
 ) -> dict:
+    require_profile_route(principal, "knowledge.search")
     policy = await _active_policy(principal)
-    _require_knowledge_tools(policy)
-    default_ws = get_settings().gateway.default_workspace_id
-    request_scope = resolve_request_space_scope(payload.active_space_id, default_ws)
-    result = await _retrieval_service().search(
-        principal,
-        payload.query,
-        requested_space_ids=narrow_requested_spaces(
-            request_scope,
-            set(payload.space_ids) if payload.space_ids is not None else None,
+    search_payload = await RetrievalQueries().search(
+        UseCaseContext(principal=principal, policy=policy),
+        SearchKnowledgeQuery(
+            query=payload.query,
+            space_ids=tuple(payload.space_ids) if payload.space_ids is not None else None,
+            active_space_id=payload.active_space_id,
+            semantic_policy=payload.semantic_policy,
+            limit=payload.limit,
+            tags=tuple(payload.tags) if payload.tags is not None else None,
         ),
-        active_space_id=payload.active_space_id,
-        semantic_policy=policy.effective_semantic_policy(payload.semantic_policy),
-        limit=payload.limit,
-        tags=list(payload.tags) if payload.tags is not None else None,
     )
-    search_payload = {
-        "query": result.query,
-        "hits": [
-            {
-                "rank": hit.rank,
-                "rank_score": hit.rank_score,
-                "source_type": hit.candidate.source_type,
-                "space_id": hit.candidate.space_id,
-                "canonical_id": str(hit.candidate.canonical_id),
-                "revision_id": str(hit.candidate.revision_id),
-                "title": hit.candidate.title,
-                "content_excerpt": hit.candidate.content[:600],
-                "citation_uri": hit.candidate.citation_uri,
-                "language": hit.candidate.language,
-                "source_filename": hit.candidate.source_filename,
-                "version": hit.candidate.version,
-            }
-            for hit in result.hits
-        ],
-        "health": {
-            "semantic_status": result.health.semantic_status,
-            "degraded_reasons": list(result.health.degraded_reasons),
-            "embedding_generation_id": str(result.health.embedding_generation_id) if result.health.embedding_generation_id else None,
-            "embedding_coverage": result.health.embedding_coverage,
-        },
-        "explanation": {
-            "effective_space_ids": list(result.explanation.effective_space_ids),
-            "abstained": result.explanation.abstained,
-            "active_space_id": result.explanation.active_space_id,
-        },
-    }
-    if not policy.retrieval_explanations_enabled:
-        return _redact_explanation(search_payload)
     return search_payload
 
 
@@ -1791,7 +1809,9 @@ async def upload_source(
     display_name: str | None = Form(default=None, max_length=500),
     idempotency_key: str = Header(min_length=1, max_length=255, alias="Idempotency-Key"),
     principal: Principal = Depends(require_scope("knowledge:write")),
+    request: Request = None,
 ) -> dict:
+    require_profile_route(principal, "source.upload")
     _require_mutation_tools(await _active_policy(principal))
     filename = file.filename or "uploaded-source"
     gateway = get_settings().gateway
@@ -1808,6 +1828,7 @@ async def upload_source(
         chunks=_upload_chunks(file),
         idempotency_key=idempotency_key,
     )
+    await _record_upload_storage(principal, space_id, receipt.revision_id)
     return {
         "document_id": str(receipt.document_id),
         "revision_id": str(receipt.revision_id),
@@ -1830,7 +1851,8 @@ async def list_sources(
     principal: Principal = Depends(require_scope("knowledge:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    effective_space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal))
+    require_profile_route(principal, "source.list")
+    effective_space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal), principal=principal)
     if space_id is not None:
         if space_id not in effective_space_ids:
             return {"items": [], **_page_metadata(page=page, page_size=page_size, total_items=0)}
@@ -1916,6 +1938,7 @@ async def archive_source(
     principal: Principal = Depends(require_scope("knowledge:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> Response:
+    require_profile_route(principal, "source.upload")
     _require_mutation_tools(await _active_policy(principal))
     reservation = await _reserve(
         session,
@@ -1976,7 +1999,8 @@ async def list_ingestion_jobs(
     principal: Principal = Depends(require_scope("knowledge:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    effective_space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal))
+    require_profile_route(principal, "ingestion_job.list")
+    effective_space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal), principal=principal)
     if space_id is not None:
         if space_id not in effective_space_ids:
             return {"items": [], **_page_metadata(page=page, page_size=page_size, total_items=0)}
@@ -2079,6 +2103,7 @@ async def cancel_ingestion_job(
     principal: Principal = Depends(require_scope("knowledge:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "ingestion_job.mutate")
     return await _mutate_ingestion_job(job_id, "cancel", request, idempotency_key, principal, session)
 
 
@@ -2090,6 +2115,7 @@ async def retry_ingestion_job(
     principal: Principal = Depends(require_scope("knowledge:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "ingestion_job.mutate")
     return await _mutate_ingestion_job(job_id, "retry", request, idempotency_key, principal, session)
 
 
@@ -2102,6 +2128,7 @@ async def list_api_keys(
     principal: Principal = Depends(require_scope("api_keys:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "api_key.manage")
     member_id = _actor_id(principal)
     query = (
         select(PersonalAPIKeyModel)
@@ -2137,9 +2164,23 @@ async def list_api_keys(
         if key_ids
         else []
     )
+    grant_rows = (
+        (
+            await session.execute(
+                select(APIKeySpaceGrantModel.api_key_id, APIKeySpaceGrantModel.space_id).where(
+                    APIKeySpaceGrantModel.api_key_id.in_(key_ids)
+                )
+            )
+        ).all()
+        if key_ids
+        else []
+    )
     scopes: dict[UUID, list[str]] = {key_id: [] for key_id in key_ids}
     for key_id, scope in scope_rows:
         scopes[key_id].append(scope)
+    grant_map: dict[UUID, list[str]] = {key_id: [] for key_id in key_ids}
+    for key_id, space_id in grant_rows:
+        grant_map[key_id].append(space_id)
     return {
         "items": [
             {
@@ -2148,6 +2189,7 @@ async def list_api_keys(
                 "name": key.name,
                 "status": key.status,
                 "scopes": sorted(scopes[key.id]),
+                "space_grants": sorted(grant_map[key.id]) if grant_map[key.id] else None,
                 "created_at": key.created_at.isoformat(),
                 "last_used_at": key.last_used_at.isoformat() if key.last_used_at else None,
                 "expires_at": key.expires_at.isoformat() if key.expires_at else None,
@@ -2168,6 +2210,7 @@ async def create_api_key(
     principal: Principal = Depends(require_scope("api_keys:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> CreatedAPIKey:
+    require_profile_route(principal, "api_key.manage")
     reservation = await _reserve(
         session,
         principal,
@@ -2184,6 +2227,8 @@ async def create_api_key(
             name=payload.name,
             scopes=set(payload.scopes),
             expires_at=payload.expires_at,
+            space_grants=set(payload.space_grants) if payload.space_grants is not None else None,
+            permission_profile=PermissionProfile(payload.permission_profile) if payload.permission_profile else None,
             request_id=get_request_id(request),
         )
     except ValueError as exc:
@@ -2200,6 +2245,8 @@ async def create_api_key(
         secret=created.secret.reveal(),
         scopes=sorted(created.scopes),
         expires_at=created.expires_at,
+        space_grants=sorted(created.space_grants) if created.space_grants is not None else None,
+        permission_profile=created.permission_profile.value if created.permission_profile else None,
     )
 
 
@@ -2211,6 +2258,7 @@ async def revoke_api_key(
     principal: Principal = Depends(require_scope("api_keys:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> Response:
+    require_profile_route(principal, "api_key.manage")
     reservation = await _reserve(
         session,
         principal,
@@ -2242,6 +2290,7 @@ async def list_members(
     principal: Principal = Depends(require_scope("members:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "member.admin")
     if principal.system_role is not SystemRole.SUPER_ADMIN:
         raise AuthorizationException()
     mfa_enabled = exists().where(
@@ -2297,6 +2346,7 @@ async def create_member(
     principal: Principal = Depends(require_scope("members:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> CreatedMember:
+    require_profile_route(principal, "member.admin")
     reservation = await _reserve(
         session,
         principal,
@@ -2341,6 +2391,7 @@ async def update_member(
     principal: Principal = Depends(require_scope("members:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "member.admin")
     reservation = await _reserve(
         session,
         principal,
@@ -2394,6 +2445,7 @@ async def reset_member_password(
     principal: Principal = Depends(require_scope("members:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> ResetMemberPassword:
+    require_profile_route(principal, "member.admin")
     reservation = await _reserve(
         session,
         principal,
@@ -2431,6 +2483,7 @@ async def list_sessions(
     principal: Principal = Depends(require_scope("sessions:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "session.manage")
     current_family = await _family_id(session, principal)
     current_time = datetime.now(timezone.utc)
     query = (
@@ -2487,6 +2540,7 @@ async def revoke_session(
     principal: Principal = Depends(require_scope("sessions:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> Response:
+    require_profile_route(principal, "session.manage")
     family = await session.get(SessionFamilyModel, family_id)
     if family is None or family.member_id != _actor_id(principal):
         raise AuthorizationException()
@@ -2526,6 +2580,7 @@ async def list_audit_events(
     principal: Principal = Depends(require_scope("members:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "member.admin")
     if principal.system_role is not SystemRole.SUPER_ADMIN:
         raise AuthorizationException()
     query = select(AuditEventModel).order_by(AuditEventModel.occurred_at.desc(), AuditEventModel.id.desc())

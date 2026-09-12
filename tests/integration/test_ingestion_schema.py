@@ -13,7 +13,7 @@ async def test_configured_postgres_has_durable_ingestion_schema() -> None:
         expected_embedding_dimension=get_settings().embedding.dimension
     )
     assert status.compatible is True
-    assert status.current_revision == "021"
+    assert status.current_revision == "022"
 
     engine = create_async_engine(
         normalize_database_url(get_settings().database.url),

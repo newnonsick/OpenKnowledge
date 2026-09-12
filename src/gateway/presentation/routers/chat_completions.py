@@ -53,6 +53,7 @@ from src.gateway.presentation.converters.openai_converter import (
     openai_request_to_canonical,
 )
 from src.gateway.presentation.authorization import require_scope
+from src.gateway.presentation.quota_usage import record_token_usage
 from src.gateway.presentation.schemas.openai_schemas import (
     OpenAIChatCompletionChunk,
     OpenAIChatCompletionRequest,
@@ -171,6 +172,7 @@ def get_chat_orchestrator(
 )
 async def create_chat_completion(
     request: OpenAIChatCompletionRequest,
+    http_request: Request,
     orchestrator: IChatOrchestrator = Depends(get_chat_orchestrator),
     model_registry: ModelRegistryService = Depends(get_model_registry),
 ) -> Union[OpenAIChatCompletionResponse, StreamingResponse, JSONResponse]:
@@ -218,6 +220,11 @@ async def create_chat_completion(
             workspace_id=canonical_req.workspace_id or get_settings().gateway.default_workspace_id,
         )
 
+        await record_token_usage(
+            getattr(http_request.state, "principal", None),
+            space_id=canonical_req.workspace_id or get_settings().gateway.default_workspace_id,
+            tokens=canonical_resp.usage.total_tokens,
+        )
         openai_resp = canonical_response_to_openai(canonical_resp)
         return openai_resp
 

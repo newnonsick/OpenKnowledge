@@ -211,6 +211,14 @@ Parsing and embedding happen asynchronously in the worker. Track progress throug
 
 Personal API keys can carry `chat:write`, `knowledge:read`, `knowledge:write`, `spaces:read`, `spaces:write`, `spaces:members`, `api_keys:write`, `settings:read`, and `settings:write`. The `sessions:write` and `members:write` gates on member, session, and audit routes accept browser sessions only; they cannot be granted to an API key.
 
+Create requests accept optional `space_grants` (a list of space ids) and an optional `permission_profile` (`reader`, `project_contributor`, `trusted_maintainer`, `import_worker`, `human_admin`). Keys created with `space_grants` are restricted to the intersection of the owner's member spaces and the granted spaces; keys created without grants keep all member spaces. Key listing exposes `space_grants` (`null` means unrestricted). Profile scopes outside the profile matrix are rejected at creation, and sensitive control operations always require a session principal.
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/quotas/usage?space_id=...` | Current credential's budget usage and limits for the space. |
+
+Exceeded rate, concurrency, storage, or token budgets return `429 quota_exceeded` with a `Retry-After` header. See [security.md](security.md) for the budget table and [configuration.md](configuration.md) for the `QUOTA_*` knobs.
+
 ### Members, sessions, audit
 
 | Method | Path | Description |

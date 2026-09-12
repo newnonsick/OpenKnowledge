@@ -11,9 +11,11 @@ from src.gateway.application.security.tokens import APIKeyCodec, SecretValue
 from src.gateway.application.services.audit_service import AuditService
 from src.gateway.domain.authorization import Action, AuthorizationContext, is_allowed
 from src.gateway.domain.exceptions import AuthenticationException, AuthorizationException, RecentAuthenticationRequiredException
-from src.gateway.domain.identity import APIKeyStatus, MemberStatus, Principal, PrincipalKind, SystemRole
+from src.gateway.domain.identity import APIKeyStatus, MemberStatus, PermissionProfile, Principal, PrincipalKind, SystemRole
+from src.gateway.domain.permission_profiles import profile_scopes
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
-from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeModel, MemberModel, PersonalAPIKeyModel, SessionFamilyModel
+from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeModel, APIKeySpaceGrantModel, MemberModel, PersonalAPIKeyModel, SessionFamilyModel, SpaceMembershipModel
+from src.gateway.infrastructure.persistence.models import Workspace
 
 
 ALLOWED_API_KEY_SCOPES = frozenset(
@@ -42,6 +44,8 @@ class CreatedAPIKey:
     secret: SecretValue
     scopes: frozenset[str]
     expires_at: datetime | None
+    space_grants: frozenset[str] | None = None
+    permission_profile: PermissionProfile | None = None
 
 
 class APIKeyService:
@@ -90,6 +94,8 @@ class APIKeyService:
         scopes: set[str] | frozenset[str],
         request_id: str,
         expires_at: datetime | None = None,
+        space_grants: set[str] | frozenset[str] | None = None,
+        permission_profile: PermissionProfile | str | None = None,
         now: datetime | None = None,
     ) -> CreatedAPIKey:
         normalized_name = name.strip()
@@ -101,6 +107,12 @@ class APIKeyService:
             raise ValueError("Unsupported API key scope")
         if not requested_scopes:
             raise ValueError("At least one API key scope is required")
+        profile = self._normalize_profile(permission_profile)
+        if profile is not None:
+            allowed_scopes = set(profile_scopes(profile))
+            over_broad = requested_scopes - allowed_scopes - {"api_keys:write", "settings:read", "settings:write"}
+            if over_broad and profile is not PermissionProfile.HUMAN_ADMIN:
+                raise ValueError("API key scopes exceed the permission profile")
         current_time = now or datetime.now(timezone.utc)
         member = await self._session.get(MemberModel, member_id)
         family = await self._session.scalar(
@@ -122,6 +134,7 @@ class APIKeyService:
             raise RecentAuthenticationRequiredException()
         if expires_at is not None and expires_at <= current_time:
             raise ValueError("API key expiration must be in the future")
+        normalized_grants = await self._validate_space_grants(member_id, space_grants)
         issued = self._codec.issue()
         model = PersonalAPIKeyModel(
             id=uuid4(),
@@ -139,6 +152,11 @@ class APIKeyService:
             APIKeyScopeModel(api_key_id=model.id, scope=scope)
             for scope in sorted(requested_scopes)
         )
+        if normalized_grants is not None:
+            self._session.add_all(
+                APIKeySpaceGrantModel(api_key_id=model.id, space_id=space_id)
+                for space_id in sorted(normalized_grants)
+            )
         self._audit.record(
             actor_member_id=member_id,
             actor_kind="member",
@@ -146,7 +164,12 @@ class APIKeyService:
             action="api_key.created",
             resource_type="api_key",
             resource_id=str(model.id),
-            details={"name": normalized_name, "scopes": sorted(requested_scopes)},
+            details={
+                "name": normalized_name,
+                "scopes": sorted(requested_scopes),
+                "space_grants": sorted(normalized_grants) if normalized_grants is not None else None,
+                "permission_profile": profile.value if profile is not None else None,
+            },
         )
         await self._session.flush()
         return CreatedAPIKey(
@@ -155,7 +178,64 @@ class APIKeyService:
             issued.secret,
             requested_scopes,
             expires_at,
+            normalized_grants,
+            profile,
         )
+
+    @staticmethod
+    def _normalize_profile(value: PermissionProfile | str | None) -> PermissionProfile | None:
+        if value is None:
+            return None
+        if isinstance(value, PermissionProfile):
+            return value
+        try:
+            return PermissionProfile(str(value))
+        except ValueError as exc:
+            raise ValueError("Unknown permission profile") from exc
+
+    async def _validate_space_grants(
+        self,
+        member_id: UUID,
+        space_grants: set[str] | frozenset[str] | None,
+    ) -> frozenset[str] | None:
+        if space_grants is None:
+            return None
+        normalized = frozenset(str(space_id).strip() for space_id in space_grants if str(space_id).strip())
+        if not normalized:
+            raise ValueError("Space grants must not be empty when provided")
+        if len(normalized) > 100:
+            raise ValueError("Too many space grants")
+        rows = await self._session.scalars(
+            select(Workspace.id).where(Workspace.id.in_(normalized))
+        )
+        known = frozenset(rows)
+        unknown = normalized - known
+        if unknown:
+            raise ValueError("Unknown space in grants")
+        owned = frozenset(
+            await self._session.scalars(
+                select(SpaceMembershipModel.space_id).where(
+                    SpaceMembershipModel.member_id == member_id,
+                    SpaceMembershipModel.space_id.in_(normalized),
+                )
+            )
+        )
+        outside = normalized - set(owned)
+        if outside:
+            raise ValueError("Cannot grant spaces the member cannot access")
+        return normalized
+
+    async def key_space_grants(self, key_id: UUID) -> frozenset[str] | None:
+        rows = await self._session.scalars(
+            select(APIKeySpaceGrantModel.space_id).where(APIKeySpaceGrantModel.api_key_id == key_id)
+        )
+        collected = frozenset(rows)
+        has_rows = await self._session.scalar(
+            select(APIKeySpaceGrantModel.api_key_id).where(APIKeySpaceGrantModel.api_key_id == key_id).limit(1)
+        )
+        if has_rows is None:
+            return None
+        return collected
 
     async def resolve(self, raw_key: str, *, now: datetime | None = None) -> Principal:
         current_time = now or datetime.now(timezone.utc)
@@ -183,6 +263,17 @@ class APIKeyService:
                 select(APIKeyScopeModel.scope).where(APIKeyScopeModel.api_key_id == key.id)
             )
         )
+        grants = await self.key_space_grants(key.id)
+        if grants is not None:
+            live = frozenset(
+                await self._session.scalars(
+                    select(SpaceMembershipModel.space_id).where(
+                        SpaceMembershipModel.member_id == member.id,
+                        SpaceMembershipModel.space_id.in_(grants),
+                    )
+                )
+            )
+            grants = live
         key.last_used_at = current_time
         return Principal(
             subject_id=str(member.id),
@@ -190,6 +281,7 @@ class APIKeyService:
             system_role=SystemRole(member.system_role),
             scopes=scopes,
             credential_id=str(key.id),
+            space_grants=grants,
         )
 
     async def revoke(

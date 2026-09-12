@@ -30,6 +30,7 @@ ManagementErrorCode = Literal[
     "login_throttled",
     "model_not_found",
     "parser_timeout",
+    "quota_exceeded",
     "recent_authentication_required",
     "resource_conflict",
     "resource_not_found",
@@ -58,6 +59,7 @@ class ErrorFieldDetail(ContractModel):
 class ErrorDetails(ContractModel):
     fields: list[ErrorFieldDetail] = Field(default_factory=list)
     retry_after_seconds: int | None = None
+    quota_limit: int | None = None
     item_id: str | None = None
     expected_version: int | None = None
     actual_version: int | None = None
@@ -372,6 +374,7 @@ class APIKeySummary(ContractModel):
     name: str
     status: APIKeyState
     scopes: list[str]
+    space_grants: list[str] | None = None
     created_at: datetime
     last_used_at: datetime | None
     expires_at: datetime | None
@@ -384,6 +387,22 @@ class CreatedAPIKey(ContractModel):
     secret: str
     scopes: list[str]
     expires_at: datetime | None
+    space_grants: list[str] | None = None
+    permission_profile: str | None = None
+
+
+class CredentialQuotaUsage(ContractModel):
+    credential_id: str | None
+    space_id: str | None
+    window_started_at: datetime | None
+    request_count: int
+    token_count: int
+    storage_bytes: int
+    requests_limit: int
+    tokens_limit: int
+    storage_limit: int
+    concurrent_limit: int
+    concurrent_in_flight: int
 
 
 class MemberSummary(CurrentMember):

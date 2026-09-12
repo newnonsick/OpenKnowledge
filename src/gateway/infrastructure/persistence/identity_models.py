@@ -140,6 +140,35 @@ class APIKeyScopeModel(Base):
     scope: Mapped[str] = mapped_column(String(64), primary_key=True)
 
 
+class APIKeySpaceGrantModel(Base):
+    __tablename__ = "api_key_space_grants"
+
+    api_key_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("personal_api_keys.id", ondelete="CASCADE"), primary_key=True)
+    space_id: Mapped[str] = mapped_column(String(64), ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True)
+
+    __table_args__ = (
+        Index("ix_api_key_space_grants_space", "space_id"),
+    )
+
+
+class APIKeyBudgetUsageModel(Base):
+    __tablename__ = "api_key_budget_usage"
+
+    api_key_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("personal_api_keys.id", ondelete="CASCADE"), primary_key=True)
+    space_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    request_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), nullable=False)
+    token_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), nullable=False)
+    storage_bytes: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("request_count >= 0", name="ck_api_key_budget_usage_requests"),
+        CheckConstraint("token_count >= 0", name="ck_api_key_budget_usage_tokens"),
+        CheckConstraint("storage_bytes >= 0", name="ck_api_key_budget_usage_storage"),
+    )
+
+
 class SpaceMembershipModel(Base):
     __tablename__ = "space_memberships"
 

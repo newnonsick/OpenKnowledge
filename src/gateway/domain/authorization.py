@@ -79,6 +79,24 @@ def is_allowed(context: AuthorizationContext, action: Action) -> bool:
     return action in _SPACE_ACTIONS[context.space_role]
 
 
+def intersect_key_grants(
+    member_spaces: set[str] | frozenset[str] | tuple[str, ...],
+    key_grants: frozenset[str] | None,
+) -> set[str]:
+    if key_grants is None:
+        return set(member_spaces)
+    return set(member_spaces) & set(key_grants)
+
+
+def key_may_use_space(
+    key_grants: frozenset[str] | None,
+    space_id: str,
+) -> bool:
+    if key_grants is None:
+        return True
+    return space_id in key_grants
+
+
 def resolve_request_space_scope(
     request_workspace_id: str | None,
     default_workspace_id: str,

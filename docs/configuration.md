@@ -104,6 +104,16 @@ Any OpenAI-compatible embeddings endpoint.
 | `MAX_TOOL_WALL_CLOCK_SECONDS` | `180.0` | Wall-clock budget for one orchestrated chat request. |
 | `TOOL_TIMEOUT_SECONDS` | `15.0` | Timeout for a single internal tool execution. |
 
+## Credential and space budgets
+
+| Variable | Default | Description |
+|---|---|---|
+| `QUOTA_REQUESTS_PER_MINUTE` | `120` | Requests allowed per minute per credential and space. |
+| `QUOTA_CONCURRENT_REQUESTS` | `8` | Concurrent in-flight requests allowed per credential and space. |
+| `QUOTA_TOKENS_PER_MINUTE` | `60000` | Chat completion tokens allowed per minute per credential and space. |
+| `QUOTA_STORAGE_BYTES` | `1073741824` | Stored upload bytes allowed per credential and space. |
+| `QUOTA_BURST_REQUESTS` | `20` | Burst requests absorbed before per-credential rate limiting engages. |
+
 ## Parsing, chunking, and ingestion
 
 | Variable | Default | Description |

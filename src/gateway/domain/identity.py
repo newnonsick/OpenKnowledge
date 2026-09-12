@@ -41,6 +41,14 @@ class APIKeyStatus(StrEnum):
     EXPIRED = "expired"
 
 
+class PermissionProfile(StrEnum):
+    READER = "reader"
+    PROJECT_CONTRIBUTOR = "project_contributor"
+    TRUSTED_MAINTAINER = "trusted_maintainer"
+    IMPORT_WORKER = "import_worker"
+    HUMAN_ADMIN = "human_admin"
+
+
 def normalize_username(value: str) -> str:
     normalized = unicodedata.normalize("NFC", value.strip()).casefold()
     if not normalized:
@@ -57,6 +65,8 @@ class Principal:
     credential_id: str | None = None
     active: bool = True
     restricted: bool = False
+    space_grants: frozenset[str] | None = None
+    permission_profile: PermissionProfile | None = None
 
     def __repr__(self) -> str:
         return (

@@ -6,6 +6,9 @@
     handle /health* {
         reverse_proxy gateway:8000
     }
+    handle /api/* {
+        reverse_proxy gateway:8000
+    }
     handle {
         reverse_proxy web:3000
     }

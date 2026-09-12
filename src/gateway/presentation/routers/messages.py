@@ -49,6 +49,7 @@ from src.gateway.presentation.converters.anthropic_converter import (
     canonical_response_to_anthropic,
 )
 from src.gateway.presentation.authorization import require_scope
+from src.gateway.presentation.quota_usage import record_token_usage
 from src.gateway.presentation.schemas.anthropic_schemas import (
     AnthropicContentBlock,
     AnthropicContentBlockDeltaEvent,
@@ -181,6 +182,7 @@ def get_chat_orchestrator(
 )
 async def create_message(
     request: AnthropicMessagesRequest,
+    http_request: Request,
     orchestrator: IChatOrchestrator = Depends(get_chat_orchestrator),
     model_registry: ModelRegistryService = Depends(get_model_registry),
 ) -> Union[AnthropicMessagesResponse, StreamingResponse, JSONResponse]:
@@ -215,6 +217,11 @@ async def create_message(
             workspace_id=canonical_req.workspace_id or get_settings().gateway.default_workspace_id,
         )
 
+        await record_token_usage(
+            getattr(http_request.state, "principal", None),
+            space_id=canonical_req.workspace_id or get_settings().gateway.default_workspace_id,
+            tokens=canonical_resp.usage.total_tokens,
+        )
         anthropic_resp = canonical_response_to_anthropic(canonical_resp)
         return anthropic_resp
 
