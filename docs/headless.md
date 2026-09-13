@@ -32,6 +32,10 @@ python -m src.gateway.client update <item-id> --expected-version 1 --title "Valv
 python -m src.gateway.client upload --space global --file ./runbook.pdf
 python -m src.gateway.client job --job-id <job-id> --watch
 python -m src.gateway.client context "blue valve" --space global > context.txt
+python -m src.gateway.client fetch <item-id> <revision-id>
+python -m src.gateway.client resolve "openknowledge://spaces/global/knowledge/<id>/revisions/<rev>"
+python -m src.gateway.client archive <item-id> --expected-version 2
+python -m src.gateway.client quota --space global
 ```
 
 Flags override the environment: `--base-url` beats `OPENKNOWLEDGE_URL`
@@ -99,13 +103,15 @@ server-to-server surface.
 With the Python MCP SDK (`pip install "mcp>=2.2.0"`):
 
 ```python
+import os
+
 import httpx
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 http = httpx.AsyncClient(
     base_url="http://127.0.0.1:8000",
-    headers={"Authorization": "Bearer $OPENKNOWLEDGE_API_KEY"},
+    headers={"Authorization": f"Bearer {os.environ['OPENKNOWLEDGE_API_KEY']}"},
 )
 async with http:
     async with streamable_http_client(

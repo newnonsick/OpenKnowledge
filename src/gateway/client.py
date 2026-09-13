@@ -148,11 +148,10 @@ def execute_job(args: argparse.Namespace) -> int:
 def execute_context(args: argparse.Namespace) -> int:
     with _client(_base_url(args), _api_key(args)) as client:
         response = client.post(
-            "/api/v1/retrieval/search",
-            headers={"Idempotency-Key": str(uuid4())},
+            "/api/v1/context/assemble",
             json={
                 "query": args.query,
-                "limit": args.limit,
+                "max_sources": args.limit,
                 **({"space_ids": args.space.split(",")} if args.space else {}),
             },
         )
@@ -160,9 +159,66 @@ def execute_context(args: argparse.Namespace) -> int:
         print(f"Context failed ({response.status_code}): {response.text}")
         return 1
     package = response.json()
-    lines = [f"# {hit['title']} ({hit['citation_uri'] or hit['canonical_id']})" for hit in package.get("hits", [])]
-    lines += ["", *[hit.get("content_excerpt", "") for hit in package.get("hits", [])]]
+    lines = [
+        f"# {snippet['title']} ({snippet['citation_uri']})"
+        for snippet in package.get("snippets", [])
+    ]
+    lines += ["", *[snippet.get("snippet", "") for snippet in package.get("snippets", [])]]
+    if package.get("omitted_reason"):
+        lines += ["", package["omitted_reason"]]
     print("\n".join(lines).strip())
+    return 0
+
+
+def execute_fetch(args: argparse.Namespace) -> int:
+    with _client(_base_url(args), _api_key(args)) as client:
+        response = client.get(
+            f"/api/v1/evidence/knowledge/{args.item_id}/revisions/{args.revision_id}",
+        )
+    if response.status_code != 200:
+        print(f"Fetch failed ({response.status_code}): {response.text}")
+        return 1
+    _print(response.json())
+    return 0
+
+
+def execute_resolve(args: argparse.Namespace) -> int:
+    with _client(_base_url(args), _api_key(args)) as client:
+        response = client.post(
+            "/api/v1/evidence/resolve",
+            json={"citation_uri": args.citation_uri},
+        )
+    if response.status_code != 200:
+        print(f"Resolve failed ({response.status_code}): {response.text}")
+        return 1
+    _print(response.json())
+    return 0
+
+
+def execute_archive(args: argparse.Namespace) -> int:
+    with _client(_base_url(args), _api_key(args)) as client:
+        response = client.delete(
+            f"/api/v1/knowledge/{args.item_id}",
+            headers={"Idempotency-Key": args.idempotency_key or str(uuid4())},
+            params={"expected_version": args.expected_version},
+        )
+    if response.status_code != 204:
+        print(f"Archive failed ({response.status_code}): {response.text}")
+        return 1
+    _print({"id": args.item_id, "archived": True})
+    return 0
+
+
+def execute_quota(args: argparse.Namespace) -> int:
+    with _client(_base_url(args), _api_key(args)) as client:
+        response = client.get(
+            "/api/v1/quotas/usage",
+            params={"space_id": args.space},
+        )
+    if response.status_code != 200:
+        print(f"Quota failed ({response.status_code}): {response.text}")
+        return 1
+    _print(response.json())
     return 0
 
 
@@ -209,6 +265,21 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("query")
     context.add_argument("--space", default=None)
     context.add_argument("--limit", type=int, default=10)
+
+    fetch = commands.add_parser("fetch")
+    fetch.add_argument("item_id")
+    fetch.add_argument("revision_id")
+
+    resolve = commands.add_parser("resolve")
+    resolve.add_argument("citation_uri")
+
+    archive = commands.add_parser("archive")
+    archive.add_argument("item_id")
+    archive.add_argument("--expected-version", type=int, required=True)
+    archive.add_argument("--idempotency-key", default=None)
+
+    quota = commands.add_parser("quota")
+    quota.add_argument("--space", default="global")
     return parser
 
 
@@ -221,6 +292,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "upload": execute_upload,
         "job": execute_job,
         "context": execute_context,
+        "fetch": execute_fetch,
+        "resolve": execute_resolve,
+        "archive": execute_archive,
+        "quota": execute_quota,
     }
     return handlers[args.command](args)
 

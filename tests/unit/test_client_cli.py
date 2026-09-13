@@ -8,9 +8,13 @@ import pytest
 import respx
 
 from src.gateway.client import (
+    execute_archive,
     execute_context,
     execute_create,
+    execute_fetch,
     execute_job,
+    execute_quota,
+    execute_resolve,
     execute_search,
     execute_update,
     execute_upload,
@@ -72,21 +76,65 @@ def test_job_watch_returns_terminal_state(capsys) -> None:
 
 def test_context_prints_citations_and_excerpts(capsys) -> None:
     payload = {
-        "hits": [
+        "snippets": [
             {
                 "title": "Valve",
                 "citation_uri": "openknowledge://spaces/global/knowledge/1",
-                "canonical_id": "1",
-                "content_excerpt": "Close it.",
+                "snippet": "Close it.",
             }
         ]
     }
     with respx.mock(base_url="https://gateway.test") as mock:
-        mock.post("/api/v1/retrieval/search").mock(return_value=httpx.Response(200, json=payload))
+        route = mock.post("/api/v1/context/assemble").mock(return_value=httpx.Response(200, json=payload))
         assert execute_context(_args(query="valve", space=None, limit=5)) == 0
+    assert route.called
+    body = json.loads(route.calls[0].request.content)
+    assert body["query"] == "valve"
+    assert body["max_sources"] == 5
+    assert "limit" not in body
     out = capsys.readouterr().out
     assert "openknowledge://spaces/global/knowledge/1" in out
     assert "Close it." in out
+
+
+def test_fetch_gets_exact_revision(capsys) -> None:
+    payload = {"canonical_id": "item-1", "content": "exact"}
+    with respx.mock(base_url="https://gateway.test") as mock:
+        route = mock.get("/api/v1/evidence/knowledge/item-1/revisions/rev-1").mock(
+            return_value=httpx.Response(200, json=payload)
+        )
+        assert execute_fetch(_args(item_id="item-1", revision_id="rev-1")) == 0
+    assert route.called
+    assert json.loads(capsys.readouterr().out)["content"] == "exact"
+
+
+def test_resolve_posts_citation_uri(capsys) -> None:
+    payload = {"canonical_id": "item-1", "content": "exact"}
+    with respx.mock(base_url="https://gateway.test") as mock:
+        route = mock.post("/api/v1/evidence/resolve").mock(
+            return_value=httpx.Response(200, json=payload)
+        )
+        assert execute_resolve(_args(citation_uri="openknowledge://spaces/s/knowledge/1/revisions/2")) == 0
+    assert json.loads(route.calls[0].request.content)["citation_uri"].startswith("openknowledge://")
+    assert json.loads(capsys.readouterr().out)["content"] == "exact"
+
+
+def test_archive_deletes_with_expected_version(capsys) -> None:
+    with respx.mock(base_url="https://gateway.test") as mock:
+        route = mock.delete("/api/v1/knowledge/item-1").mock(return_value=httpx.Response(204))
+        assert execute_archive(_args(item_id="item-1", expected_version=3, idempotency_key="k")) == 0
+    assert route.calls[0].request.url.params["expected_version"] == "3"
+    assert route.calls[0].request.headers["Idempotency-Key"] == "k"
+    assert json.loads(capsys.readouterr().out)["archived"] is True
+
+
+def test_quota_shows_usage_and_limits(capsys) -> None:
+    payload = {"space_id": "global", "request_count": 3, "requests_limit": 120}
+    with respx.mock(base_url="https://gateway.test") as mock:
+        route = mock.get("/api/v1/quotas/usage").mock(return_value=httpx.Response(200, json=payload))
+        assert execute_quota(_args(space="global")) == 0
+    assert route.calls[0].request.url.params["space_id"] == "global"
+    assert json.loads(capsys.readouterr().out)["requests_limit"] == 120
 
 
 def test_missing_api_key_exits() -> None:

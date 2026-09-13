@@ -777,3 +777,83 @@ async def test_knowledge_listing_and_detail_are_scoped_to_effective_spaces(tmp_p
                 assert allowed_detail.status_code == 200
         finally:
             set_session_factory(None)
+
+
+async def test_quota_usage_reports_limits_and_in_flight(tmp_path, monkeypatch) -> None:
+    now = datetime.now(timezone.utc)
+    member_id = uuid4()
+    mfa_key = Fernet.generate_key().decode("ascii")
+    settings = Settings(
+        gateway={
+            "environment": "test",
+            "public_base_url": "https://gateway.test",
+            "api_key_peppers": {1: "p" * 32},
+            "active_api_key_pepper_version": 1,
+            "mfa_encryption_keys": {1: mfa_key},
+            "active_mfa_encryption_key_version": 1,
+            "storage_dir": str(tmp_path / "storage"),
+        }
+    )
+
+    async with isolated_postgres_database() as (_, factory):
+        async with factory.begin() as session:
+            session.add(
+                MemberModel(
+                    id=member_id,
+                    username="quota-member",
+                    username_normalized="quota-member",
+                    display_name="Quota Member",
+                    status=MemberStatus.ACTIVE.value,
+                    system_role=SystemRole.MEMBER.value,
+                    force_password_change=False,
+                )
+            )
+            session.add(Workspace(id="global", name="Global", created_by_member_id=member_id))
+            await session.flush()
+            session.add(
+                SpaceMembershipModel(
+                    id=uuid4(),
+                    space_id="global",
+                    member_id=member_id,
+                    role=SpaceRole.EDITOR.value,
+                )
+            )
+            member_session = await SessionService(session).issue(
+                principal(member_id),
+                now=now,
+                step_up_at=now,
+            )
+
+        app = FastAPI()
+        app.state.settings = settings
+        register_exception_handlers(app)
+        app.add_middleware(
+            APIKeyAuthMiddleware,
+            allowed_keys=[],
+            api_key_peppers={1: "p" * 32},
+            session_factory=factory,
+        )
+        app.add_middleware(SettingsContextMiddleware)
+        app.include_router(router)
+        set_session_factory(factory)
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="https://gateway.test",
+                cookies={"__Host-openknowledge-access": member_session.access_token.reveal()},
+            ) as member_client:
+                usage = await member_client.get("/api/v1/quotas/usage", params={"space_id": "global"})
+                assert usage.status_code == 200
+                payload = usage.json()
+                assert payload["space_id"] == "global"
+                assert payload["requests_limit"] > 0
+                assert payload["tokens_limit"] > 0
+                assert payload["storage_limit"] > 0
+                assert payload["concurrent_limit"] > 0
+                assert payload["concurrent_in_flight"] == 0
+
+                denied = await member_client.get("/api/v1/quotas/usage", params={"space_id": "no-such-space"})
+                assert denied.status_code == 404
+        finally:
+            set_session_factory(None)
