@@ -117,13 +117,20 @@ class EmbeddingReembedService:
             if (run := by_name.get(_run_name(target))) is not None
         )
 
-    async def enqueue(self) -> tuple[ReembedProgress, ...]:
+    async def enqueue(self, *, targets: tuple[str, ...] | None = None) -> tuple[ReembedProgress, ...]:
+        selected = tuple(targets) if targets is not None else tuple(target.name for target in REEMBED_TARGETS)
+        known = {target.name for target in REEMBED_TARGETS}
+        unknown = [name for name in selected if name not in known]
+        if unknown:
+            raise ValueError(f"Unknown re-embed targets: {', '.join(sorted(unknown))}")
         await self._generation_service.ensure_active(
             model_id=get_settings().embedding.model_id,
             dimensions=get_settings().embedding.dimension,
         )
         async with self._session_factory.begin() as session:
             for target in REEMBED_TARGETS:
+                if target.name not in selected:
+                    continue
                 name = _run_name(target)
                 run = await session.get(MigrationBackfillRunModel, name)
                 high_water_id = await session.scalar(

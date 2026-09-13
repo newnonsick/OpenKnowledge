@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -21,6 +21,11 @@ from src.gateway.application.services.audit_service import AuditService
 from src.gateway.application.services.authorized_retrieval_service import AuthorizedRetrievalService
 from src.gateway.application.services.authorization_service import AuthorizationService
 from src.gateway.application.services.document_upload_service import DocumentUploadService
+from src.gateway.application.services.embedding_generation_service import EmbeddingGenerationService
+from src.gateway.application.services.embedding_lifecycle_service import (
+    EmbeddingGenerationLifecycleService,
+)
+from src.gateway.application.services.embedding_reembed_service import EmbeddingReembedService, REEMBED_TARGETS
 from src.gateway.application.services.context_assembly_service import (
     AssembleContextQuery,
     ContextAssembler,
@@ -81,7 +86,9 @@ from src.gateway.presentation.schemas.management_responses import (
     CreatedSpace,
     CredentialQuotaUsage,
     CurrentMember,
+    EmbeddingGenerationSummary,
     EvidenceDetail,
+    GenerationTransition,
     IngestionJob,
     IngestionMutation,
     KnowledgeDetail,
@@ -93,8 +100,12 @@ from src.gateway.presentation.schemas.management_responses import (
     Page,
     PendingAIAction,
     PendingAIActionDetail,
+    ReindexEnqueueResult,
+    ReindexStatus,
+    ReindexTargetStatus,
     ResetMemberPassword,
     RetrievalResult,
+    ReviewedKnowledge,
     RuntimeSettings,
     SessionSummary,
     SourceSummary,
@@ -103,6 +114,7 @@ from src.gateway.presentation.schemas.management_responses import (
     SpaceMemberCandidate,
     SpaceMembership,
     SpaceSummary,
+    StaleKnowledgeItem,
     WebhookEventDetail,
 )
 from src.gateway.observability import increment_metric
@@ -159,6 +171,21 @@ async def operations_summary(
         )
     )
     active_settings = await RuntimeSettingsService(session).active()
+    stale_after_days = get_settings().gateway.stale_after_days
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(days=stale_after_days)
+    stale_items = 0
+    if space_ids:
+        stale_items = int(
+            await session.scalar(
+                select(func.count(KnowledgeItemModel.id)).where(
+                    KnowledgeItemModel.is_deleted.is_(False),
+                    KnowledgeItemModel.archived_at.is_(None),
+                    KnowledgeItemModel.workspace_id.in_(space_ids),
+                    KnowledgeItemModel.updated_at < stale_cutoff,
+                )
+            )
+            or 0
+        )
     return {
         "scope": "accessible_spaces",
         "observed_at": datetime.now(timezone.utc).isoformat(),
@@ -167,6 +194,7 @@ async def operations_summary(
         "storage": {"referenced_bytes": referenced_bytes},
         "retrieval": {"embedding_generation_active": generation_active is not None},
         "settings_revision": active_settings.revision,
+        "stale_knowledge": {"stale_after_days": stale_after_days, "stale_items": stale_items},
     }
 
 
@@ -1811,6 +1839,62 @@ async def create_knowledge(
     return _knowledge_payload(outcome.value)
 
 
+def _stale_threshold_days(older_than_days: int | None) -> int:
+    if older_than_days is not None:
+        return older_than_days
+    return get_settings().gateway.stale_after_days
+
+
+@router.get("/knowledge/stale", response_model=Page[StaleKnowledgeItem])
+async def list_stale_knowledge(
+    space_id: str | None = Query(default=None, max_length=64),
+    older_than_days: int | None = Query(default=None, ge=1, le=3650),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+    principal: Principal = Depends(require_scope("knowledge:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "knowledge.stale")
+    effective_space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal), principal=principal)
+    if space_id is not None:
+        if space_id not in effective_space_ids:
+            return {"items": [], **_page_metadata(page=page, page_size=page_size, total_items=0)}
+        scoped_spaces: tuple[str, ...] = (space_id,)
+    else:
+        scoped_spaces = effective_space_ids
+        if not scoped_spaces:
+            return {"items": [], **_page_metadata(page=page, page_size=page_size, total_items=0)}
+    threshold_days = _stale_threshold_days(older_than_days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=threshold_days)
+    query = (
+        select(KnowledgeItemModel, KnowledgeRevisionModel)
+        .outerjoin(KnowledgeRevisionModel, KnowledgeRevisionModel.id == KnowledgeItemModel.current_revision_id)
+        .where(
+            KnowledgeItemModel.is_deleted.is_(False),
+            KnowledgeItemModel.archived_at.is_(None),
+            KnowledgeItemModel.workspace_id.in_(scoped_spaces),
+            KnowledgeItemModel.updated_at < cutoff,
+        )
+        .order_by(KnowledgeItemModel.updated_at.asc(), KnowledgeItemModel.id.asc())
+    )
+    rows, metadata = await _paginate(session, query, page=page, page_size=page_size)
+    observed = datetime.now(timezone.utc)
+    return {
+        "items": [
+            {
+                "id": str(item.id),
+                "space_id": item.workspace_id,
+                "title": item.title,
+                "version": revision.version if revision else item.revision,
+                "updated_at": item.updated_at.isoformat(),
+                "age_days": max(0, int((observed - item.updated_at).total_seconds() // 86400)),
+            }
+            for item, revision in rows
+        ],
+        **metadata,
+    }
+
+
 @router.get("/knowledge/{item_id}", response_model=KnowledgeDetail)
 async def get_knowledge(
     item_id: UUID,
@@ -1875,6 +1959,272 @@ async def delete_knowledge(
         DeleteKnowledgeCommand(item_id=item_id, expected_version=expected_version),
     )
     return Response(status_code=204)
+
+
+@router.post("/knowledge/{item_id}/reviewed", response_model=ReviewedKnowledge)
+async def mark_knowledge_reviewed(
+    item_id: UUID,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "knowledge.reviewed")
+    item = await session.get(KnowledgeItemModel, item_id)
+    if item is None or item.is_deleted:
+        raise AuthorizationException()
+    await AuthorizationService(session).authorize_space(principal, item.workspace_id, Action.CONTENT_WRITE)
+    reservation = await _reserve(
+        session,
+        principal,
+        "knowledge.reviewed",
+        idempotency_key,
+        {"item_id": str(item_id)},
+    )
+    if reservation.status is not ReservationStatus.REPLAY:
+        AuditService(AuditRepository(session)).record(
+            actor_member_id=_actor_id(principal),
+            actor_kind=principal.kind.value,
+            request_id=get_request_id(request),
+            action="knowledge.reviewed",
+            resource_type="knowledge_item",
+            resource_id=str(item_id),
+            details={"space_id": item.workspace_id, "version": item.revision},
+        )
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=200,
+            resource_ids=[str(item_id)],
+        )
+    return {"id": str(item_id), "status": "reviewed"}
+
+
+def _reembed_service() -> EmbeddingReembedService:
+    factory = get_session_factory()
+    return EmbeddingReembedService(
+        factory,
+        default_retrieval_embedding_client(),
+        EmbeddingGenerationService(factory),
+    )
+
+
+def _reindex_targets_payload(progress) -> list[dict]:
+    return [
+        {
+            "name": item.table,
+            "phase": item.phase,
+            "rows_migrated": item.rows_migrated,
+            "completed": item.completed,
+            "pending": not item.completed,
+        }
+        for item in progress
+    ]
+
+
+class ReindexEnqueueRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    targets: list[str] | None = Field(default=None, max_length=16)
+
+
+class GenerationPromoteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    force: bool = False
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class GenerationRollbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = Field(default=None, max_length=500)
+
+
+async def _require_reindex_operator(session: AsyncSession, principal: Principal) -> None:
+    space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal), principal=principal)
+    for space_id in space_ids:
+        try:
+            role = await AuthorizationService(session).authorize_space(principal, space_id, Action.CONTENT_WRITE)
+        except AuthorizationException:
+            continue
+        if role in (SpaceRole.OWNER, SpaceRole.EDITOR):
+            return
+    raise AuthorizationException()
+
+
+@router.get("/operations/reindex", response_model=ReindexStatus)
+async def reindex_status(
+    principal: Principal = Depends(require_scope("knowledge:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "operations.reindex.read")
+    return await EmbeddingGenerationLifecycleService(session).status_payload()
+
+
+@router.post("/operations/reindex/enqueue", response_model=ReindexEnqueueResult)
+async def enqueue_reindex(
+    payload: ReindexEnqueueRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "operations.reindex.mutate")
+    _require_mutation_tools(await _active_policy(principal))
+    await _require_reindex_operator(session, principal)
+    known = [target.name for target in REEMBED_TARGETS]
+    requested = tuple(payload.targets) if payload.targets is not None else tuple(known)
+    unknown = [name for name in requested if name not in known]
+    if unknown:
+        raise ValidationException(f"Unknown reindex targets: {', '.join(sorted(unknown))}")
+    if not requested:
+        raise ValidationException("At least one reindex target is required.")
+    reservation = await _reserve(
+        session,
+        principal,
+        "operations.reindex.enqueue",
+        idempotency_key,
+        {"targets": sorted(requested)},
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        progress = await _reembed_service().status()
+        selected = [item for item in progress if item.table in set(requested)]
+    else:
+        progress = await _reembed_service().enqueue(targets=requested)
+        selected = [item for item in progress if item.table in set(requested)]
+        AuditService(AuditRepository(session)).record(
+            actor_member_id=_actor_id(principal),
+            actor_kind=principal.kind.value,
+            request_id=get_request_id(request),
+            action="operations.reindex.enqueue_requested",
+            resource_type="embedding_generation",
+            resource_id=None,
+            details={"targets": sorted(requested)},
+        )
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=200,
+            resource_ids=sorted(requested),
+        )
+    return {"status": "enqueued", "targets": _reindex_targets_payload(selected)}
+
+
+@router.post("/operations/generations/{generation_id}/promote", response_model=GenerationTransition)
+async def promote_generation(
+    generation_id: UUID,
+    payload: GenerationPromoteRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "operations.reindex.mutate")
+    _require_mutation_tools(await _active_policy(principal))
+    await _require_reindex_operator(session, principal)
+    if payload.force and (payload.reason is None or not payload.reason.strip()):
+        raise ValidationException("A reason is required when forcing promotion with pending re-embed work.")
+    reservation = await _reserve(
+        session,
+        principal,
+        "operations.generation.promote",
+        idempotency_key,
+        {"generation_id": str(generation_id), "force": payload.force},
+    )
+    service = EmbeddingGenerationLifecycleService(session)
+    if reservation.status is ReservationStatus.REPLAY:
+        if not reservation.resource_ids:
+            raise ResourceConflictException()
+        promoted_id = UUID(reservation.resource_ids[0])
+        promoted = await session.get(EmbeddingGenerationModel, promoted_id)
+        if promoted is None:
+            raise ResourceConflictException()
+        previous = reservation.resource_ids[1] if len(reservation.resource_ids) > 1 else None
+        return {"id": str(promoted.id), "status": "active", "previous_active_id": previous, "forced": payload.force}
+    outcome = await service.promote(generation_id, force=payload.force)
+    AuditService(AuditRepository(session)).record(
+        actor_member_id=_actor_id(principal),
+        actor_kind=principal.kind.value,
+        request_id=get_request_id(request),
+        action="operations.generation.promoted",
+        resource_type="embedding_generation",
+        resource_id=str(outcome.promoted.id),
+        details={
+            "previous_active_id": str(outcome.retired_id) if outcome.retired_id else None,
+            "forced": payload.force,
+            "reason": payload.reason.strip() if payload.reason else None,
+        },
+    )
+    resource_ids = [str(outcome.promoted.id)]
+    if outcome.retired_id is not None:
+        resource_ids.append(str(outcome.retired_id))
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=200,
+        resource_ids=resource_ids,
+    )
+    return {
+        "id": str(outcome.promoted.id),
+        "status": "active",
+        "previous_active_id": str(outcome.retired_id) if outcome.retired_id else None,
+        "forced": payload.force,
+    }
+
+
+@router.post("/operations/generations/rollback", response_model=GenerationTransition)
+async def rollback_generation(
+    payload: GenerationRollbackRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "operations.reindex.mutate")
+    _require_mutation_tools(await _active_policy(principal))
+    await _require_reindex_operator(session, principal)
+    reservation = await _reserve(
+        session,
+        principal,
+        "operations.generation.rollback",
+        idempotency_key,
+        {"reason": payload.reason.strip() if payload.reason else None},
+    )
+    service = EmbeddingGenerationLifecycleService(session)
+    if reservation.status is ReservationStatus.REPLAY:
+        if not reservation.resource_ids:
+            raise ResourceConflictException()
+        activated_id = UUID(reservation.resource_ids[0])
+        activated = await session.get(EmbeddingGenerationModel, activated_id)
+        if activated is None:
+            raise ResourceConflictException()
+        previous = reservation.resource_ids[1] if len(reservation.resource_ids) > 1 else None
+        return {"id": str(activated.id), "status": "active", "previous_active_id": previous, "forced": False}
+    outcome = await service.rollback()
+    AuditService(AuditRepository(session)).record(
+        actor_member_id=_actor_id(principal),
+        actor_kind=principal.kind.value,
+        request_id=get_request_id(request),
+        action="operations.generation.rolled_back",
+        resource_type="embedding_generation",
+        resource_id=str(outcome.activated.id),
+        details={
+            "previous_active_id": str(outcome.retired_id) if outcome.retired_id else None,
+            "reason": payload.reason.strip() if payload.reason else None,
+        },
+    )
+    resource_ids = [str(outcome.activated.id)]
+    if outcome.retired_id is not None:
+        resource_ids.append(str(outcome.retired_id))
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=200,
+        resource_ids=resource_ids,
+    )
+    return {
+        "id": str(outcome.activated.id),
+        "status": "active",
+        "previous_active_id": str(outcome.retired_id) if outcome.retired_id else None,
+        "forced": False,
+    }
 
 
 @router.post("/retrieval/search", response_model=RetrievalResult)

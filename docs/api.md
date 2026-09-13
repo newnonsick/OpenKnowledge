@@ -125,7 +125,11 @@ All management list endpoints use numeric server-side pagination. Ownership tran
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/v1/me` | The authenticated member, roles, and restrictions. |
-| GET | `/api/v1/operations/summary` | Operational counts and health summary for the dashboard. |
+| GET | `/api/v1/operations/summary` | Operational counts and health summary for the dashboard, including stale knowledge counts. |
+| GET | `/api/v1/operations/reindex` | Embedding generation list with the active id plus re-embed progress per target. |
+| POST | `/api/v1/operations/reindex/enqueue` | Enqueue re-embedding for a subset of targets; idempotency-keyed, operator role required. |
+| POST | `/api/v1/operations/generations/{id}/promote` | Promote a building generation to active and retire the current one; refused with 409 while re-embed work is pending unless forced with a recorded reason. |
+| POST | `/api/v1/operations/generations/rollback` | Reactivate the most recently retired generation and retire the current one. |
 
 ### Spaces and membership
 
@@ -153,6 +157,8 @@ Space roles are `owner`, `editor`, and `reader`. Owners manage membership and ca
 | GET | `/api/v1/knowledge/{item_id}` | Item detail with content and metadata. |
 | PUT | `/api/v1/knowledge/{item_id}` | Append a revision; requires `expected_version`. |
 | DELETE | `/api/v1/knowledge/{item_id}` | Soft delete; requires `expected_version`. |
+| GET | `/api/v1/knowledge/stale` | Detection-only stale listing ordered oldest first (`older_than_days` overrides `STALE_AFTER_DAYS`); never purges or mutates knowledge rows. |
+| POST | `/api/v1/knowledge/{item_id}/reviewed` | Record a `knowledge.reviewed` audit event only; no knowledge state changes, idempotent via `Idempotency-Key`. |
 
 ### Retrieval
 

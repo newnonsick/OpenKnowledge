@@ -63,6 +63,7 @@ class ErrorDetails(ContractModel):
     item_id: str | None = None
     expected_version: int | None = None
     actual_version: int | None = None
+    pending_targets: list[str] | None = None
 
 
 class ErrorDetail(ContractModel):
@@ -109,6 +110,11 @@ class RetrievalSummary(ContractModel):
     embedding_generation_active: bool
 
 
+class StaleKnowledgeCounts(ContractModel):
+    stale_after_days: int
+    stale_items: int
+
+
 class OperationSummary(ContractModel):
     scope: Literal["accessible_spaces"]
     observed_at: datetime
@@ -117,6 +123,59 @@ class OperationSummary(ContractModel):
     storage: StorageSummary
     retrieval: RetrievalSummary
     settings_revision: int
+    stale_knowledge: StaleKnowledgeCounts
+
+
+class StaleKnowledgeItem(ContractModel):
+    id: str
+    space_id: str
+    title: str
+    version: int
+    updated_at: datetime
+    age_days: int
+
+
+class ReviewedKnowledge(ContractModel):
+    id: str
+    status: Literal["reviewed"]
+
+
+class EmbeddingGenerationSummary(ContractModel):
+    id: str
+    purpose: str
+    model_id: str
+    dimensions: int
+    status: Literal["building", "active", "retired", "failed"]
+    created_at: datetime | None
+    activated_at: datetime | None
+
+
+class ReindexTargetStatus(ContractModel):
+    name: str
+    phase: str | None
+    rows_migrated: int
+    completed: bool
+    pending: bool
+
+
+class ReindexStatus(ContractModel):
+    purpose: Literal["retrieval"]
+    active_generation_id: str | None
+    generations: list[EmbeddingGenerationSummary]
+    targets: list[ReindexTargetStatus]
+    pending_targets: list[str]
+
+
+class ReindexEnqueueResult(ContractModel):
+    status: Literal["enqueued"]
+    targets: list[ReindexTargetStatus]
+
+
+class GenerationTransition(ContractModel):
+    id: str
+    status: Literal["active"]
+    previous_active_id: str | None
+    forced: bool
 
 
 class InitialAPIKey(ContractModel):

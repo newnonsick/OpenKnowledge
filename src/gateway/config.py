@@ -538,6 +538,15 @@ class GatewaySettings(BaseSettings):
         ),
         description="Rows re-embedded per batch after an embedding dimension change",
     )
+    stale_after_days: int = Field(
+        default=90,
+        ge=1,
+        validation_alias=AliasChoices(
+            "STALE_AFTER_DAYS",
+            "stale_after_days",
+        ),
+        description="Age in days after which untouched knowledge is reported as stale",
+    )
     default_workspace_id: str = Field(
         default="global",
         validation_alias=AliasChoices("DEFAULT_WORKSPACE_ID", "default_workspace_id"),

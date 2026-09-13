@@ -21,7 +21,7 @@ MANAGEMENT_PREFIXES = (
     "/api/v1/knowledge",
     "/api/v1/me",
     "/api/v1/members",
-    "/api/v1/operations/summary",
+    "/api/v1/operations/",
     "/api/v1/retrieval/search",
     "/api/v1/sessions",
     "/api/v1/settings",

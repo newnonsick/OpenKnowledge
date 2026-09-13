@@ -159,6 +159,7 @@ Retention executes only when `RETENTION_PURGE_ENABLED` is true, and the database
 | `WORKER_METRICS_INTERVAL_SECONDS` | `60` | at least 5 | Interval between worker operational-metrics collections. |
 | `WORKER_METRICS_FILE` | _(empty)_ | absolute path or empty | Prometheus textfile the worker publishes its registry to; empty disables file publishing. |
 | `EMBEDDING_REEMBED_BATCH_SIZE` | `64` | 1 to 512 | Rows re-embedded per batch after an embedding dimension change. |
+| `STALE_AFTER_DAYS` | `90` | at least 1 | Age in days after which untouched knowledge is reported as stale by `GET /api/v1/knowledge/stale` and counted in `GET /api/v1/operations/summary`. Detection only; no purging. |
 
 ## Compose-level variables
 

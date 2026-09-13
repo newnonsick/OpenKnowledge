@@ -69,6 +69,9 @@ def _gateway_details(exc: GatewayException) -> dict[str, Any] | None:
     item_id = exc.details.get("item_id")
     if isinstance(item_id, str):
         details["item_id"] = item_id[:255]
+    pending_targets = exc.details.get("pending_targets")
+    if isinstance(pending_targets, list) and all(isinstance(name, str) for name in pending_targets):
+        details["pending_targets"] = [name[:128] for name in pending_targets[:32]]
     for key in ("expected_version", "actual_version"):
         value = exc.details.get(key)
         if isinstance(value, int) and not isinstance(value, bool):
