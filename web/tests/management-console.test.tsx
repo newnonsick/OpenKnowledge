@@ -692,6 +692,83 @@ describe("management console", () => {
     });
   });
 
+  it("expands evidence drilldown with source, version, and citation copy", async () => {
+    navigation.search = "";
+    const requested: string[] = [];
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      requested.push(path);
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }] } as never;
+      }
+      if (path === "/api/v1/retrieval/search" && options?.method === "POST") {
+        return {
+          hits: [{ canonical_id: "note-1", citation_uri: "openknowledge://spaces/global/knowledge/note-1/revisions/rev-1", content_excerpt: "Turn it.", rank: 1, rank_score: 0.9, revision_id: "rev-1", source_type: "knowledge_revision", space_id: "global", title: "Valve", version: 2 }],
+          health: { semantic_status: "active", degraded_reasons: [] },
+          explanation: { effective_space_ids: ["global"], abstained: false },
+        } as never;
+      }
+      if (path === "/api/v1/evidence/knowledge/note-1/revisions/rev-1") {
+        return {
+          canonical_id: "note-1", chunk_id: null, citation_uri: "openknowledge://spaces/global/knowledge/note-1/revisions/rev-1",
+          content: "Turn it.", kind: "knowledge_revision", revision_id: "rev-1",
+          space_id: "global", superseded: false, title: "Valve", version: 2,
+        } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<ExploreConsole />);
+    fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "valve" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search knowledge" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Show evidence for Valve" }));
+    expect(requested).toContain("/api/v1/evidence/knowledge/note-1/revisions/rev-1");
+    const detail = (await screen.findByText("global · knowledge revision")).closest("dl");
+    expect(detail).toBeInTheDocument();
+    expect(within(detail as HTMLElement).getByText("v2")).toBeInTheDocument();
+    expect(within(detail as HTMLElement).getByText("openknowledge://spaces/global/knowledge/note-1/revisions/rev-1")).toBeInTheDocument();
+    const copyButtons = await screen.findAllByRole("button", { name: "Copy citation URI" });
+    expect(copyButtons.length).toBeGreaterThanOrEqual(2);
+    fireEvent.click(copyButtons[copyButtons.length - 1]);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("openknowledge://spaces/global/knowledge/note-1/revisions/rev-1"));
+    expect(await screen.findByRole("button", { name: "Copy citation URI copied" })).toBeInTheDocument();
+  });
+
+  it("loads document evidence through the documents route for chunk hits", async () => {
+    navigation.search = "";
+    const requested: string[] = [];
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      requested.push(path);
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }] } as never;
+      }
+      if (path === "/api/v1/retrieval/search" && options?.method === "POST") {
+        return {
+          hits: [{ canonical_id: "doc-1", citation_uri: "openknowledge://spaces/global/documents/doc-1/revisions/rev-9", content_excerpt: "Torque it.", rank: 1, rank_score: 0.8, revision_id: "rev-9", source_type: "document_chunk", space_id: "global", title: "Handbook", version: 3 }],
+          health: { semantic_status: "active", degraded_reasons: [] },
+          explanation: { effective_space_ids: ["global"], abstained: false },
+        } as never;
+      }
+      if (path === "/api/v1/evidence/documents/doc-1/revisions/rev-9") {
+        return {
+          canonical_id: "doc-1", chunk_id: "chunk-7", citation_uri: "openknowledge://spaces/global/documents/doc-1/revisions/rev-9",
+          content: "Torque it.", kind: "document_chunk", revision_id: "rev-9",
+          space_id: "global", superseded: true, title: "Handbook", version: 3,
+        } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<ExploreConsole />);
+    fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "handbook" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search knowledge" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Show evidence for Handbook" }));
+    const detail = (await screen.findByText("global · document chunk")).closest("dl");
+    expect(detail).toBeInTheDocument();
+    expect(within(detail as HTMLElement).getByText("v3 · superseded")).toBeInTheDocument();
+    expect(requested).toContain("/api/v1/evidence/documents/doc-1/revisions/rev-9");
+    expect(requested).not.toContain("/api/v1/evidence/knowledge/doc-1/revisions/rev-9");
+  });
+
   it.each([
     ["active", "Semantic + lexical retrieval active"],
     ["degraded", "Semantic layer unavailable · lexical results remain active"],

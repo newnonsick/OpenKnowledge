@@ -1054,6 +1054,24 @@ html[data-theme="dark"] .result-meta span[data-chip="space"] { color: var(--acce
 .score-pill { color: var(--accent-strong); font-family: var(--font-mono); font-size: 11.5px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
 html[data-theme="dark"] .score-pill { color: var(--accent); }
 .result-empty { background: var(--surface-soft); }
+.result-evidence-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.evidence-toggle-button {
+  min-height: 34px; padding: 6px 14px; border: 1px solid var(--line-strong); border-radius: 9px;
+  background: var(--surface); color: var(--ink); font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: background 0.15s ease-out, border-color 0.15s ease-out;
+}
+.evidence-toggle-button:hover:not(:disabled) { background: var(--surface-soft); border-color: var(--accent); }
+.evidence-toggle-button:disabled { opacity: 0.55; cursor: default; }
+.evidence-detail { display: grid; gap: 6px; margin: 12px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-soft); font-size: 12px; }
+.evidence-detail > div { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 10px; align-items: baseline; }
+.evidence-detail dt { color: var(--ink-soft); font-weight: 600; }
+.evidence-detail dd { margin: 0; overflow-wrap: anywhere; }
+.evidence-citation { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.evidence-citation-text { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .result-evidence-row .evidence-toggle-button { width: auto; min-height: 34px; }
+  .evidence-detail > div { grid-template-columns: 72px minmax(0, 1fr); }
+}
 
 .permission-panel { display: flex; align-items: flex-start; gap: 16px; padding: 24px; }
 .permission-panel > svg { flex: 0 0 auto; padding: 10px; box-sizing: content-box; border-radius: 12px; background: var(--accent-soft); color: var(--accent-strong); }
@@ -1642,7 +1660,7 @@ html[data-theme="dark"] .auth-story { background: radial-gradient(circle at 85% 
   .api-key-scope-grid { grid-template-columns: minmax(0, 1fr); }
   .console-form textarea { width: 100%; }
   .list-filter-bar { grid-template-columns: minmax(0, 1fr); }
-  .list-filter-bar .secondary-button, .filter-clear-button { width: 100%; min-height: 42px; }
+  .list-filter-bar .secondary-button, .list-filter-bar .filter-clear-button { width: 100%; min-height: 42px; }
   .console-unavailable { grid-template-columns: 1fr; align-items: flex-start; }
   .console-unavailable .secondary-button { width: 100%; }
   .pagination-controls { flex-wrap: wrap; }

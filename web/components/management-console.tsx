@@ -854,6 +854,68 @@ export function KnowledgeConsole() {
   );
 }
 
+type RetrievalHit = RetrievalResponse["hits"][number];
+type EvidenceDetail = components["schemas"]["EvidenceDetail"];
+
+function EvidenceResultCard({ hit, spaceName }: { hit: RetrievalHit; spaceName: string }) {
+  const [evidence, setEvidence] = useState<EvidenceDetail | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [loadingEvidence, setLoadingEvidence] = useState(false);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const isDocument = hit.source_type === "document_chunk";
+
+  const loadEvidence = useCallback(async () => {
+    if (evidence || loadingEvidence) {
+      setExpanded((current) => !current);
+      return;
+    }
+    setLoadingEvidence(true);
+    setEvidenceError(null);
+    try {
+      const detail = isDocument
+        ? await contractData(contractClient.GET("/api/v1/evidence/documents/{document_id}/revisions/{revision_id}", {
+            params: { path: { document_id: hit.canonical_id, revision_id: hit.revision_id } },
+          }))
+        : await contractData(contractClient.GET("/api/v1/evidence/knowledge/{item_id}/revisions/{revision_id}", {
+            params: { path: { item_id: hit.canonical_id, revision_id: hit.revision_id } },
+          }));
+      setEvidence(detail);
+      setExpanded(true);
+    } catch (loadError) {
+      setEvidenceError(message(loadError));
+    } finally {
+      setLoadingEvidence(false);
+    }
+  }, [evidence, hit.canonical_id, hit.revision_id, isDocument, loadingEvidence]);
+
+  return (
+    <article className="result-card" key={`${hit.source_type}-${hit.canonical_id}`}>
+      <div className="result-rank">{String(hit.rank).padStart(2, "0")}</div>
+      <div className="result-copy">
+        <div className="result-meta"><span data-chip="space" title={spaceName}>{spaceName}</span><span>{hit.source_type.replaceAll("_", " ")}</span>{hit.version ? <span>v{hit.version}</span> : null}</div>
+        <h3>{hit.title}</h3>
+        <p>{hit.content_excerpt}</p>
+        <div className="result-evidence-row">
+          <button aria-expanded={expanded} aria-label={`${expanded ? "Hide" : "Show"} evidence for ${hit.title}`} className="evidence-toggle-button" disabled={loadingEvidence} onClick={() => void loadEvidence()} type="button">
+            {loadingEvidence ? "Loading evidence…" : expanded ? "Hide evidence" : "Show evidence"}
+          </button>
+          {hit.citation_uri ? <CopyButton label="Copy citation URI" value={hit.citation_uri} /> : null}
+        </div>
+        {evidenceError ? <p className="inline-error" role="alert">{evidenceError}</p> : null}
+        {expanded && evidence ? (
+          <dl className="evidence-detail">
+            <div><dt>Source</dt><dd>{evidence.space_id} · {evidence.kind.replaceAll("_", " ")}</dd></div>
+            <div><dt>Version</dt><dd>v{evidence.version ?? "—"}{evidence.superseded ? " · superseded" : ""}</dd></div>
+            <div><dt>Revision</dt><dd><ShortIdentifier label="Revision ID" value={evidence.revision_id} /></dd></div>
+            <div><dt>Citation</dt><dd className="evidence-citation"><span className="evidence-citation-text">{evidence.citation_uri}</span><CopyButton label="Copy citation URI" value={evidence.citation_uri} /></dd></div>
+          </dl>
+        ) : null}
+      </div>
+      <span className="score-pill">{Number.isFinite(hit.rank_score) ? `${Math.round(Math.max(0, Math.min(1, hit.rank_score)) * 100)}%` : "—"}</span>
+    </article>
+  );
+}
+
 export function ExploreConsole() {
   const member = useCurrentMember();
   const router = useRouter();
@@ -1007,15 +1069,7 @@ export function ExploreConsole() {
           {result.hits.length === 0 ? <div className="console-empty result-empty"><Search size={23} /><strong>No confident match</strong><span>Try a more specific phrase or add the missing knowledge.</span></div> : null}
           <div className="result-list">
             {result.hits.map((hit) => (
-              <article className="result-card" key={`${hit.source_type}-${hit.canonical_id}`}>
-                <div className="result-rank">{String(hit.rank).padStart(2, "0")}</div>
-                <div className="result-copy">
-                  <div className="result-meta"><span data-chip="space" title={spaceLabel(spaces, hit.space_id)}>{spaceLabel(spaces, hit.space_id)}</span><span>{hit.source_type.replaceAll("_", " ")}</span>{hit.version ? <span>v{hit.version}</span> : null}</div>
-                  <h3>{hit.title}</h3>
-                  <p>{hit.content_excerpt}</p>
-                </div>
-                <span className="score-pill">{Number.isFinite(hit.rank_score) ? `${Math.round(Math.max(0, Math.min(1, hit.rank_score)) * 100)}%` : "—"}</span>
-              </article>
+              <EvidenceResultCard hit={hit} key={`${hit.source_type}-${hit.canonical_id}`} spaceName={spaceLabel(spaces, hit.space_id)} />
             ))}
           </div>
           {searching ? <p className="list-context-line" role="status">Refining results…</p> : null}
