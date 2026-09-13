@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from src.gateway.application.parsers.chunker import Chunker
 from src.gateway.application.ports.clients import IEmbeddingClient
 from src.gateway.application.ports.object_storage import IVersionedObjectStorage
+from src.gateway.application.services.chunk_policy_service import effective_chunk_policy
 from src.gateway.application.services.document_activation_service import ActivationChunk, DocumentActivationService
 from src.gateway.application.services.ingestion_job_service import IngestionJobService, JobClaim
 from src.gateway.domain.exceptions import AuthorizationException, ConcurrencyConflictException, EmbeddingException, ItemNotFoundException, JobLeaseLostException, ParserTimeoutException, StorageException, ValidationException
@@ -170,6 +171,8 @@ class DocumentIngestionWorker:
                     pass
 
     async def _process_claim(self, claim: JobClaim) -> str:
+        if claim.job_type == "knowledge_enrichment":
+            return await self._process_enrichment_claim(claim)
         try:
             revision = await self._mark_processing(claim)
             if not await self._checkpoint(claim, 5):
@@ -196,7 +199,7 @@ class DocumentIngestionWorker:
                 raise _IngestionFailure("parser_timeout", False) from exc
             except ValidationException as exc:
                 raise _IngestionFailure("parser_rejected", False) from exc
-            chunks = self._chunker.chunk_semantic(parsed.text)
+            chunks = await self._chunk_with_effective_policy(parsed.text, claim.space_id)
             if not chunks or not parsed.text.strip():
                 raise _IngestionFailure("empty_document", False)
             if len(chunks) > self._max_chunks:
@@ -253,6 +256,16 @@ class DocumentIngestionWorker:
                 _IngestionFailure(f"internal_{type(exc).__name__.lower()}", True),
             )
 
+    async def _chunk_with_effective_policy(self, text: str, space_id: str) -> list[str]:
+        async with self._session_factory() as session:
+            policy = await effective_chunk_policy(session, space_id)
+        if policy.source == "space":
+            chunker = Chunker(policy.chunk_size, policy.chunk_overlap)
+            if policy.chunk_strategy == "fixed":
+                return chunker.chunk_fixed(text)
+            return chunker.chunk_semantic(text)
+        return self._chunker.chunk_semantic(text)
+
     async def _mark_processing(self, claim: JobClaim) -> DocumentRevisionModel:
         async with self._session_factory.begin() as session:
             now_service = IngestionJobService(session)
@@ -298,6 +311,39 @@ class DocumentIngestionWorker:
                 raise _IngestionFailure("embedding_dimension_mismatch", False)
             return generation
 
+    async def _process_enrichment_claim(self, claim: JobClaim) -> str:
+        from src.gateway.application.services.knowledge_enrichment_service import enrich_claim
+
+        try:
+            if not await self._checkpoint(claim, 10):
+                return "cancelled"
+            async with self._session_factory.begin() as session:
+                await IngestionJobService(session).set_progress(claim.job_id, claim.claim_token, 50)
+                await enrich_claim(session, claim, self._embedding_client)
+            if not await self._checkpoint(claim, 90):
+                return "cancelled"
+            async with self._session_factory.begin() as session:
+                await IngestionJobService(session).complete(claim.job_id, claim.claim_token)
+            return "succeeded"
+        except JobLeaseLostException:
+            raise
+        except ItemNotFoundException:
+            return await self._record_failure(
+                claim,
+                _IngestionFailure("enrichment_revision_missing", False),
+            )
+        except EmbeddingException as exc:
+            return await self._record_failure(
+                claim,
+                _IngestionFailure("embedding_provider_error", True),
+            )
+        except Exception as exc:
+            logger.exception("Knowledge enrichment job failed", extra={"job_id": claim.job_id})
+            return await self._record_failure(
+                claim,
+                _IngestionFailure(f"internal_{type(exc).__name__.lower()}", True),
+            )
+
     async def _record_failure(
         self,
         claim: JobClaim,
@@ -318,12 +364,13 @@ class DocumentIngestionWorker:
                 revision_state = "quarantined"
             else:
                 revision_state = "failed"
-            await session.execute(
-                update(DocumentRevisionModel)
-                .where(
-                    DocumentRevisionModel.id == claim.document_revision_id,
-                    DocumentRevisionModel.status.in_(("pending", "processing", "ready")),
+            if claim.job_type != "knowledge_enrichment" and claim.document_revision_id is not None:
+                await session.execute(
+                    update(DocumentRevisionModel)
+                    .where(
+                        DocumentRevisionModel.id == claim.document_revision_id,
+                        DocumentRevisionModel.status.in_(("pending", "processing", "ready")),
+                    )
+                    .values(status=revision_state, failure_code=failure.code)
                 )
-                .values(status=revision_state, failure_code=failure.code)
-            )
             return state

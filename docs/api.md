@@ -81,6 +81,20 @@ curl https://gateway.example.com/v1/messages \
 
 Set `"stream": true` to receive Anthropic SSE events. Thinking blocks pass through in both directions.
 
+### Responses, OpenAI format
+
+```bash
+curl https://gateway.example.com/v1/responses \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer openknowledge_v.example-key" \
+  -d '{
+    "model": "default",
+    "input": "What database conventions do we follow?"
+  }'
+```
+
+`input` accepts a string or a list of `{role, content}` message dicts with text content only; `content` may be a string or a list of `input_text` parts. Supported fields are `model`, `input`, `stream`, `max_output_tokens`, `metadata` (string map, passed through untouched), and `workspace_id` (same hard request space scope as chat completions). Unknown top-level fields are rejected with `422` and never silently dropped; non-text input parts are rejected with `400 unsupported_input`. `stream: true` is rejected with `400 unsupported_stream` — only non-streaming responses are served. The response is `{id: "resp_...", object: "response", created, model, status: "completed", output: [{type: "message", role: "assistant", content: [{type: "output_text", text}]}], usage}` with `usage` in Responses shape (`input_tokens`, `output_tokens`, `total_tokens`). Token usage is recorded against the same quota as chat completions.
+
 ### Models
 
 ```bash
@@ -137,6 +151,8 @@ All management list endpoints use numeric server-side pagination. Ownership tran
 |---|---|---|
 | GET | `/api/v1/spaces` | Spaces visible to the caller. |
 | POST | `/api/v1/spaces` | Create a space; the creator becomes its owner. |
+| GET | `/api/v1/spaces/{space_id}` | Space detail including the effective chunk policy (`source` is `space` when overridden, else `global`). |
+| PUT | `/api/v1/spaces/{space_id}/chunk-policy` | Set the space chunk policy (`chunk_size`, `chunk_overlap`, `chunk_strategy: fixed\|semantic`); `overlap < size` and size within 64–32000, otherwise 422. |
 | GET | `/api/v1/admin/spaces` | All spaces, including archived (super admin). |
 | GET | `/api/v1/spaces/{space_id}/members` | Members of a space. |
 | GET | `/api/v1/spaces/{space_id}/member-candidates` | Members who can be added. |
@@ -153,9 +169,9 @@ Space roles are `owner`, `editor`, and `reader`. Owners manage membership and ca
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/v1/knowledge` | List knowledge items with server-side numeric pagination; optional `lifecycle_status` filter. |
-| POST | `/api/v1/knowledge` | Create an item (first revision); accepts `lifecycle_status` (`observation`, `candidate`, `accepted`), `origin`, `source_detail`, `expires_at`. |
-| GET | `/api/v1/knowledge/{item_id}` | Item detail with content and metadata. |
-| PUT | `/api/v1/knowledge/{item_id}` | Append a revision; requires `expected_version`. Accepts `review_note` and `expires_at` edits (`update_expires_at`). |
+| POST | `/api/v1/knowledge` | Create an item (first revision); accepts `lifecycle_status` (`observation`, `candidate`, `accepted`), `origin`, `source_detail`, `expires_at`. Pass `enrich_async: true` to commit the revision immediately and enrich (embed + activate retrieval) via a worker job: returns 202 with the item plus `job_id`/`job_state`. Lexical reads hold from commit time; vector projection follows the job. |
+| GET | `/api/v1/knowledge/{item_id}` | Item detail with content and metadata, plus `enrichment` status (`pending`, `enriched`, `failed`, or null when never deferred). |
+| PUT | `/api/v1/knowledge/{item_id}` | Append a revision; requires `expected_version`. Accepts `review_note` and `expires_at` edits (`update_expires_at`). `enrich_async: true` behaves like create: 202 receipt, lexical-first, job-backed projection. Failed enrichment is retried through the existing `POST /api/v1/ingestion-jobs/{job_id}/retry` endpoint; the job appears in `GET /api/v1/ingestion-jobs` with kind `knowledge_enrichment`. |
 | POST | `/api/v1/knowledge/{item_id}/transitions` | Move an item along the lifecycle graph; requires `expected_version`, idempotent via `Idempotency-Key`. Allowed: `observation` to `candidate`/`accepted`, `candidate` to `accepted`/`observation`, `accepted` to `superseded` (requires a review note), `superseded` back to `accepted`. Anything else is refused with 409. Each transition is audited as `knowledge.lifecycle.transitioned`. Replaying a transition after losing space access is denied. |
 | DELETE | `/api/v1/knowledge/{item_id}` | Soft delete; requires `expected_version`. |
 | GET | `/api/v1/knowledge/stale` | Detection-only stale listing ordered oldest first (`older_than_days` overrides `STALE_AFTER_DAYS`); never purges or mutates knowledge rows. |
@@ -186,6 +202,8 @@ curl https://gateway.example.com/api/v1/retrieval/search \
 | GET | `/api/v1/ingestion-jobs` | List ingestion jobs with state, attempts, and progress. |
 | POST | `/api/v1/ingestion-jobs/{job_id}/cancel` | Request cooperative cancellation. |
 | POST | `/api/v1/ingestion-jobs/{job_id}/retry` | Request a retry of a failed job. |
+
+Document chunking uses the effective chunk policy: the space override when `PUT /api/v1/spaces/{space_id}/chunk-policy` set one, otherwise the global `INGESTION_CHUNK_SIZE` / `INGESTION_CHUNK_OVERLAP` config (semantic strategy). Invalid policies are rejected with 422 and never partially applied.
 
 ```bash
 curl https://gateway.example.com/api/v1/sources/upload \

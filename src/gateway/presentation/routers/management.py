@@ -20,6 +20,11 @@ from src.gateway.application.services.ai_management_service import AIManagementS
 from src.gateway.application.services.audit_service import AuditService
 from src.gateway.application.services.authorized_retrieval_service import AuthorizedRetrievalService
 from src.gateway.application.services.authorization_service import AuthorizationService
+from src.gateway.application.services.chunk_policy_service import (
+    chunk_policy_payload,
+    effective_chunk_policy,
+    validate_chunk_policy,
+)
 from src.gateway.application.services.document_upload_service import DocumentUploadService
 from src.gateway.application.services.embedding_generation_service import EmbeddingGenerationService
 from src.gateway.application.services.embedding_lifecycle_service import (
@@ -93,6 +98,7 @@ from src.gateway.presentation.schemas.management_responses import (
     IngestionJob,
     IngestionMutation,
     KnowledgeDetail,
+    KnowledgeEnrichmentReceipt,
     KnowledgeExport,
     KnowledgeImportSummary,
     KnowledgeSummary,
@@ -112,6 +118,7 @@ from src.gateway.presentation.schemas.management_responses import (
     SessionSummary,
     SourceSummary,
     SourceUploadReceipt,
+    SpaceDetail,
     SpaceMember,
     SpaceMemberCandidate,
     SpaceMembership,
@@ -212,6 +219,14 @@ class MembershipRequest(BaseModel):
     role: Literal["editor", "reader"]
 
 
+class ChunkPolicyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chunk_size: int = Field(ge=64, le=32000)
+    chunk_overlap: int = Field(ge=0)
+    chunk_strategy: Literal["fixed", "semantic"]
+
+
 class OwnershipTransferRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -259,6 +274,7 @@ class KnowledgeCreateRequest(BaseModel):
     origin: str | None = Field(default=None, min_length=1, max_length=200)
     source_detail: str | None = Field(default=None, min_length=1, max_length=2000)
     expires_at: datetime | None = None
+    enrich_async: bool = False
 
 
 class KnowledgeUpdateRequest(BaseModel):
@@ -272,6 +288,7 @@ class KnowledgeUpdateRequest(BaseModel):
     review_note: str | None = Field(default=None, max_length=2000)
     expires_at: datetime | None = None
     update_expires_at: bool = False
+    enrich_async: bool = False
 
 
 class KnowledgeTransitionRequest(BaseModel):
@@ -551,7 +568,12 @@ async def _runtime_settings_dependency_probe(values: RuntimeSettingsValues) -> N
         await default_retrieval_embedding_client().embed_query("runtime settings readiness")
 
 
-def _knowledge_payload(item: DomainKnowledgeItem, *, include_content: bool = True) -> dict:
+def _knowledge_payload(
+    item: DomainKnowledgeItem,
+    *,
+    include_content: bool = True,
+    enrichment: str | None = None,
+) -> dict:
     revision = item.current_revision
     content = revision.content if revision else item.content or ""
     payload = {
@@ -568,6 +590,7 @@ def _knowledge_payload(item: DomainKnowledgeItem, *, include_content: bool = Tru
         "expires_at": item.expires_at.isoformat() if item.expires_at else None,
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
+        "enrichment": enrichment,
     }
     if include_content:
         payload["content"] = content
@@ -786,7 +809,9 @@ async def _ai_job_page(session: AsyncSession, principal: Principal, arguments: A
             {
                 "id": str(job.id),
                 "space_id": job.space_id,
-                "document_id": str(job.document_id),
+                "job_type": job.job_type,
+                "document_id": str(job.document_id) if job.document_id is not None else None,
+                "knowledge_item_id": str(job.knowledge_item_id) if job.knowledge_item_id is not None else None,
                 "state": job.state,
                 "progress": job.progress,
                 "attempt_count": job.attempt_count,
@@ -1421,6 +1446,87 @@ async def create_space(
     }
 
 
+async def _space_detail(session: AsyncSession, principal: Principal, space_id: str) -> dict:
+    row = (
+        await session.execute(
+            select(SpaceMembershipModel, Workspace)
+            .join(Workspace, Workspace.id == SpaceMembershipModel.space_id)
+            .where(
+                SpaceMembershipModel.space_id == space_id,
+                SpaceMembershipModel.member_id == _actor_id(principal),
+                Workspace.archived_at.is_(None),
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        raise AuthorizationException()
+    space_membership, space = row
+    policy = await effective_chunk_policy(session, space_id)
+    return {
+        "id": space.id,
+        "name": space.name,
+        "role": space_membership.role,
+        "revision": space.revision,
+        "personal": space_membership.role == SpaceRole.OWNER.value and space.id != "global",
+        "created_at": space.created_at.isoformat(),
+        "chunk_policy": chunk_policy_payload(policy),
+    }
+
+
+@router.get("/spaces/{space_id}", response_model=SpaceDetail)
+async def get_space(
+    space_id: str,
+    principal: Principal = Depends(require_scope("spaces:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "space.list")
+    return await _space_detail(session, principal, space_id)
+
+
+@router.put("/spaces/{space_id}/chunk-policy", response_model=SpaceDetail)
+async def update_space_chunk_policy(
+    space_id: str,
+    payload: ChunkPolicyRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("spaces:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "space.chunk_policy")
+    validate_chunk_policy(
+        chunk_size=payload.chunk_size,
+        chunk_overlap=payload.chunk_overlap,
+        chunk_strategy=payload.chunk_strategy,
+    )
+    reservation = await _reserve(
+        session,
+        principal,
+        "space.chunk_policy.update",
+        idempotency_key,
+        {
+            "space_id": space_id,
+            "chunk_size": payload.chunk_size,
+            "chunk_overlap": payload.chunk_overlap,
+            "chunk_strategy": payload.chunk_strategy,
+        },
+    )
+    if reservation.status is not ReservationStatus.REPLAY:
+        await SpaceService(session).update_chunk_policy(
+            principal,
+            space_id,
+            chunk_size=payload.chunk_size,
+            chunk_overlap=payload.chunk_overlap,
+            chunk_strategy=payload.chunk_strategy,
+            request_id=get_request_id(request),
+        )
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=200,
+            resource_ids=[space_id],
+        )
+    return await _space_detail(session, principal, space_id)
+
+
 @router.get("/spaces/{space_id}/members", response_model=Page[SpaceMember])
 async def list_space_members(
     space_id: str,
@@ -1842,10 +1948,11 @@ async def list_knowledge(
     }
 
 
-@router.post("/knowledge", status_code=status.HTTP_201_CREATED, response_model=KnowledgeDetail)
+@router.post("/knowledge", status_code=status.HTTP_201_CREATED, response_model=KnowledgeEnrichmentReceipt | KnowledgeDetail, responses={202: {"model": KnowledgeEnrichmentReceipt}})
 async def create_knowledge(
     payload: KnowledgeCreateRequest,
     request: Request,
+    response: Response,
     idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
     principal: Principal = Depends(require_scope("knowledge:write")),
     session: AsyncSession = Depends(get_db_session),
@@ -1867,10 +1974,29 @@ async def create_knowledge(
             origin=payload.origin,
             source_detail=payload.source_detail,
             expires_at=payload.expires_at,
+            enrich_async=payload.enrich_async,
         ),
     )
     assert outcome.value is not None
-    return _knowledge_payload(outcome.value)
+    if payload.enrich_async and not outcome.replayed:
+        service = KnowledgeManagementService(session)
+        revision = outcome.value.current_revision
+        assert revision is not None
+        job_id = await service.enrichment_job_for_revision(revision.id)
+        assert job_id is not None
+        response.status_code = status.HTTP_202_ACCEPTED
+        return {
+            **_knowledge_payload(outcome.value, enrichment="pending"),
+            "job_id": str(job_id),
+            "job_state": "queued",
+        }
+    if outcome.replayed:
+        revision = outcome.value.current_revision
+        enrichment = None
+        if revision is not None:
+            enrichment = await KnowledgeManagementService(session).enrichment_state(revision.id)
+        return _knowledge_payload(outcome.value, enrichment=enrichment)
+    return _knowledge_payload(outcome.value, enrichment=None)
 
 
 def _stale_threshold_days(older_than_days: int | None) -> int:
@@ -1940,14 +2066,19 @@ async def get_knowledge(
         UseCaseContext(principal=principal),
         item_id,
     )
-    return _knowledge_payload(item)
+    revision = item.current_revision
+    enrichment = None
+    if revision is not None:
+        enrichment = await KnowledgeManagementService(session).enrichment_state(revision.id)
+    return _knowledge_payload(item, enrichment=enrichment)
 
 
-@router.put("/knowledge/{item_id}", response_model=KnowledgeDetail)
+@router.put("/knowledge/{item_id}", response_model=KnowledgeEnrichmentReceipt | KnowledgeDetail, responses={202: {"model": KnowledgeEnrichmentReceipt}})
 async def update_knowledge(
     item_id: UUID,
     payload: KnowledgeUpdateRequest,
     request: Request,
+    response: Response,
     idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
     principal: Principal = Depends(require_scope("knowledge:write")),
     session: AsyncSession = Depends(get_db_session),
@@ -1970,10 +2101,27 @@ async def update_knowledge(
             review_note=payload.review_note,
             expires_at=payload.expires_at,
             update_expires_at=payload.update_expires_at,
+            enrich_async=payload.enrich_async,
         ),
     )
     assert outcome.value is not None
-    return _knowledge_payload(outcome.value)
+    if payload.enrich_async and not outcome.replayed:
+        service = KnowledgeManagementService(session)
+        revision = outcome.value.current_revision
+        assert revision is not None
+        job_id = await service.enrichment_job_for_revision(revision.id)
+        assert job_id is not None
+        response.status_code = status.HTTP_202_ACCEPTED
+        return {
+            **_knowledge_payload(outcome.value, enrichment="pending"),
+            "job_id": str(job_id),
+            "job_state": "queued",
+        }
+    revision = outcome.value.current_revision
+    enrichment = None
+    if revision is not None:
+        enrichment = await KnowledgeManagementService(session).enrichment_state(revision.id)
+    return _knowledge_payload(outcome.value, enrichment=enrichment)
 
 
 @router.post("/knowledge/{item_id}/transitions", response_model=KnowledgeTransition)
@@ -2654,8 +2802,11 @@ async def list_ingestion_jobs(
             {
                 "id": str(job.id),
                 "space_id": job.space_id,
-                "document_id": str(job.document_id),
-                "document_revision_id": str(job.document_revision_id),
+                "job_type": job.job_type,
+                "document_id": str(job.document_id) if job.document_id is not None else None,
+                "document_revision_id": str(job.document_revision_id) if job.document_revision_id is not None else None,
+                "knowledge_item_id": str(job.knowledge_item_id) if job.knowledge_item_id is not None else None,
+                "knowledge_revision_id": str(job.knowledge_revision_id) if job.knowledge_revision_id is not None else None,
                 "state": job.state,
                 "progress": job.progress,
                 "attempt_count": job.attempt_count,

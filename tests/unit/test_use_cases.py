@@ -35,7 +35,7 @@ class _KnowledgeStub:
     def __init__(self, session) -> None:
         self.items: dict = {}
 
-    async def create(self, principal, *, space_id, title, content, tags, request_id):
+    async def create(self, principal, *, space_id, title, content, tags, request_id, lifecycle_status="accepted", origin=None, source_detail=None, expires_at=None, enrich_async=False, idempotency_key=None):
         item = _Item(uuid4())
         self.items[item.id] = {"space_id": space_id, "title": title, "content": content, "tags": tags}
         return item
@@ -43,7 +43,7 @@ class _KnowledgeStub:
     async def get(self, item_id):
         return self.items.get(item_id)
 
-    async def update(self, principal, item_id, *, expected_version, title, content, tags, change_summary, request_id):
+    async def update(self, principal, item_id, *, expected_version, title, content, tags, change_summary, request_id, review_note=None, expires_at=None, update_expires_at=False, enrich_async=False, idempotency_key=None):
         self.items[item_id] = {"title": title, "content": content, "tags": tags}
         return _Item(item_id, version=expected_version + 1)
 

@@ -10,18 +10,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.gateway.domain.exceptions import ConcurrencyConflictException, ItemNotFoundException, JobLeaseLostException
 from src.gateway.infrastructure.persistence.ingestion_models import DocumentRevisionModel, IngestionJobModel
+from src.gateway.infrastructure.persistence.models import KnowledgeRevision
 
 
 @dataclass(frozen=True, slots=True)
 class JobClaim:
     job_id: UUID
     space_id: str
-    document_id: UUID
-    document_revision_id: UUID
+    document_id: UUID | None
+    document_revision_id: UUID | None
     claim_token: UUID
     attempt_count: int
     cancellation_requested: bool
     queued_at: datetime
+    job_type: str = "document_ingestion"
 
 
 class IngestionJobService:
@@ -73,6 +75,7 @@ class IngestionJobService:
             attempt_count=job.attempt_count,
             cancellation_requested=job.cancellation_requested,
             queued_at=job.created_at,
+            job_type=job.job_type,
         )
 
     async def queue_depths(self) -> dict[str, int]:
@@ -210,6 +213,8 @@ class IngestionJobService:
             return job.state
         if job.state not in {"failed", "cancelled"}:
             raise ConcurrencyConflictException("Only a terminal ingestion job can be retried.")
+        if job.job_type == "knowledge_enrichment":
+            return await self._request_enrichment_retry(job)
         revision = await self._session.scalar(
             select(DocumentRevisionModel)
             .where(DocumentRevisionModel.id == job.document_revision_id)
@@ -336,6 +341,21 @@ class IngestionJobService:
                 .values(status="failed", failure_code="attempts_exhausted")
             )
 
+    async def _request_enrichment_retry(self, job: IngestionJobModel) -> str:
+        revision = await self._session.scalar(
+            select(KnowledgeRevision)
+            .where(KnowledgeRevision.id == job.knowledge_revision_id)
+            .with_for_update()
+        )
+        if revision is None:
+            raise ItemNotFoundException()
+        now = await self._database_now()
+        job.retry_requested = True
+        job.cancellation_requested = False
+        job.updated_at = now
+        await self._session.flush()
+        return "retry_requested"
+
     async def _activate_retry_requests(self, now) -> None:
         jobs = tuple(
             await self._session.scalars(
@@ -351,6 +371,31 @@ class IngestionJobService:
             )
         )
         for job in jobs:
+            if job.job_type == "knowledge_enrichment":
+                revision = await self._session.scalar(
+                    select(KnowledgeRevision)
+                    .where(KnowledgeRevision.id == job.knowledge_revision_id)
+                    .with_for_update()
+                )
+                if revision is None:
+                    job.retry_requested = False
+                    job.last_error_code = "retry_precondition_failed"
+                    job.updated_at = now
+                    continue
+                job.state = "queued"
+                job.progress = 0
+                job.attempt_count = 0
+                job.next_attempt_at = now
+                job.retry_requested = False
+                job.last_error_code = None
+                job.last_error_detail = None
+                job.lease_owner = None
+                job.lease_expires_at = None
+                job.claim_token = None
+                job.started_at = None
+                job.finished_at = None
+                job.updated_at = now
+                continue
             revision = await self._session.scalar(
                 select(DocumentRevisionModel)
                 .where(DocumentRevisionModel.id == job.document_revision_id)

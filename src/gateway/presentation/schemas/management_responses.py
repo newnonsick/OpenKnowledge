@@ -48,6 +48,7 @@ SessionState = Literal["active", "revoked", "expired"]
 RuntimeSettingsState = Literal["draft", "active", "superseded"]
 PendingActionState = Literal["pending", "executed", "expired", "cancelled"]
 KnowledgeLifecycleStatus = Literal["observation", "candidate", "accepted", "superseded"]
+EnrichmentStatus = Literal["pending", "enriched", "failed"]
 RetrievalSemanticState = Literal["active", "degraded", "disabled"]
 AuditOutcome = Literal["success", "denied", "failed"]
 
@@ -298,6 +299,17 @@ class SpaceSummary(ContractModel):
     created_at: datetime
 
 
+class ChunkPolicyDetail(ContractModel):
+    chunk_size: int
+    chunk_overlap: int
+    chunk_strategy: Literal["fixed", "semantic"]
+    source: Literal["space", "global"]
+
+
+class SpaceDetail(SpaceSummary):
+    chunk_policy: ChunkPolicyDetail
+
+
 class AdminSpaceSummary(ContractModel):
     id: str
     name: str
@@ -354,6 +366,12 @@ class KnowledgeSummary(ContractModel):
 
 class KnowledgeDetail(KnowledgeSummary):
     content: str
+    enrichment: EnrichmentStatus | None = None
+
+
+class KnowledgeEnrichmentReceipt(KnowledgeDetail):
+    job_id: str
+    job_state: IngestionJobState
 
 
 class KnowledgeTransition(ContractModel):
@@ -461,8 +479,11 @@ class SourceSummary(ContractModel):
 class IngestionJob(ContractModel):
     id: str
     space_id: str
-    document_id: str
-    document_revision_id: str
+    job_type: str = "document_ingestion"
+    document_id: str | None = None
+    document_revision_id: str | None = None
+    knowledge_item_id: str | None = None
+    knowledge_revision_id: str | None = None
     state: IngestionJobState
     progress: int
     attempt_count: int
@@ -655,7 +676,9 @@ class AISourceResult(ContractModel):
 class AIIngestionJobResult(ContractModel):
     id: str
     space_id: str
-    document_id: str
+    job_type: str = "document_ingestion"
+    document_id: str | None = None
+    knowledge_item_id: str | None = None
     state: IngestionJobState
     progress: int
     attempt_count: int

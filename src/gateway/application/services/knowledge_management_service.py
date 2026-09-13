@@ -15,7 +15,7 @@ from src.gateway.domain.entities import KnowledgeItem as DomainKnowledgeItem, Kn
 from src.gateway.domain.exceptions import AuthorizationException, ConcurrencyConflictException, ResourceConflictException, ValidationException
 from src.gateway.domain.identity import Principal
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
-from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGenerationModel, ProvenanceLinkModel, RetrievalUnitModel
+from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGenerationModel, IngestionJobModel, ProvenanceLinkModel, RetrievalUnitModel
 from src.gateway.infrastructure.persistence.models import KnowledgeItem, KnowledgeRevision
 from src.gateway.observability import increment_metric
 
@@ -71,6 +71,8 @@ class KnowledgeManagementService:
         origin: str | None = None,
         source_detail: str | None = None,
         expires_at: datetime | None = None,
+        enrich_async: bool = False,
+        idempotency_key: str | None = None,
     ) -> DomainKnowledgeItem:
         await AuthorizationService(self._session).authorize_space(principal, space_id, Action.CONTENT_WRITE)
         normalized_status = self._validate_create_status(lifecycle_status)
@@ -117,7 +119,10 @@ class KnowledgeManagementService:
                 actor_member_id=self._member_id(principal),
             )
         )
-        await self._activate_projection(item, revision, now)
+        if enrich_async:
+            await self._defer_projection(principal, space_id, item_id, revision_id, idempotency_key)
+        else:
+            await self._activate_projection(item, revision, now)
         self._audit.record(
             actor_member_id=self._member_id(principal),
             actor_kind=principal.kind.value,
@@ -146,6 +151,8 @@ class KnowledgeManagementService:
         review_note: str | None = None,
         expires_at: datetime | None = None,
         update_expires_at: bool = False,
+        enrich_async: bool = False,
+        idempotency_key: str | None = None,
     ) -> DomainKnowledgeItem:
         row = (
             await self._session.execute(
@@ -203,7 +210,10 @@ class KnowledgeManagementService:
                 actor_member_id=self._member_id(principal),
             )
         )
-        await self._activate_projection(item, revision, now)
+        if enrich_async:
+            await self._defer_projection(principal, item.workspace_id, item.id, revision.id, idempotency_key)
+        else:
+            await self._activate_projection(item, revision, now)
         self._audit.record(
             actor_member_id=self._member_id(principal),
             actor_kind=principal.kind.value,
@@ -338,6 +348,44 @@ class KnowledgeManagementService:
             resource_id=str(item.id),
             details={"space_id": item.workspace_id, "version": revision.version},
         )
+
+    async def _defer_projection(
+        self,
+        principal: Principal,
+        space_id: str,
+        item_id: UUID,
+        revision_id: UUID,
+        idempotency_key: str | None,
+    ) -> UUID:
+        from src.gateway.application.services.knowledge_enrichment_service import queue_enrichment_job
+
+        return await queue_enrichment_job(
+            self._session,
+            principal=principal,
+            space_id=space_id,
+            item_id=item_id,
+            revision_id=revision_id,
+            idempotency_key=idempotency_key or f"knowledge-enrichment:{revision_id}",
+        )
+
+    async def enrichment_job_for_revision(self, revision_id: UUID) -> UUID | None:
+        from src.gateway.application.services.knowledge_enrichment_service import ENRICHMENT_JOB_TYPE
+
+        job = await self._session.scalar(
+            select(IngestionJobModel)
+            .where(
+                IngestionJobModel.job_type == ENRICHMENT_JOB_TYPE,
+                IngestionJobModel.knowledge_revision_id == revision_id,
+            )
+            .order_by(IngestionJobModel.created_at.desc(), IngestionJobModel.id.desc())
+            .limit(1)
+        )
+        return job.id if job is not None else None
+
+    async def enrichment_state(self, revision_id: UUID) -> str | None:
+        from src.gateway.application.services.knowledge_enrichment_service import enrichment_status
+
+        return await enrichment_status(self._session, revision_id)
 
     async def _deactivate_projection(self, revision: KnowledgeRevision, now: datetime) -> None:
         revision_ids = select(KnowledgeRevision.id).where(KnowledgeRevision.item_id == revision.item_id)

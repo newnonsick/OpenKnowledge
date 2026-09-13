@@ -41,10 +41,24 @@ class Workspace(Base):
     )
     archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     revision: Mapped[int] = mapped_column(BigInteger, default=1, server_default=text("1"), nullable=False)
+    chunk_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    chunk_overlap: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    chunk_strategy: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "(chunk_size IS NULL AND chunk_overlap IS NULL AND chunk_strategy IS NULL) OR "
+            "(chunk_size IS NOT NULL AND chunk_overlap IS NOT NULL AND chunk_strategy IS NOT NULL "
+            "AND chunk_size BETWEEN 64 AND 32000 "
+            "AND chunk_overlap >= 0 AND chunk_overlap < chunk_size "
+            "AND chunk_strategy IN ('fixed', 'semantic'))",
+            name="ck_workspaces_chunk_policy",
+        ),
     )
 
     knowledge_items: Mapped[list["KnowledgeItem"]] = relationship(

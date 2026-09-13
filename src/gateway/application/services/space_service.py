@@ -8,8 +8,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.gateway.application.services.audit_service import AuditService
+from src.gateway.application.services.chunk_policy_service import validate_chunk_policy
 from src.gateway.domain.authorization import Action, AuthorizationContext, is_allowed
-from src.gateway.domain.exceptions import AuthorizationException, ConcurrencyConflictException, RecentAuthenticationRequiredException, ResourceConflictException
+from src.gateway.domain.exceptions import AuthorizationException, ConcurrencyConflictException, RecentAuthenticationRequiredException, ResourceConflictException, ValidationException
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SpaceRole, SystemRole
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, SessionFamilyModel, SpaceMembershipModel
@@ -323,6 +324,63 @@ class SpaceService:
             action="space.archived",
             resource_type="space",
             resource_id=space_id,
+        )
+        await self._session.flush()
+
+    async def update_chunk_policy(
+        self,
+        actor: Principal,
+        space_id: str,
+        *,
+        chunk_size: int,
+        chunk_overlap: int,
+        chunk_strategy: str,
+        request_id: str,
+    ) -> None:
+        validate_chunk_policy(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            chunk_strategy=chunk_strategy,
+        )
+        space = await self._session.scalar(
+            select(Workspace).where(Workspace.id == space_id).with_for_update()
+        )
+        if space is None or space.archived_at is not None:
+            raise AuthorizationException()
+        try:
+            actor_id = UUID(actor.subject_id)
+        except ValueError as exc:
+            raise AuthorizationException() from exc
+        actor_member = await self._session.get(MemberModel, actor_id)
+        if actor_member is None or actor_member.status != MemberStatus.ACTIVE.value:
+            raise AuthorizationException()
+        membership = await self._session.scalar(
+            select(SpaceMembershipModel).where(
+                SpaceMembershipModel.space_id == space_id,
+                SpaceMembershipModel.member_id == actor_id,
+            )
+        )
+        if membership is None or membership.role != SpaceRole.OWNER.value or not is_allowed(
+            AuthorizationContext(actor, SpaceRole(membership.role)),
+            Action.SPACE_UPDATE,
+        ):
+            raise AuthorizationException()
+        space.chunk_size = chunk_size
+        space.chunk_overlap = chunk_overlap
+        space.chunk_strategy = chunk_strategy
+        space.revision += 1
+        self._audit.record(
+            actor_member_id=actor_id,
+            actor_kind=actor.kind.value,
+            request_id=request_id,
+            action="space.chunk_policy_updated",
+            resource_type="space",
+            resource_id=space_id,
+            details={
+                "chunk_size": chunk_size,
+                "chunk_overlap": chunk_overlap,
+                "chunk_strategy": chunk_strategy,
+            },
         )
         await self._session.flush()
 

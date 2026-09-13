@@ -986,11 +986,29 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Get Space */
+        get: operations["get_space_api_v1_spaces__space_id__get"];
         put?: never;
         post?: never;
         /** Archive Space */
         delete: operations["archive_space_api_v1_spaces__space_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/spaces/{space_id}/chunk-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Space Chunk Policy */
+        put: operations["update_space_chunk_policy_api_v1_spaces__space_id__chunk_policy_put"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1235,6 +1253,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/responses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Response */
+        post: operations["create_response_v1_responses_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1287,9 +1322,16 @@ export interface components {
             /** Attempt Count */
             attempt_count: number;
             /** Document Id */
-            document_id: string;
+            document_id?: string | null;
             /** Id */
             id: string;
+            /**
+             * Job Type
+             * @default document_ingestion
+             */
+            job_type: string;
+            /** Knowledge Item Id */
+            knowledge_item_id?: string | null;
             /** Last Error Code */
             last_error_code: string | null;
             /** Max Attempts */
@@ -1743,6 +1785,35 @@ export interface components {
             /** Space Id */
             space_id: string;
         };
+        /** ChunkPolicyDetail */
+        ChunkPolicyDetail: {
+            /** Chunk Overlap */
+            chunk_overlap: number;
+            /** Chunk Size */
+            chunk_size: number;
+            /**
+             * Chunk Strategy
+             * @enum {string}
+             */
+            chunk_strategy: "fixed" | "semantic";
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "space" | "global";
+        };
+        /** ChunkPolicyRequest */
+        ChunkPolicyRequest: {
+            /** Chunk Overlap */
+            chunk_overlap: number;
+            /** Chunk Size */
+            chunk_size: number;
+            /**
+             * Chunk Strategy
+             * @enum {string}
+             */
+            chunk_strategy: "fixed" | "semantic";
+        };
         /** ChunkingRuntimeSettings */
         ChunkingRuntimeSettings: {
             /**
@@ -2143,13 +2214,22 @@ export interface components {
              */
             created_at: string;
             /** Document Id */
-            document_id: string;
+            document_id?: string | null;
             /** Document Revision Id */
-            document_revision_id: string;
+            document_revision_id?: string | null;
             /** Finished At */
             finished_at: string | null;
             /** Id */
             id: string;
+            /**
+             * Job Type
+             * @default document_ingestion
+             */
+            job_type: string;
+            /** Knowledge Item Id */
+            knowledge_item_id?: string | null;
+            /** Knowledge Revision Id */
+            knowledge_revision_id?: string | null;
             /** Last Error Code */
             last_error_code: string | null;
             /** Max Attempts */
@@ -2197,6 +2277,11 @@ export interface components {
         KnowledgeCreateRequest: {
             /** Content */
             content: string;
+            /**
+             * Enrich Async
+             * @default false
+             */
+            enrich_async: boolean;
             /** Expires At */
             expires_at?: string | null;
             /**
@@ -2227,10 +2312,62 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Enrichment */
+            enrichment?: ("pending" | "enriched" | "failed") | null;
             /** Expires At */
             expires_at?: string | null;
             /** Id */
             id: string;
+            /**
+             * Lifecycle Status
+             * @default accepted
+             * @enum {string}
+             */
+            lifecycle_status: "observation" | "candidate" | "accepted" | "superseded";
+            /** Origin */
+            origin?: string | null;
+            /** Review Note */
+            review_note?: string | null;
+            /** Source Detail */
+            source_detail?: string | null;
+            /** Space Id */
+            space_id: string;
+            /** Tags */
+            tags: string[];
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version */
+            version: number;
+        };
+        /** KnowledgeEnrichmentReceipt */
+        KnowledgeEnrichmentReceipt: {
+            /** Content */
+            content: string;
+            /** Content Excerpt */
+            content_excerpt: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Enrichment */
+            enrichment?: ("pending" | "enriched" | "failed") | null;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Id */
+            id: string;
+            /** Job Id */
+            job_id: string;
+            /**
+             * Job State
+             * @enum {string}
+             */
+            job_state: "preparing" | "queued" | "running" | "retry_wait" | "succeeded" | "failed" | "cancelled";
             /**
              * Lifecycle Status
              * @default accepted
@@ -2419,6 +2556,11 @@ export interface components {
             change_summary?: string | null;
             /** Content */
             content: string;
+            /**
+             * Enrich Async
+             * @default false
+             */
+            enrich_async: boolean;
             /** Expected Version */
             expected_version: number;
             /** Expires At */
@@ -3041,6 +3183,39 @@ export interface components {
              */
             temporary_password_expires_at: string;
         };
+        /** ResponsesInputMessage */
+        ResponsesInputMessage: {
+            /** Content */
+            content: string | {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Role
+             * @default user
+             * @enum {string}
+             */
+            role: "system" | "developer" | "user" | "assistant";
+        };
+        /** ResponsesRequest */
+        ResponsesRequest: {
+            /** Input */
+            input: string | components["schemas"]["ResponsesInputMessage"][];
+            /** Max Output Tokens */
+            max_output_tokens?: number | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: string;
+            } | null;
+            /** Model */
+            model: string;
+            /**
+             * Stream
+             * @default false
+             */
+            stream: boolean | null;
+            /** Workspace Id */
+            workspace_id?: string | null;
+        };
         /** RetrievalExplanation */
         RetrievalExplanation: {
             /** Abstained */
@@ -3380,6 +3555,24 @@ export interface components {
         SpaceCreateRequest: {
             /** Name */
             name: string;
+        };
+        /** SpaceDetail */
+        SpaceDetail: {
+            chunk_policy: components["schemas"]["ChunkPolicyDetail"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Personal */
+            personal: boolean;
+            /** Revision */
+            revision: number;
+            role: components["schemas"]["SpaceRole"];
         };
         /** SpaceMember */
         SpaceMember: {
@@ -6702,7 +6895,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["KnowledgeDetail"];
+                    "application/json": components["schemas"]["KnowledgeEnrichmentReceipt"] | components["schemas"]["KnowledgeDetail"];
+                };
+            };
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeEnrichmentReceipt"];
                 };
             };
             /** @description Unauthorized */
@@ -7232,7 +7434,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["KnowledgeDetail"];
+                    "application/json": components["schemas"]["KnowledgeEnrichmentReceipt"] | components["schemas"]["KnowledgeDetail"];
+                };
+            };
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeEnrichmentReceipt"];
                 };
             };
             /** @description Unauthorized */
@@ -10171,6 +10382,109 @@ export interface operations {
             };
         };
     };
+    get_space_api_v1_spaces__space_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceDetail"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     archive_space_api_v1_spaces__space_id__delete: {
         parameters: {
             query?: never;
@@ -10190,6 +10504,115 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_space_chunk_policy_api_v1_spaces__space_id__chunk_policy_put: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChunkPolicyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceDetail"];
+                };
             };
             /** @description Unauthorized */
             401: {
@@ -11150,6 +11573,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_response_v1_responses_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResponsesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful response object */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAIErrorResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAIErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAIErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAIErrorResponse"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAIErrorResponse"];
                 };
             };
         };

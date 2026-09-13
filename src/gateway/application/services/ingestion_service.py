@@ -23,15 +23,16 @@ class IngestionService:
         storage: IFileStorage,
         document_repository: IDocumentRepository,
         embedding_client: Optional[IEmbeddingClient] = None,
-        chunk_size: int = 500,
-        chunk_overlap: int = 50,
+        chunk_size: int | None = None,
+        chunk_overlap: int | None = None,
     ) -> None:
+        settings = get_settings().gateway
         self.storage = storage
         self.document_repository = document_repository
         self.embedding_client = embedding_client
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
-        self.chunker = Chunker(default_chunk_size=chunk_size, default_overlap=chunk_overlap)
+        self.chunk_size = chunk_size if chunk_size is not None else settings.ingestion_chunk_size
+        self.chunk_overlap = chunk_overlap if chunk_overlap is not None else settings.ingestion_chunk_overlap
+        self.chunker = Chunker(default_chunk_size=self.chunk_size, default_overlap=self.chunk_overlap)
 
     async def ingest_file(
         self,

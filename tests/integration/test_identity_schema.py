@@ -13,7 +13,7 @@ async def test_configured_postgres_has_identity_invariants() -> None:
         expected_embedding_dimension=get_settings().embedding.dimension
     )
     assert status.compatible is True
-    assert status.current_revision == "022"
+    assert status.current_revision in status.head_revisions
 
     engine = create_async_engine(
         normalize_database_url(get_settings().database.url),

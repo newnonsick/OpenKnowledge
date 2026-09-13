@@ -104,12 +104,35 @@
             "type": "integer"
           },
           "document_id": {
-            "title": "Document Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
           },
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "job_type": {
+            "default": "document_ingestion",
+            "title": "Job Type",
+            "type": "string"
+          },
+          "knowledge_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Item Id"
           },
           "last_error_code": {
             "anyOf": [
@@ -156,7 +179,6 @@
         "required": [
           "id",
           "space_id",
-          "document_id",
           "state",
           "progress",
           "attempt_count",
@@ -1323,6 +1345,74 @@
         "title": "Body_upload_source_api_v1_sources_upload_post",
         "type": "object"
       },
+      "ChunkPolicyDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "chunk_overlap": {
+            "title": "Chunk Overlap",
+            "type": "integer"
+          },
+          "chunk_size": {
+            "title": "Chunk Size",
+            "type": "integer"
+          },
+          "chunk_strategy": {
+            "enum": [
+              "fixed",
+              "semantic"
+            ],
+            "title": "Chunk Strategy",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "space",
+              "global"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_size",
+          "chunk_overlap",
+          "chunk_strategy",
+          "source"
+        ],
+        "title": "ChunkPolicyDetail",
+        "type": "object"
+      },
+      "ChunkPolicyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "chunk_overlap": {
+            "minimum": 0.0,
+            "title": "Chunk Overlap",
+            "type": "integer"
+          },
+          "chunk_size": {
+            "maximum": 32000.0,
+            "minimum": 64.0,
+            "title": "Chunk Size",
+            "type": "integer"
+          },
+          "chunk_strategy": {
+            "enum": [
+              "fixed",
+              "semantic"
+            ],
+            "title": "Chunk Strategy",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_size",
+          "chunk_overlap",
+          "chunk_strategy"
+        ],
+        "title": "ChunkPolicyRequest",
+        "type": "object"
+      },
       "ChunkingRuntimeSettings": {
         "additionalProperties": false,
         "properties": {
@@ -2463,12 +2553,26 @@
             "type": "string"
           },
           "document_id": {
-            "title": "Document Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
           },
           "document_revision_id": {
-            "title": "Document Revision Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Revision Id"
           },
           "finished_at": {
             "anyOf": [
@@ -2485,6 +2589,33 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "job_type": {
+            "default": "document_ingestion",
+            "title": "Job Type",
+            "type": "string"
+          },
+          "knowledge_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Item Id"
+          },
+          "knowledge_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Revision Id"
           },
           "last_error_code": {
             "anyOf": [
@@ -2543,8 +2674,6 @@
         "required": [
           "id",
           "space_id",
-          "document_id",
-          "document_revision_id",
           "state",
           "progress",
           "attempt_count",
@@ -2656,6 +2785,11 @@
             "title": "Content",
             "type": "string"
           },
+          "enrich_async": {
+            "default": false,
+            "title": "Enrich Async",
+            "type": "boolean"
+          },
           "expires_at": {
             "anyOf": [
               {
@@ -2750,6 +2884,22 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "enrichment": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pending",
+                  "enriched",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enrichment"
           },
           "expires_at": {
             "anyOf": [
@@ -2848,6 +2998,156 @@
           "content"
         ],
         "title": "KnowledgeDetail",
+        "type": "object"
+      },
+      "KnowledgeEnrichmentReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "content_excerpt": {
+            "title": "Content Excerpt",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "enrichment": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pending",
+                  "enriched",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enrichment"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "job_state": {
+            "enum": [
+              "preparing",
+              "queued",
+              "running",
+              "retry_wait",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Job State",
+            "type": "string"
+          },
+          "lifecycle_status": {
+            "default": "accepted",
+            "enum": [
+              "observation",
+              "candidate",
+              "accepted",
+              "superseded"
+            ],
+            "title": "Lifecycle Status",
+            "type": "string"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin"
+          },
+          "review_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Note"
+          },
+          "source_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Detail"
+          },
+          "space_id": {
+            "title": "Space Id",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "space_id",
+          "title",
+          "content_excerpt",
+          "tags",
+          "version",
+          "created_at",
+          "updated_at",
+          "content",
+          "job_id",
+          "job_state"
+        ],
+        "title": "KnowledgeEnrichmentReceipt",
         "type": "object"
       },
       "KnowledgeExport": {
@@ -3350,6 +3650,11 @@
             "minLength": 1,
             "title": "Content",
             "type": "string"
+          },
+          "enrich_async": {
+            "default": false,
+            "title": "Enrich Async",
+            "type": "boolean"
           },
           "expected_version": {
             "minimum": 1.0,
@@ -5207,6 +5512,120 @@
         "title": "ResetMemberPassword",
         "type": "object"
       },
+      "ResponsesInputMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Content"
+          },
+          "role": {
+            "default": "user",
+            "enum": [
+              "system",
+              "developer",
+              "user",
+              "assistant"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "ResponsesInputMessage",
+        "type": "object"
+      },
+      "ResponsesRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "input": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ResponsesInputMessage"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Input"
+          },
+          "max_output_tokens": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Output Tokens"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "stream": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": false,
+            "title": "Stream"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "required": [
+          "model",
+          "input"
+        ],
+        "title": "ResponsesRequest",
+        "type": "object"
+      },
       "RetrievalExplanation": {
         "additionalProperties": false,
         "properties": {
@@ -6106,6 +6525,49 @@
           "name"
         ],
         "title": "SpaceCreateRequest",
+        "type": "object"
+      },
+      "SpaceDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "chunk_policy": {
+            "$ref": "#/components/schemas/ChunkPolicyDetail"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "personal": {
+            "title": "Personal",
+            "type": "boolean"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "role": {
+            "$ref": "#/components/schemas/SpaceRole"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role",
+          "revision",
+          "personal",
+          "created_at",
+          "chunk_policy"
+        ],
+        "title": "SpaceDetail",
         "type": "object"
       },
       "SpaceMember": {
@@ -11159,11 +11621,29 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/KnowledgeDetail"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/KnowledgeEnrichmentReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/KnowledgeDetail"
+                    }
+                  ],
+                  "title": "Response Create Knowledge Api V1 Knowledge Post"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeEnrichmentReceipt"
+                }
+              }
+            },
+            "description": "Accepted"
           },
           "401": {
             "content": {
@@ -12047,11 +12527,29 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/KnowledgeDetail"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/KnowledgeEnrichmentReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/KnowledgeDetail"
+                    }
+                  ],
+                  "title": "Response Update Knowledge Api V1 Knowledge  Item Id  Put"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeEnrichmentReceipt"
+                }
+              }
+            },
+            "description": "Accepted"
           },
           "401": {
             "content": {
@@ -16117,6 +16615,285 @@
         "tags": [
           "Management"
         ]
+      },
+      "get": {
+        "operationId": "get_space_api_v1_spaces__space_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "title": "Space Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get Space",
+        "tags": [
+          "Management"
+        ]
+      }
+    },
+    "/api/v1/spaces/{space_id}/chunk-policy": {
+      "put": {
+        "operationId": "update_space_chunk_policy_api_v1_spaces__space_id__chunk_policy_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "title": "Space Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChunkPolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Update Space Chunk Policy",
+        "tags": [
+          "Management"
+        ]
       }
     },
     "/api/v1/spaces/{space_id}/member-candidates": {
@@ -17336,6 +18113,100 @@
         "summary": "Get Model",
         "tags": [
           "Models"
+        ]
+      }
+    },
+    "/v1/responses": {
+      "post": {
+        "operationId": "create_response_v1_responses_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResponsesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful response object"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create Response",
+        "tags": [
+          "OpenAI Responses"
         ]
       }
     }

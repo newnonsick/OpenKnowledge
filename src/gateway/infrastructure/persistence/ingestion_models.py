@@ -252,8 +252,10 @@ class IngestionJobModel(Base):
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     space_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    document_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    document_revision_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    document_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    document_revision_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    knowledge_item_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    knowledge_revision_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     initiated_by_member_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("members.id", ondelete="RESTRICT"), nullable=False)
     job_type: Mapped[str] = mapped_column(String(32), default="document_ingestion", server_default=text("'document_ingestion'"), nullable=False)
     state: Mapped[str] = mapped_column(String(20), default="queued", server_default=text("'queued'"), nullable=False)
@@ -277,6 +279,13 @@ class IngestionJobModel(Base):
 
     __table_args__ = (
         CheckConstraint("state IN ('preparing','queued','running','retry_wait','succeeded','failed','cancelled')", name="ck_ingestion_jobs_state"),
+        CheckConstraint(
+            "(job_type = 'knowledge_enrichment' AND document_id IS NULL AND document_revision_id IS NULL "
+            "AND knowledge_item_id IS NOT NULL AND knowledge_revision_id IS NOT NULL) OR "
+            "((job_type IS NULL OR job_type <> 'knowledge_enrichment') AND document_id IS NOT NULL "
+            "AND document_revision_id IS NOT NULL AND knowledge_item_id IS NULL AND knowledge_revision_id IS NULL)",
+            name="ck_ingestion_jobs_subject",
+        ),
         CheckConstraint("progress BETWEEN 0 AND 100", name="ck_ingestion_jobs_progress"),
         CheckConstraint("attempt_count >= 0 AND max_attempts > 0", name="ck_ingestion_jobs_attempts"),
         CheckConstraint(
@@ -296,12 +305,20 @@ class IngestionJobModel(Base):
         ForeignKeyConstraint(
             ["document_revision_id", "document_id", "space_id"],
             ["document_revisions.id", "document_revisions.document_id", "document_revisions.space_id"],
+            name="fk_ingestion_jobs_document_revision_parent_space",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["knowledge_revision_id", "knowledge_item_id", "space_id"],
+            ["knowledge_revisions.id", "knowledge_revisions.item_id", "knowledge_revisions.space_id"],
+            name="fk_ingestion_jobs_knowledge_revision_space",
             ondelete="CASCADE",
         ),
         UniqueConstraint("initiated_by_member_id", "idempotency_key", name="uq_ingestion_jobs_actor_idempotency"),
         Index("ix_ingestion_jobs_claimable", "state", "next_attempt_at", "created_at"),
         Index("ix_ingestion_jobs_space_created", "space_id", "created_at"),
         Index("ix_ingestion_jobs_space_state_page", "space_id", "state", "created_at", "id"),
+        Index("ix_ingestion_jobs_knowledge_revision", "knowledge_revision_id"),
     )
 
 

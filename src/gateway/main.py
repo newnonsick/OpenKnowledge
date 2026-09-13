@@ -42,6 +42,7 @@ from src.gateway.presentation.routers import (
     management_router,
     messages_router,
     models_router,
+    responses_router,
 )
 from src.gateway.mcp.router import build_mcp_components, router as mcp_router
 
@@ -204,6 +205,7 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
     app.include_router(models_router)
     app.include_router(chat_completions_router)
     app.include_router(messages_router)
+    app.include_router(responses_router)
     app.include_router(files_router)
     app.include_router(mcp_router)
     mcp_server, mcp_sub_app = build_mcp_components(

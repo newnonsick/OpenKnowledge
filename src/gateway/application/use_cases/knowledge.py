@@ -25,6 +25,7 @@ class CreateKnowledgeCommand:
     origin: str | None = None
     source_detail: str | None = None
     expires_at: datetime | None = None
+    enrich_async: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +39,7 @@ class UpdateKnowledgeCommand:
     review_note: str | None = None
     expires_at: datetime | None = None
     update_expires_at: bool = False
+    enrich_async: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +107,8 @@ class KnowledgeCommands:
             origin=command.origin,
             source_detail=command.source_detail,
             expires_at=command.expires_at,
+            enrich_async=command.enrich_async,
+            idempotency_key=ctx.idempotency_key,
         )
         await self._complete(reservation.record_id, response_status=201, resource_ids=[str(created.id)])
         return UseCaseOutcome(created, False)
@@ -158,6 +162,8 @@ class KnowledgeCommands:
             review_note=command.review_note,
             expires_at=command.expires_at,
             update_expires_at=command.update_expires_at,
+            enrich_async=command.enrich_async,
+            idempotency_key=ctx.idempotency_key,
         )
         await self._complete(reservation.record_id, response_status=200, resource_ids=[str(command.item_id)])
         return UseCaseOutcome(updated, False)
