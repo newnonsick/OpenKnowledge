@@ -45,6 +45,7 @@ from src.gateway.application.use_cases import (
     KnowledgeCommands,
     RetrievalQueries,
     SearchKnowledgeQuery,
+    TransitionKnowledgeCommand,
     UpdateKnowledgeCommand,
     UseCaseContext,
     redact_retrieval_payload,
@@ -95,6 +96,7 @@ from src.gateway.presentation.schemas.management_responses import (
     KnowledgeExport,
     KnowledgeImportSummary,
     KnowledgeSummary,
+    KnowledgeTransition,
     MemberSummary,
     OperationSummary,
     Page,
@@ -253,6 +255,10 @@ class KnowledgeCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=500)
     content: str = Field(min_length=1, max_length=1_000_000)
     tags: list[KnowledgeTag] = Field(default_factory=list, max_length=32)
+    lifecycle_status: Literal["observation", "candidate", "accepted"] = "accepted"
+    origin: str | None = Field(default=None, min_length=1, max_length=200)
+    source_detail: str | None = Field(default=None, min_length=1, max_length=2000)
+    expires_at: datetime | None = None
 
 
 class KnowledgeUpdateRequest(BaseModel):
@@ -263,6 +269,17 @@ class KnowledgeUpdateRequest(BaseModel):
     content: str = Field(min_length=1, max_length=1_000_000)
     tags: list[KnowledgeTag] = Field(default_factory=list, max_length=32)
     change_summary: str | None = Field(default=None, max_length=500)
+    review_note: str | None = Field(default=None, max_length=2000)
+    expires_at: datetime | None = None
+    update_expires_at: bool = False
+
+
+class KnowledgeTransitionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    to_status: Literal["observation", "candidate", "accepted", "superseded"]
+    expected_version: int = Field(ge=1)
+    review_note: str | None = Field(default=None, max_length=2000)
 
 
 class RetrievalSearchRequest(BaseModel):
@@ -544,6 +561,11 @@ def _knowledge_payload(item: DomainKnowledgeItem, *, include_content: bool = Tru
         "content_excerpt": content[:320],
         "tags": list(revision.tags if revision else item.tags),
         "version": revision.version if revision else item.version,
+        "lifecycle_status": item.lifecycle_status,
+        "origin": item.origin,
+        "source_detail": item.source_detail,
+        "review_note": item.review_note,
+        "expires_at": item.expires_at.isoformat() if item.expires_at else None,
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
     }
@@ -561,6 +583,11 @@ def _orm_knowledge_payload(item: KnowledgeItemModel, revision: KnowledgeRevision
         "content_excerpt": content[:320],
         "tags": list(revision.tags if revision else item.tags),
         "version": revision.version if revision else item.revision,
+        "lifecycle_status": item.lifecycle_status,
+        "origin": item.origin,
+        "source_detail": item.source_detail,
+        "review_note": item.review_note,
+        "expires_at": item.expires_at.isoformat() if item.expires_at else None,
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
     }
@@ -1771,6 +1798,7 @@ async def list_knowledge(
     page_size: int = Query(default=50, ge=1, le=100),
     q: str | None = Query(default=None, min_length=1, max_length=500),
     tag: str | None = Query(default=None, min_length=1, max_length=80),
+    lifecycle_status: Literal["observation", "candidate", "accepted", "superseded"] | None = Query(default=None),
     principal: Principal = Depends(require_scope("knowledge:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
@@ -1805,6 +1833,8 @@ async def list_knowledge(
         )
     if tag is not None and tag.strip():
         query = query.where(KnowledgeItemModel.tags.contains([tag.strip()]))
+    if lifecycle_status is not None:
+        query = query.where(KnowledgeItemModel.lifecycle_status == lifecycle_status)
     rows, metadata = await _paginate(session, query, page=page, page_size=page_size)
     return {
         "items": [_orm_knowledge_payload(item, revision, include_content=False) for item, revision in rows],
@@ -1833,6 +1863,10 @@ async def create_knowledge(
             title=payload.title,
             content=payload.content,
             tags=tuple(payload.tags),
+            lifecycle_status=payload.lifecycle_status,
+            origin=payload.origin,
+            source_detail=payload.source_detail,
+            expires_at=payload.expires_at,
         ),
     )
     assert outcome.value is not None
@@ -1933,10 +1967,48 @@ async def update_knowledge(
             content=payload.content,
             tags=tuple(payload.tags),
             change_summary=payload.change_summary,
+            review_note=payload.review_note,
+            expires_at=payload.expires_at,
+            update_expires_at=payload.update_expires_at,
         ),
     )
     assert outcome.value is not None
     return _knowledge_payload(outcome.value)
+
+
+@router.post("/knowledge/{item_id}/transitions", response_model=KnowledgeTransition)
+async def transition_knowledge(
+    item_id: UUID,
+    payload: KnowledgeTransitionRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "knowledge.transition")
+    outcome = await KnowledgeCommands(session).transition(
+        UseCaseContext(
+            principal=principal,
+            policy=await _active_policy(principal),
+            request_id=get_request_id(request),
+            idempotency_key=idempotency_key,
+        ),
+        TransitionKnowledgeCommand(
+            item_id=item_id,
+            to_status=payload.to_status,
+            expected_version=payload.expected_version,
+            review_note=payload.review_note,
+        ),
+    )
+    assert outcome.value is not None
+    transitioned, from_status = outcome.value
+    revision = transitioned.current_revision
+    return {
+        "id": str(transitioned.id),
+        "from_status": from_status or transitioned.lifecycle_status,
+        "to_status": transitioned.lifecycle_status,
+        "version": revision.version if revision else transitioned.version,
+    }
 
 
 @router.delete("/knowledge/{item_id}", status_code=status.HTTP_204_NO_CONTENT)

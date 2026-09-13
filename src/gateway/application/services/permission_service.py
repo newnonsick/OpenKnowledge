@@ -51,6 +51,7 @@ ROUTE_ACTION: dict[str, Action] = {
     "knowledge.import": Action.CONTENT_WRITE,
     "knowledge.stale": Action.CONTENT_READ,
     "knowledge.reviewed": Action.CONTENT_WRITE,
+    "knowledge.transition": Action.CONTENT_WRITE,
     "operations.reindex.read": Action.CONTENT_READ,
     "operations.reindex.mutate": Action.CONTENT_WRITE,
     "settings.inspect": Action.SPACE_READ,

@@ -586,6 +586,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/knowledge/{item_id}/transitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Transition Knowledge */
+        post: operations["transition_knowledge_api_v1_knowledge__item_id__transitions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -2180,6 +2197,18 @@ export interface components {
         KnowledgeCreateRequest: {
             /** Content */
             content: string;
+            /** Expires At */
+            expires_at?: string | null;
+            /**
+             * Lifecycle Status
+             * @default accepted
+             * @enum {string}
+             */
+            lifecycle_status: "observation" | "candidate" | "accepted";
+            /** Origin */
+            origin?: string | null;
+            /** Source Detail */
+            source_detail?: string | null;
             /** Space Id */
             space_id: string;
             /** Tags */
@@ -2198,8 +2227,22 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Expires At */
+            expires_at?: string | null;
             /** Id */
             id: string;
+            /**
+             * Lifecycle Status
+             * @default accepted
+             * @enum {string}
+             */
+            lifecycle_status: "observation" | "candidate" | "accepted" | "superseded";
+            /** Origin */
+            origin?: string | null;
+            /** Review Note */
+            review_note?: string | null;
+            /** Source Detail */
+            source_detail?: string | null;
             /** Space Id */
             space_id: string;
             /** Tags */
@@ -2236,10 +2279,24 @@ export interface components {
         KnowledgeExportItem: {
             /** Created At */
             created_at: string | null;
+            /** Expires At */
+            expires_at?: string | null;
             /** Id */
             id: string;
+            /**
+             * Lifecycle Status
+             * @default accepted
+             * @enum {string}
+             */
+            lifecycle_status: "observation" | "candidate" | "accepted" | "superseded";
+            /** Origin */
+            origin?: string | null;
+            /** Review Note */
+            review_note?: string | null;
             /** Revisions */
             revisions: components["schemas"]["KnowledgeExportRevision"][];
+            /** Source Detail */
+            source_detail?: string | null;
             /** Tags */
             tags: string[];
             /** Title */
@@ -2297,8 +2354,22 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Expires At */
+            expires_at?: string | null;
             /** Id */
             id: string;
+            /**
+             * Lifecycle Status
+             * @default accepted
+             * @enum {string}
+             */
+            lifecycle_status: "observation" | "candidate" | "accepted" | "superseded";
+            /** Origin */
+            origin?: string | null;
+            /** Review Note */
+            review_note?: string | null;
+            /** Source Detail */
+            source_detail?: string | null;
             /** Space Id */
             space_id: string;
             /** Tags */
@@ -2313,6 +2384,35 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** KnowledgeTransition */
+        KnowledgeTransition: {
+            /**
+             * From Status
+             * @enum {string}
+             */
+            from_status: "observation" | "candidate" | "accepted" | "superseded";
+            /** Id */
+            id: string;
+            /**
+             * To Status
+             * @enum {string}
+             */
+            to_status: "observation" | "candidate" | "accepted" | "superseded";
+            /** Version */
+            version: number;
+        };
+        /** KnowledgeTransitionRequest */
+        KnowledgeTransitionRequest: {
+            /** Expected Version */
+            expected_version: number;
+            /** Review Note */
+            review_note?: string | null;
+            /**
+             * To Status
+             * @enum {string}
+             */
+            to_status: "observation" | "candidate" | "accepted" | "superseded";
+        };
         /** KnowledgeUpdateRequest */
         KnowledgeUpdateRequest: {
             /** Change Summary */
@@ -2321,10 +2421,19 @@ export interface components {
             content: string;
             /** Expected Version */
             expected_version: number;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Review Note */
+            review_note?: string | null;
             /** Tags */
             tags?: string[];
             /** Title */
             title: string;
+            /**
+             * Update Expires At
+             * @default false
+             */
+            update_expires_at: boolean;
         };
         /** LoginRequest */
         LoginRequest: {
@@ -6472,6 +6581,7 @@ export interface operations {
                 page_size?: number;
                 q?: string | null;
                 tag?: string | null;
+                lifecycle_status?: ("observation" | "candidate" | "accepted" | "superseded") | null;
             };
             header?: never;
             path?: never;
@@ -7333,6 +7443,115 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReviewedKnowledge"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    transition_knowledge_api_v1_knowledge__item_id__transitions_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeTransitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeTransition"];
                 };
             };
             /** @description Unauthorized */

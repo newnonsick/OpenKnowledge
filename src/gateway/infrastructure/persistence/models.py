@@ -78,6 +78,11 @@ class KnowledgeItem(Base):
     is_global: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lifecycle_status: Mapped[str] = mapped_column(String(32), default="accepted", server_default=text("'accepted'"), nullable=False)
+    origin: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    source_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revision: Mapped[int] = mapped_column(BigInteger, default=1, server_default=text("1"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -104,6 +109,10 @@ class KnowledgeItem(Base):
 
     __table_args__ = (
         CheckConstraint("revision > 0", name="ck_knowledge_items_revision"),
+        CheckConstraint(
+            "lifecycle_status IN ('observation', 'candidate', 'accepted', 'superseded')",
+            name="ck_knowledge_items_lifecycle_status",
+        ),
         UniqueConstraint("id", "workspace_id", name="uq_knowledge_items_id_space"),
         ForeignKeyConstraint(
             ["current_revision_id", "id", "workspace_id"],
@@ -115,6 +124,7 @@ class KnowledgeItem(Base):
         Index("ix_knowledge_items_workspace_deleted", "workspace_id", "is_deleted"),
         Index("ix_knowledge_items_space_active_page", "workspace_id", "is_deleted", "updated_at", "id"),
         Index("ix_knowledge_items_global_deleted", "is_global", "is_deleted"),
+        Index("ix_knowledge_items_workspace_lifecycle", "workspace_id", "lifecycle_status"),
     )
 
 EMBED_DIM = getattr(settings.embedding, "dimension", 768) if hasattr(settings, "embedding") else 768

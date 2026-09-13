@@ -13,6 +13,7 @@ from src.gateway.application.use_cases.knowledge import (
     CreateKnowledgeCommand,
     DeleteKnowledgeCommand,
     KnowledgeCommands,
+    TransitionKnowledgeCommand,
     UpdateKnowledgeCommand,
 )
 from src.gateway.application.use_cases.retrieval import (
@@ -33,6 +34,7 @@ __all__ = [
     "MutateIngestionJobCommand",
     "RetrievalQueries",
     "SearchKnowledgeQuery",
+    "TransitionKnowledgeCommand",
     "UpdateKnowledgeCommand",
     "UseCaseContext",
     "UseCaseOutcome",

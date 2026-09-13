@@ -23,6 +23,8 @@ EXPORT_REQUIRED_TOP_KEYS = frozenset({"format", "version", "space_id", "items"})
 EXPORT_REQUIRED_ITEM_KEYS = frozenset({"id", "title", "tags", "revisions"})
 EXPORT_REQUIRED_REVISION_KEYS = frozenset({"id", "version", "title", "content", "tags"})
 
+EXPORT_LIFECYCLE_STATUSES = frozenset({"observation", "candidate", "accepted", "superseded"})
+
 
 def knowledge_export_payload(
     *,
@@ -49,6 +51,11 @@ def item_export_payload(
         "id": str(item.id),
         "title": item.title,
         "tags": list(item.tags or []),
+        "lifecycle_status": item.lifecycle_status,
+        "origin": item.origin,
+        "source_detail": item.source_detail,
+        "review_note": item.review_note,
+        "expires_at": item.expires_at.isoformat() if item.expires_at else None,
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
         "revisions": [
@@ -94,11 +101,25 @@ def _validate_export_item(item: Any) -> None:
         raise ValidationException("Export item is missing required keys.")
     _parse_uuid(item.get("id"), field_name="item id")
     title = item.get("title")
-    if not isinstance(title, str) or not title.strip():
+    if not isinstance(title, str) or not title.strip() or len(title) > 500:
         raise ValidationException("Export item has an invalid title.")
     tags = item.get("tags")
-    if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
+    if (
+        not isinstance(tags, list)
+        or len(tags) > 32
+        or any(not isinstance(tag, str) or not tag.strip() or len(tag) > 80 for tag in tags)
+    ):
         raise ValidationException("Export item has invalid tags.")
+    status = item.get("lifecycle_status", "accepted")
+    if status not in EXPORT_LIFECYCLE_STATUSES:
+        raise ValidationException("Export item has an invalid lifecycle status.")
+    for key, limit in (("origin", 200), ("source_detail", 2000), ("review_note", 2000)):
+        value = item.get(key)
+        if value is not None and (not isinstance(value, str) or len(value) > limit):
+            raise ValidationException("Export item has invalid lifecycle metadata.")
+    expires_at = item.get("expires_at")
+    if expires_at is not None:
+        _parse_datetime(expires_at, field_name="expiry")
     revisions = item.get("revisions")
     if not isinstance(revisions, list) or not revisions:
         raise ValidationException("Export item must include at least one revision.")
@@ -120,10 +141,17 @@ def _validate_export_revision(revision: Any, seen_versions: set[int]) -> None:
         raise ValidationException("Export revision versions must be unique.")
     seen_versions.add(version)
     content = revision.get("content")
-    if not isinstance(content, str) or not content:
+    if not isinstance(content, str) or not content or len(content) > 1_000_000:
         raise ValidationException("Export revision has invalid content.")
+    title = revision.get("title")
+    if title is not None and (not isinstance(title, str) or len(title) > 500):
+        raise ValidationException("Export revision has an invalid title.")
     tags = revision.get("tags")
-    if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
+    if (
+        not isinstance(tags, list)
+        or len(tags) > 32
+        or any(not isinstance(tag, str) or not tag.strip() or len(tag) > 80 for tag in tags)
+    ):
         raise ValidationException("Export revision has invalid tags.")
 
 
@@ -132,6 +160,16 @@ def _parse_uuid(value: Any, *, field_name: str) -> UUID:
         return UUID(str(value))
     except ValueError as exc:
         raise ValidationException(f"Export document has an invalid {field_name}.") from exc
+
+
+def _parse_datetime(value: Any, *, field_name: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError as exc:
+        raise ValidationException(f"Export document has an invalid {field_name}.") from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 class KnowledgeExportService:
@@ -193,6 +231,8 @@ class KnowledgeExportService:
             if list(clashing):
                 raise ValidationException("Export revision collides with an existing revision.")
             first = ordered[0]
+            expires_value = item.get("expires_at")
+            expires_at = _parse_datetime(expires_value, field_name="expiry") if expires_value is not None else None
             record = KnowledgeItemModel(
                 id=item_id,
                 workspace_id=space_id,
@@ -200,6 +240,11 @@ class KnowledgeExportService:
                 content=first["content"],
                 tags=list(item.get("tags") or []),
                 current_revision_id=None,
+                lifecycle_status=item.get("lifecycle_status", "accepted"),
+                origin=item.get("origin"),
+                source_detail=item.get("source_detail"),
+                review_note=item.get("review_note"),
+                expires_at=expires_at,
                 created_at=now,
                 updated_at=now,
             )

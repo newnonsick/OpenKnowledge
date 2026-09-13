@@ -50,6 +50,11 @@ class KnowledgeItem(BaseModel):
     content: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     is_deleted: bool = False
+    lifecycle_status: str = "accepted"
+    origin: Optional[str] = None
+    source_detail: Optional[str] = None
+    review_note: Optional[str] = None
+    expires_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 

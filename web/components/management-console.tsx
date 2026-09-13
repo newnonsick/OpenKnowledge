@@ -526,11 +526,15 @@ export function KnowledgeConsole() {
   const [spaceId, setSpaceId] = useState("");
   const [searchText, setSearchText] = useState("");
   const [tagText, setTagText] = useState("");
+  const [statusText, setStatusText] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
   const [appliedTag, setAppliedTag] = useState("");
+  const [appliedStatus, setAppliedStatus] = useState("");
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [tags, setTags] = useState("");
+  const [createStatus, setCreateStatus] = useState("accepted");
+  const [createOrigin, setCreateOrigin] = useState("");
   const [spacesLoading, setSpacesLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [spacesFailed, setSpacesFailed] = useState(false);
@@ -543,6 +547,9 @@ export function KnowledgeConsole() {
   const [editTags, setEditTags] = useState("");
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [transitionTo, setTransitionTo] = useState("");
+  const [transitionNote, setTransitionNote] = useState("");
+  const [transitioning, setTransitioning] = useState(false);
   const [savedRevision, setSavedRevision] = useState<number | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [editorSaving, setEditorSaving] = useState(false);
@@ -561,11 +568,12 @@ export function KnowledgeConsole() {
           ...(spaceFilter ? { space_id: spaceFilter } : {}),
           ...(appliedSearch ? { q: appliedSearch } : {}),
           ...(appliedTag ? { tag: appliedTag } : {}),
+          ...(appliedStatus ? { lifecycle_status: appliedStatus as "accepted" | "candidate" | "observation" | "superseded" } : {}),
         },
       },
       signal,
     }),
-  ), [appliedSearch, appliedTag, spaceFilter]);
+  ), [appliedSearch, appliedStatus, appliedTag, spaceFilter]);
   const {
     error: paginationError,
     initialLoading,
@@ -580,7 +588,7 @@ export function KnowledgeConsole() {
     reload: reloadItems,
   } = usePagePagination<KnowledgeSummary>({
     loadPage: loadKnowledgePage,
-    queryKey: JSON.stringify([spaceFilter, appliedSearch, appliedTag]),
+    queryKey: JSON.stringify([spaceFilter, appliedSearch, appliedStatus, appliedTag]),
   });
 
   const editorDirty = editing !== null
@@ -634,6 +642,8 @@ export function KnowledgeConsole() {
       await contractData(contractClient.POST("/api/v1/knowledge", {
         body: {
           content: content.trim(),
+          lifecycle_status: createStatus as "accepted" | "candidate" | "observation",
+          origin: createOrigin.trim() || undefined,
           space_id: spaceId,
           tags: tags.split(",").map((value) => value.trim()).filter(Boolean),
           title: title.trim(),
@@ -644,11 +654,15 @@ export function KnowledgeConsole() {
       setTitle("");
       setContent("");
       setTags("");
-      if (appliedSearch || appliedTag || (spaceFilter && spaceFilter !== spaceId)) {
+      setCreateStatus("accepted");
+      setCreateOrigin("");
+      if (appliedSearch || appliedStatus || appliedTag || (spaceFilter && spaceFilter !== spaceId)) {
         setSearchText("");
         setTagText("");
+        setStatusText("");
         setAppliedSearch("");
         setAppliedTag("");
+        setAppliedStatus("");
         if (spaceFilter && spaceFilter !== spaceId) {
           router.replace("/knowledge");
         }
@@ -671,6 +685,8 @@ export function KnowledgeConsole() {
       setEditTitle(detail.title);
       setEditContent(detail.content);
       setEditTags(detail.tags.join(", "));
+      setTransitionTo("");
+      setTransitionNote("");
       setConfirmArchive(false);
       setConfirmDiscard(false);
       setSavedRevision(null);
@@ -697,6 +713,7 @@ export function KnowledgeConsole() {
           expected_version: editing.version,
           tags: editTags.split(",").map((value) => value.trim()).filter(Boolean),
           title: editTitle.trim(),
+          update_expires_at: false,
         },
         params: { header: { "Idempotency-Key": idempotencyKey() }, path: { item_id: editing.id } },
       }));
@@ -710,6 +727,38 @@ export function KnowledgeConsole() {
       setEditorError(message(updateError));
     } finally {
       setEditorSaving(false);
+    }
+  };
+
+  const transitionKnowledge = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editing || !editorWritable || !transitionTo || transitioning) {
+      return;
+    }
+    setTransitioning(true);
+    setEditorError(null);
+    try {
+      const transitioned = await contractData(contractClient.POST("/api/v1/knowledge/{item_id}/transitions", {
+        body: {
+          expected_version: editing.version,
+          review_note: transitionNote.trim() || undefined,
+          to_status: transitionTo as "accepted" | "candidate" | "observation" | "superseded",
+        },
+        params: { header: { "Idempotency-Key": idempotencyKey() }, path: { item_id: editing.id } },
+      }));
+      const detail = await contractData(contractClient.GET("/api/v1/knowledge/{item_id}", { params: { path: { item_id: editing.id } } }));
+      setEditing(detail);
+      setEditTitle(detail.title);
+      setEditContent(detail.content);
+      setEditTags(detail.tags.join(", "));
+      setTransitionTo("");
+      setTransitionNote("");
+      setSavedRevision(transitioned.version);
+      reloadItems();
+    } catch (transitionError) {
+      setEditorError(message(transitionError));
+    } finally {
+      setTransitioning(false);
     }
   };
 
@@ -757,6 +806,7 @@ export function KnowledgeConsole() {
             event.preventDefault();
             setAppliedSearch(searchText.trim());
             setAppliedTag(tagText.trim());
+            setAppliedStatus(statusText);
           }} role="search">
             <label>
               <span className="visually-hidden">Search knowledge list</span>
@@ -768,12 +818,24 @@ export function KnowledgeConsole() {
               <Tag aria-hidden="true" size={14} />
               <input aria-label="Filter by tag" onChange={(event) => setTagText(event.target.value)} placeholder="Tag" value={tagText} />
             </label>
+            <label>
+              <span className="visually-hidden">Filter by lifecycle status</span>
+              <select aria-label="Filter by lifecycle status" onChange={(event) => setStatusText(event.target.value)} value={statusText}>
+                <option value="">All statuses</option>
+                <option value="observation">Observation</option>
+                <option value="candidate">Candidate</option>
+                <option value="accepted">Accepted</option>
+                <option value="superseded">Superseded</option>
+              </select>
+            </label>
             <button aria-label="Apply knowledge filters" className="secondary-button" type="submit">Apply</button>
-            {appliedSearch || appliedTag ? <button className="filter-clear-button" onClick={() => {
+            {appliedSearch || appliedTag || appliedStatus ? <button className="filter-clear-button" onClick={() => {
               setSearchText("");
               setTagText("");
+              setStatusText("");
               setAppliedSearch("");
               setAppliedTag("");
+              setAppliedStatus("");
             }} type="button">Clear</button> : null}
           </form>
           {initialLoading || (loading && items.length === 0) ? <ListSkeleton /> : null}
@@ -781,9 +843,9 @@ export function KnowledgeConsole() {
           {!initialLoading && !loading && !paginationError && items.length === 0 ? (
             <div className="console-empty">
               <BookOpen size={23} />
-              <strong>{appliedSearch || appliedTag ? "No matching knowledge" : "Nothing captured yet"}</strong>
-              <span>{appliedSearch || appliedTag ? "Try a broader phrase or clear one of the filters." : "Add the first durable answer, procedure, or family detail."}</span>
-              {!appliedSearch && !appliedTag ? <button className="secondary-button empty-action" onClick={() => titleRef.current?.focus()} type="button"><Plus size={15} /> Start capturing</button> : null}
+              <strong>{appliedSearch || appliedTag || appliedStatus ? "No matching knowledge" : "Nothing captured yet"}</strong>
+              <span>{appliedSearch || appliedTag || appliedStatus ? "Try a broader phrase or clear one of the filters." : "Add the first durable answer, procedure, or family detail."}</span>
+              {!appliedSearch && !appliedTag && !appliedStatus ? <button className="secondary-button empty-action" onClick={() => titleRef.current?.focus()} type="button"><Plus size={15} /> Start capturing</button> : null}
             </div>
           ) : null}
           <div aria-busy={loading} className={`data-list${loading && items.length > 0 ? " is-page-loading" : ""}`}>
@@ -791,7 +853,7 @@ export function KnowledgeConsole() {
               <article className="data-row knowledge-row" key={item.id}>
                 <span className="row-leading violet"><BookOpen aria-hidden="true" size={18} /></span>
                 <div className="row-copy"><h3 title={item.title}>{item.title}</h3><p title={`${spaceLabel(spaces, item.space_id)} · version ${item.version}`}>{spaceLabel(spaces, item.space_id)} · version {item.version}</p></div>
-                <div className="tag-list">{[...new Set(item.tags.filter(Boolean))].slice(0, 3).map((value) => <span key={value} title={value}><Tag size={11} />{value}</span>)}</div>
+                <div className="tag-list">{item.lifecycle_status !== "accepted" ? <span data-chip="lifecycle" title={`Lifecycle status: ${item.lifecycle_status}`}>{item.lifecycle_status}</span> : null}{[...new Set(item.tags.filter(Boolean))].slice(0, 3).map((value) => <span key={value} title={value}><Tag size={11} />{value}</span>)}</div>
                 <button aria-label={`${canEditKnowledge(item.space_id) ? "Edit" : "View"} ${item.title}`} className="row-action-button" disabled={loading || detailLoading} onClick={(event) => void openEditor(item, event.currentTarget)} type="button">{canEditKnowledge(item.space_id) ? "Edit" : "View"}</button>
               </article>
             ))}
@@ -805,7 +867,7 @@ export function KnowledgeConsole() {
                 <div><span>{editorWritable ? "Edit knowledge" : "Knowledge"}</span><h2 id={editorTitleId}>{editorWritable ? `Edit ${editing.title}` : editing.title}</h2></div>
                 <button aria-label="Close knowledge editor" className="icon-button" disabled={editorSaving} onClick={closeEditor} ref={editorCloseRef} type="button"><X size={16} /></button>
               </div>
-              <p className="revision-state">Version {editing.version} is active</p>
+              <p className="revision-state">Version {editing.version} is active · {editing.lifecycle_status}{editing.origin ? ` · ${editing.origin}` : ""}</p>
               {savedRevision ? <p className="inline-success" role="status"><ShieldCheck size={14} /> Revision {savedRevision} saved and searchable.</p> : null}
               {editorError ? <p className="inline-error" role="alert">{editorError}</p> : null}
               {editorWritable ? <form className="console-form" onSubmit={saveRevision}>
@@ -821,6 +883,22 @@ export function KnowledgeConsole() {
                 </div>
                 {!editorDirty ? <p className="list-context-line" id="save-revision-hint">No unsaved changes.</p> : null}
               </form> : <div className="knowledge-reading-content">{editing.content}</div>}
+              {editorWritable ? <form className="console-form lifecycle-form" onSubmit={transitionKnowledge}>
+                <label htmlFor="knowledge-transition">Lifecycle transition</label>
+                <select disabled={transitioning || editorSaving} id="knowledge-transition" onChange={(event) => setTransitionTo(event.target.value)} value={transitionTo}>
+                  <option value="">Move to…</option>
+                  {editing.lifecycle_status === "observation" ? <option value="candidate">Candidate</option> : null}
+                  {editing.lifecycle_status === "observation" || editing.lifecycle_status === "candidate" ? <option value="accepted">Accepted</option> : null}
+                  {editing.lifecycle_status === "candidate" ? <option value="observation">Observation</option> : null}
+                  {editing.lifecycle_status === "accepted" ? <option value="superseded">Superseded</option> : null}
+                  {editing.lifecycle_status === "superseded" ? <option value="accepted">Accepted</option> : null}
+                </select>
+                <label htmlFor="knowledge-transition-note">Review note{transitionTo === "superseded" ? " (required)" : ""}</label>
+                <input disabled={transitioning || editorSaving} id="knowledge-transition-note" maxLength={2000} onChange={(event) => setTransitionNote(event.target.value)} placeholder={transitionTo === "superseded" ? "Why is this superseded?" : "Optional reason"} value={transitionNote} />
+                <div className="editor-actions">
+                  <button className="secondary-button" disabled={transitioning || editorSaving || !transitionTo} type="submit">{transitioning ? <LoaderCircle className="spin" size={15} /> : null} Apply transition</button>
+                </div>
+              </form> : null}
             </ModalDialog>
             <ConfirmationDialog cancelLabel="Keep editing" confirmLabel="Discard changes" description="Closing the editor now leaves the active revision unchanged." onCancel={() => { setConfirmDiscard(false); window.setTimeout(() => editorCloseRef.current?.focus(), 0); }} onConfirm={() => { setEditing(null); setConfirmDiscard(false); }} open={confirmDiscard} returnFocusTarget={editorReturnFocusRef.current} title="Discard unsaved changes" tone="danger" />
             <ConfirmationDialog error={editorError} busy={editorSaving} busyLabel="Archiving knowledge…" cancelLabel="Keep active" confirmLabel="Confirm archive" description="It will leave default retrieval but its revision history remains preserved." onCancel={() => { setConfirmArchive(false); window.setTimeout(() => editorCloseRef.current?.focus(), 0); }} onConfirm={() => void archiveKnowledge()} open={confirmArchive} returnFocusTarget={editorReturnFocusRef.current} title={`Archive ${editing.title}`} tone="danger" />
@@ -843,6 +921,14 @@ export function KnowledgeConsole() {
             <textarea id="knowledge-content" maxLength={1000000} onChange={(event) => { setContent(event.target.value); setCreatedTitle(null); }} required rows={7} value={content} />
             <label htmlFor="knowledge-tags">Tags</label>
             <input id="knowledge-tags" onChange={(event) => setTags(event.target.value)} placeholder="home, safety" value={tags} />
+            <label htmlFor="knowledge-status">Capture as</label>
+            <select id="knowledge-status" onChange={(event) => setCreateStatus(event.target.value)} value={createStatus}>
+              <option value="accepted">Accepted</option>
+              <option value="candidate">Candidate</option>
+              <option value="observation">Observation</option>
+            </select>
+            <label htmlFor="knowledge-origin">Origin</label>
+            <input id="knowledge-origin" maxLength={200} onChange={(event) => setCreateOrigin(event.target.value)} placeholder="manual capture" value={createOrigin} />
             {!spacesLoading && !spacesFailed && writableSpaces.length === 0 ? <p className="list-context-line">You need editor access to add knowledge. <Link href="/spaces">Create a space</Link> or ask its owner for access.</p> : null}
             <button className="primary-button" disabled={creating || spacesLoading || writableSpaces.length === 0} type="submit">{creating ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} Capture knowledge</button>
           </form>

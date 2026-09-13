@@ -47,6 +47,7 @@ APIKeyState = Literal["active", "revoked", "expired"]
 SessionState = Literal["active", "revoked", "expired"]
 RuntimeSettingsState = Literal["draft", "active", "superseded"]
 PendingActionState = Literal["pending", "executed", "expired", "cancelled"]
+KnowledgeLifecycleStatus = Literal["observation", "candidate", "accepted", "superseded"]
 RetrievalSemanticState = Literal["active", "degraded", "disabled"]
 AuditOutcome = Literal["success", "denied", "failed"]
 
@@ -342,12 +343,24 @@ class KnowledgeSummary(ContractModel):
     content_excerpt: str
     tags: list[str]
     version: int
+    lifecycle_status: KnowledgeLifecycleStatus = "accepted"
+    origin: str | None = None
+    source_detail: str | None = None
+    review_note: str | None = None
+    expires_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
 
 class KnowledgeDetail(KnowledgeSummary):
     content: str
+
+
+class KnowledgeTransition(ContractModel):
+    id: str
+    from_status: KnowledgeLifecycleStatus
+    to_status: KnowledgeLifecycleStatus
+    version: int
 
 
 class RetrievalHit(ContractModel):
@@ -489,6 +502,11 @@ class KnowledgeExportItem(ContractModel):
     id: str
     title: str
     tags: list[str]
+    lifecycle_status: KnowledgeLifecycleStatus = "accepted"
+    origin: str | None = None
+    source_detail: str | None = None
+    review_note: str | None = None
+    expires_at: datetime | None = None
     created_at: datetime | None
     updated_at: datetime | None
     revisions: list[KnowledgeExportRevision]

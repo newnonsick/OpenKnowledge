@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,10 @@ class CreateKnowledgeCommand:
     title: str
     content: str
     tags: tuple[str, ...] = ()
+    lifecycle_status: str = "accepted"
+    origin: str | None = None
+    source_detail: str | None = None
+    expires_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +35,17 @@ class UpdateKnowledgeCommand:
     content: str
     tags: tuple[str, ...] = ()
     change_summary: str | None = None
+    review_note: str | None = None
+    expires_at: datetime | None = None
+    update_expires_at: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class TransitionKnowledgeCommand:
+    item_id: UUID
+    to_status: str
+    expected_version: int
+    review_note: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +80,10 @@ class KnowledgeCommands:
             "title": command.title,
             "content": command.content,
             "tags": list(command.tags),
+            "lifecycle_status": command.lifecycle_status,
+            "origin": command.origin,
+            "source_detail": command.source_detail,
+            "expires_at": command.expires_at.isoformat() if command.expires_at else None,
         }
         reservation = await self._idempotency(ctx, operation, key, payload)
         service = self._knowledge_factory(self._session)
@@ -81,6 +101,10 @@ class KnowledgeCommands:
             content=command.content,
             tags=[tag.strip() for tag in command.tags if tag.strip()],
             request_id=ctx.request_id,
+            lifecycle_status=command.lifecycle_status,
+            origin=command.origin,
+            source_detail=command.source_detail,
+            expires_at=command.expires_at,
         )
         await self._complete(reservation.record_id, response_status=201, resource_ids=[str(created.id)])
         return UseCaseOutcome(created, False)
@@ -110,6 +134,9 @@ class KnowledgeCommands:
             "content": command.content,
             "tags": list(command.tags),
             "change_summary": command.change_summary,
+            "review_note": command.review_note,
+            "expires_at": command.expires_at.isoformat() if command.expires_at else None,
+            "update_expires_at": command.update_expires_at,
         }
         reservation = await self._idempotency(ctx, operation, key, payload)
         service = self._knowledge_factory(self._session)
@@ -128,9 +155,52 @@ class KnowledgeCommands:
             tags=[tag.strip() for tag in command.tags if tag.strip()],
             change_summary=command.change_summary,
             request_id=ctx.request_id,
+            review_note=command.review_note,
+            expires_at=command.expires_at,
+            update_expires_at=command.update_expires_at,
         )
         await self._complete(reservation.record_id, response_status=200, resource_ids=[str(command.item_id)])
         return UseCaseOutcome(updated, False)
+
+    async def transition(
+        self,
+        ctx: UseCaseContext,
+        command: TransitionKnowledgeCommand,
+        *,
+        operation: str = "knowledge.transition",
+    ) -> UseCaseOutcome[tuple[DomainKnowledgeItem, str]]:
+        require_mutation_tools(ctx.policy)
+        key = self._write_key(ctx)
+        payload = {
+            "item_id": str(command.item_id),
+            "to_status": command.to_status,
+            "expected_version": command.expected_version,
+            "review_note": command.review_note,
+        }
+        reservation = await self._idempotency(ctx, operation, key, payload)
+        service = self._knowledge_factory(self._session)
+        if reservation.status is ReservationStatus.REPLAY:
+            replay_id = UUID(reservation.resource_ids[0]) if reservation.resource_ids else command.item_id
+            current = await service.get(replay_id)
+            if current is None:
+                raise ResourceConflictException()
+            await AuthorizationService(self._session).authorize_space(
+                ctx.principal, current.workspace_id, Action.CONTENT_WRITE
+            )
+            replayed_from = reservation.resource_ids[1] if len(reservation.resource_ids) > 1 else ""
+            return UseCaseOutcome((current, replayed_from), True)
+        transitioned, from_status = await service.transition(
+            ctx.principal,
+            command.item_id,
+            to_status=command.to_status,
+            expected_version=command.expected_version,
+            review_note=command.review_note,
+            request_id=ctx.request_id,
+        )
+        await self._complete(
+            reservation.record_id, response_status=200, resource_ids=[str(command.item_id), from_status]
+        )
+        return UseCaseOutcome((transitioned, from_status), False)
 
     async def delete(
         self,

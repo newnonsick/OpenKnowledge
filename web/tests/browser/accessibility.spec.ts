@@ -53,6 +53,7 @@ const operationsFixture = {
   scope: "accessible_spaces",
   settings_revision: 4,
   spaces: 2,
+  stale_knowledge: { stale_after_days: 90, stale_items: 0 },
   storage: { referenced_bytes: 524288 },
 } satisfies components["schemas"]["OperationSummary"];
 

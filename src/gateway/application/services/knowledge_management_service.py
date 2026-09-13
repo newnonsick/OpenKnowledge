@@ -12,7 +12,7 @@ from src.gateway.application.services.audit_service import AuditService
 from src.gateway.application.services.authorization_service import AuthorizationService
 from src.gateway.domain.authorization import Action
 from src.gateway.domain.entities import KnowledgeItem as DomainKnowledgeItem, KnowledgeRevision as DomainKnowledgeRevision
-from src.gateway.domain.exceptions import AuthorizationException, ConcurrencyConflictException
+from src.gateway.domain.exceptions import AuthorizationException, ConcurrencyConflictException, ResourceConflictException, ValidationException
 from src.gateway.domain.identity import Principal
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
 from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGenerationModel, ProvenanceLinkModel, RetrievalUnitModel
@@ -20,6 +20,18 @@ from src.gateway.infrastructure.persistence.models import KnowledgeItem, Knowled
 from src.gateway.observability import increment_metric
 
 logger = logging.getLogger(__name__)
+
+
+LIFECYCLE_STATUSES = ("observation", "candidate", "accepted", "superseded")
+
+CREATE_ALLOWED_STATUSES = ("observation", "candidate", "accepted")
+
+LIFECYCLE_TRANSITIONS = {
+    "observation": ("candidate", "accepted"),
+    "candidate": ("accepted", "observation"),
+    "accepted": ("superseded",),
+    "superseded": ("accepted",),
+}
 
 
 def default_embedding_client():
@@ -55,8 +67,13 @@ class KnowledgeManagementService:
         content: str,
         tags: list[str],
         request_id: str,
+        lifecycle_status: str = "accepted",
+        origin: str | None = None,
+        source_detail: str | None = None,
+        expires_at: datetime | None = None,
     ) -> DomainKnowledgeItem:
         await AuthorizationService(self._session).authorize_space(principal, space_id, Action.CONTENT_WRITE)
+        normalized_status = self._validate_create_status(lifecycle_status)
         now = datetime.now(timezone.utc)
         item_id = uuid4()
         revision_id = uuid4()
@@ -67,6 +84,10 @@ class KnowledgeManagementService:
             content=content,
             tags=tags,
             current_revision_id=None,
+            lifecycle_status=normalized_status,
+            origin=origin,
+            source_detail=source_detail,
+            expires_at=expires_at,
             created_at=now,
             updated_at=now,
         )
@@ -122,6 +143,9 @@ class KnowledgeManagementService:
         tags: list[str],
         change_summary: str | None,
         request_id: str,
+        review_note: str | None = None,
+        expires_at: datetime | None = None,
+        update_expires_at: bool = False,
     ) -> DomainKnowledgeItem:
         row = (
             await self._session.execute(
@@ -167,6 +191,10 @@ class KnowledgeManagementService:
         item.current_revision_id = revision.id
         item.revision += 1
         item.updated_at = now
+        if review_note is not None:
+            item.review_note = review_note
+        if update_expires_at:
+            item.expires_at = expires_at
         self._session.add(
             ProvenanceLinkModel(
                 space_id=item.workspace_id,
@@ -189,6 +217,78 @@ class KnowledgeManagementService:
         await self._session.refresh(item)
         await self._session.refresh(revision)
         return self._domain(item, revision)
+
+    async def transition(
+        self,
+        principal: Principal,
+        item_id: UUID,
+        *,
+        to_status: str,
+        expected_version: int,
+        review_note: str | None,
+        request_id: str,
+    ) -> tuple[DomainKnowledgeItem, str]:
+        row = (
+            await self._session.execute(
+                select(KnowledgeItem, KnowledgeRevision)
+                .join(KnowledgeRevision, KnowledgeRevision.id == KnowledgeItem.current_revision_id)
+                .where(KnowledgeItem.id == item_id, KnowledgeItem.is_deleted.is_(False))
+                .with_for_update(of=KnowledgeItem)
+            )
+        ).one_or_none()
+        if row is None:
+            raise AuthorizationException()
+        item, current = row
+        await AuthorizationService(self._session).authorize_space(principal, item.workspace_id, Action.CONTENT_WRITE)
+        if current.version != expected_version:
+            raise ConcurrencyConflictException(
+                message_or_item_id=str(item_id),
+                expected_version=expected_version,
+                actual_version=current.version,
+            )
+        if to_status not in LIFECYCLE_STATUSES:
+            raise ValidationException("Unknown lifecycle status.")
+        from_status = item.lifecycle_status
+        if to_status == from_status:
+            raise ResourceConflictException("The knowledge item is already in the requested lifecycle status.")
+        if to_status not in LIFECYCLE_TRANSITIONS.get(from_status, ()):
+            raise ResourceConflictException(
+                f"Lifecycle transition from {from_status} to {to_status} is not allowed."
+            )
+        normalized_note = review_note.strip() if isinstance(review_note, str) else None
+        if normalized_note is not None and len(normalized_note) > 2000:
+            raise ValidationException("Review note must be at most 2000 characters.")
+        if to_status == "superseded" and not normalized_note:
+            raise ValidationException("A review note is required when superseding knowledge.")
+        now = datetime.now(timezone.utc)
+        item.lifecycle_status = to_status
+        if normalized_note is not None:
+            item.review_note = normalized_note
+        item.revision += 1
+        item.updated_at = now
+        if to_status == "superseded":
+            await self._deactivate_projection(current, now)
+        else:
+            await self._activate_projection(item, current, now)
+        self._audit.record(
+            actor_member_id=self._member_id(principal),
+            actor_kind=principal.kind.value,
+            request_id=request_id,
+            action="knowledge.lifecycle.transitioned",
+            resource_type="knowledge_item",
+            resource_id=str(item.id),
+            details={
+                "space_id": item.workspace_id,
+                "version": current.version,
+                "from_status": from_status,
+                "to_status": to_status,
+                "reason": normalized_note,
+            },
+        )
+        await self._session.flush()
+        await self._session.refresh(item)
+        await self._session.refresh(current)
+        return self._domain(item, current), from_status
 
     async def delete(
         self,
@@ -237,6 +337,15 @@ class KnowledgeManagementService:
             resource_type="knowledge_item",
             resource_id=str(item.id),
             details={"space_id": item.workspace_id, "version": revision.version},
+        )
+
+    async def _deactivate_projection(self, revision: KnowledgeRevision, now: datetime) -> None:
+        revision_ids = select(KnowledgeRevision.id).where(KnowledgeRevision.item_id == revision.item_id)
+        await self._session.execute(
+            update(RetrievalUnitModel)
+            .where(RetrievalUnitModel.knowledge_revision_id.in_(revision_ids), RetrievalUnitModel.active.is_(True))
+            .values(active=False, deactivated_at=now)
+            .execution_options(synchronize_session=False)
         )
 
     async def _activate_projection(self, item: KnowledgeItem, revision: KnowledgeRevision, now: datetime) -> None:
@@ -315,6 +424,14 @@ class KnowledgeManagementService:
         return embeddings[0] if embeddings else None
 
     @staticmethod
+    def _validate_create_status(value: str) -> str:
+        if value not in LIFECYCLE_STATUSES:
+            raise ValidationException("Unknown lifecycle status.")
+        if value not in CREATE_ALLOWED_STATUSES:
+            raise ValidationException("Lifecycle status is not allowed on create.")
+        return value
+
+    @staticmethod
     def _member_id(principal: Principal) -> UUID:
         try:
             return UUID(principal.subject_id)
@@ -355,6 +472,11 @@ class KnowledgeManagementService:
             content=revision.content,
             tags=list(item.tags),
             is_deleted=item.is_deleted,
+            lifecycle_status=item.lifecycle_status,
+            origin=item.origin,
+            source_detail=item.source_detail,
+            review_note=item.review_note,
+            expires_at=item.expires_at,
             created_at=item.created_at,
             updated_at=item.updated_at,
             current_revision=domain_revision,

@@ -446,6 +446,7 @@ describe("management console", () => {
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/knowledge", {
       body: {
         content: "Turn the red handle clockwise.",
+        lifecycle_status: "accepted",
         space_id: "global",
         tags: ["home"],
         title: "Water valve",
@@ -584,14 +585,14 @@ describe("management console", () => {
         return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] } as never;
       }
       if (path === "/api/v1/knowledge?limit=25") {
-        return { items: archived ? [] : [{ id: "note-1", space_id: "global", title: "Water valve", tags: ["home"], version, updated_at: "2026-08-20T12:00:00Z" }] } as never;
+        return { items: archived ? [] : [{ id: "note-1", space_id: "global", title: "Water valve", tags: ["home"], version, lifecycle_status: "accepted", updated_at: "2026-08-20T12:00:00Z" }] } as never;
       }
       if (path === "/api/v1/knowledge/note-1" && !options?.method) {
-        return { id: "note-1", space_id: "global", title: "Water valve", content: "Turn clockwise.", tags: ["home"], version, updated_at: "2026-08-20T12:00:00Z" } as never;
+        return { id: "note-1", space_id: "global", title: "Water valve", content: "Turn clockwise.", tags: ["home"], version, lifecycle_status: "accepted", updated_at: "2026-08-20T12:00:00Z" } as never;
       }
       if (path === "/api/v1/knowledge/note-1" && options?.method === "PUT") {
         version = 2;
-        return { id: "note-1", space_id: "global", title: "Water valve", content: "Turn clockwise, then close the main tap.", tags: ["home"], version, updated_at: "2026-08-20T12:05:00Z" } as never;
+        return { id: "note-1", space_id: "global", title: "Water valve", content: "Turn clockwise, then close the main tap.", tags: ["home"], version, lifecycle_status: "accepted", updated_at: "2026-08-20T12:05:00Z" } as never;
       }
       if (path === "/api/v1/knowledge/note-1?expected_version=2" && options?.method === "DELETE") {
         archived = true;
@@ -613,11 +614,12 @@ describe("management console", () => {
         expected_version: 1,
         tags: ["home"],
         title: "Water valve",
+        update_expires_at: false,
       },
       idempotent: true,
       method: "PUT",
     }));
-    expect(await screen.findByText("Version 2 is active")).toBeInTheDocument();
+    expect(await screen.findByText("Version 2 is active · accepted")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Archive Water valve" }));
     expect(screen.getByRole("alertdialog", { name: "Archive Water valve" })).toHaveAttribute("aria-modal", "true");
@@ -628,6 +630,51 @@ describe("management console", () => {
       method: "DELETE",
     }));
     await waitFor(() => expect(screen.queryByText("Version 2 is active")).not.toBeInTheDocument());
+  });
+
+  it("filters knowledge by lifecycle status and applies editor transitions", async () => {
+    const requested: string[] = [];
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      requested.push(path);
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Family Shared", role: "editor", revision: 1 }] } as never;
+      }
+      if (path === "/api/v1/knowledge?lifecycle_status=candidate&limit=25") {
+        return { items: [{ id: "note-9", space_id: "global", title: "Agent hunch", tags: [], version: 1, lifecycle_status: "candidate", updated_at: "2026-08-20T12:00:00Z" }] } as never;
+      }
+      if (path === "/api/v1/knowledge?limit=25") {
+        return { items: [{ id: "note-1", space_id: "global", title: "Water valve", tags: ["home"], version: 1, lifecycle_status: "accepted", updated_at: "2026-08-20T12:00:00Z" }] } as never;
+      }
+      if (path === "/api/v1/knowledge/note-9" && !options?.method) {
+        return { id: "note-9", space_id: "global", title: "Agent hunch", content: "Unverified guess.", tags: [], version: 1, lifecycle_status: "candidate", updated_at: "2026-08-20T12:00:00Z" } as never;
+      }
+      if (path === "/api/v1/knowledge/note-9/transitions" && options?.method === "POST") {
+        return { id: "note-9", from_status: "candidate", to_status: "accepted", version: 1 } as never;
+      }
+      if (path === "/api/v1/knowledge/note-1" && !options?.method) {
+        return { id: "note-1", space_id: "global", title: "Water valve", content: "Turn clockwise.", tags: ["home"], version: 1, lifecycle_status: "accepted", updated_at: "2026-08-20T12:00:00Z" } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<KnowledgeConsole />);
+    await screen.findByRole("option", { name: "Family Shared" });
+
+    fireEvent.change(screen.getByLabelText("Filter by lifecycle status"), { target: { value: "candidate" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply knowledge filters" }));
+    expect(await screen.findByText("Agent hunch")).toBeInTheDocument();
+    expect(requested).toContain("/api/v1/knowledge?lifecycle_status=candidate&limit=25");
+    expect(screen.getByTitle("Lifecycle status: candidate")).toHaveTextContent("candidate");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Agent hunch" }));
+    expect(await screen.findByText("Version 1 is active · candidate")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Lifecycle transition"), { target: { value: "accepted" } });
+    fireEvent.change(screen.getByLabelText("Review note"), { target: { value: "Verified" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply transition" }));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/knowledge/note-9/transitions", {
+      body: { expected_version: 1, review_note: "Verified", to_status: "accepted" },
+      idempotent: true,
+      method: "POST",
+    }));
   });
 
   it("returns focus through knowledge editor confirmation handoffs", async () => {

@@ -152,19 +152,22 @@ Space roles are `owner`, `editor`, and `reader`. Owners manage membership and ca
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/v1/knowledge` | List knowledge items with server-side numeric pagination. |
-| POST | `/api/v1/knowledge` | Create an item (first revision). |
+| GET | `/api/v1/knowledge` | List knowledge items with server-side numeric pagination; optional `lifecycle_status` filter. |
+| POST | `/api/v1/knowledge` | Create an item (first revision); accepts `lifecycle_status` (`observation`, `candidate`, `accepted`), `origin`, `source_detail`, `expires_at`. |
 | GET | `/api/v1/knowledge/{item_id}` | Item detail with content and metadata. |
-| PUT | `/api/v1/knowledge/{item_id}` | Append a revision; requires `expected_version`. |
+| PUT | `/api/v1/knowledge/{item_id}` | Append a revision; requires `expected_version`. Accepts `review_note` and `expires_at` edits (`update_expires_at`). |
+| POST | `/api/v1/knowledge/{item_id}/transitions` | Move an item along the lifecycle graph; requires `expected_version`, idempotent via `Idempotency-Key`. Allowed: `observation` to `candidate`/`accepted`, `candidate` to `accepted`/`observation`, `accepted` to `superseded` (requires a review note), `superseded` back to `accepted`. Anything else is refused with 409. Each transition is audited as `knowledge.lifecycle.transitioned`. Replaying a transition after losing space access is denied. |
 | DELETE | `/api/v1/knowledge/{item_id}` | Soft delete; requires `expected_version`. |
 | GET | `/api/v1/knowledge/stale` | Detection-only stale listing ordered oldest first (`older_than_days` overrides `STALE_AFTER_DAYS`); never purges or mutates knowledge rows. |
 | POST | `/api/v1/knowledge/{item_id}/reviewed` | Record a `knowledge.reviewed` audit event only; no knowledge state changes, idempotent via `Idempotency-Key`. |
+
+Knowledge `expires_at` values without timezone info are interpreted as UTC. Portable export/import preserves lifecycle fields and rejects overlong titles, tags, or lifecycle metadata with 422.
 
 ### Retrieval
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/v1/retrieval/search` | Hybrid search over knowledge and document chunks, honoring the caller's space authorization and the active runtime settings. `active_space_id` sets a hard request space scope (omitted means every accessible space); `space_ids` may narrow that scope but never widen it. |
+| POST | `/api/v1/retrieval/search` | Hybrid search over knowledge and document chunks, honoring the caller's space authorization and the active runtime settings. `active_space_id` sets a hard request space scope (omitted means every accessible space); `space_ids` may narrow that scope but never widen it. `observation` and `candidate` items are searchable; `superseded` items are excluded from search while their citations stay resolvable through exact evidence fetch (`superseded: true`). Lifecycle and staleness are independent axes. |
 
 ```bash
 curl https://gateway.example.com/api/v1/retrieval/search \

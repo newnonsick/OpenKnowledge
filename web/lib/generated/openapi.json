@@ -2656,6 +2656,54 @@
             "title": "Content",
             "type": "string"
           },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "lifecycle_status": {
+            "default": "accepted",
+            "enum": [
+              "observation",
+              "candidate",
+              "accepted"
+            ],
+            "title": "Lifecycle Status",
+            "type": "string"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin"
+          },
+          "source_detail": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Detail"
+          },
           "space_id": {
             "maxLength": 64,
             "minLength": 1,
@@ -2703,9 +2751,65 @@
             "title": "Created At",
             "type": "string"
           },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "lifecycle_status": {
+            "default": "accepted",
+            "enum": [
+              "observation",
+              "candidate",
+              "accepted",
+              "superseded"
+            ],
+            "title": "Lifecycle Status",
+            "type": "string"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin"
+          },
+          "review_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Note"
+          },
+          "source_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Detail"
           },
           "space_id": {
             "title": "Space Id",
@@ -2804,9 +2908,54 @@
             ],
             "title": "Created At"
           },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "lifecycle_status": {
+            "default": "accepted",
+            "enum": [
+              "observation",
+              "candidate",
+              "accepted",
+              "superseded"
+            ],
+            "title": "Lifecycle Status",
+            "type": "string"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin"
+          },
+          "review_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Note"
           },
           "revisions": {
             "items": {
@@ -2814,6 +2963,17 @@
             },
             "title": "Revisions",
             "type": "array"
+          },
+          "source_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Detail"
           },
           "tags": {
             "items": {
@@ -2993,9 +3153,65 @@
             "title": "Created At",
             "type": "string"
           },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "lifecycle_status": {
+            "default": "accepted",
+            "enum": [
+              "observation",
+              "candidate",
+              "accepted",
+              "superseded"
+            ],
+            "title": "Lifecycle Status",
+            "type": "string"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin"
+          },
+          "review_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Note"
+          },
+          "source_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Detail"
           },
           "space_id": {
             "title": "Space Id",
@@ -3035,6 +3251,85 @@
         "title": "KnowledgeSummary",
         "type": "object"
       },
+      "KnowledgeTransition": {
+        "additionalProperties": false,
+        "properties": {
+          "from_status": {
+            "enum": [
+              "observation",
+              "candidate",
+              "accepted",
+              "superseded"
+            ],
+            "title": "From Status",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "to_status": {
+            "enum": [
+              "observation",
+              "candidate",
+              "accepted",
+              "superseded"
+            ],
+            "title": "To Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "from_status",
+          "to_status",
+          "version"
+        ],
+        "title": "KnowledgeTransition",
+        "type": "object"
+      },
+      "KnowledgeTransitionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "review_note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Note"
+          },
+          "to_status": {
+            "enum": [
+              "observation",
+              "candidate",
+              "accepted",
+              "superseded"
+            ],
+            "title": "To Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to_status",
+          "expected_version"
+        ],
+        "title": "KnowledgeTransitionRequest",
+        "type": "object"
+      },
       "KnowledgeUpdateRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3061,6 +3356,30 @@
             "title": "Expected Version",
             "type": "integer"
           },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "review_note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Note"
+          },
           "tags": {
             "items": {
               "maxLength": 80,
@@ -3076,6 +3395,11 @@
             "minLength": 1,
             "title": "Title",
             "type": "string"
+          },
+          "update_expires_at": {
+            "default": false,
+            "title": "Update Expires At",
+            "type": "boolean"
           }
         },
         "required": [
@@ -10666,6 +10990,28 @@
               ],
               "title": "Tag"
             }
+          },
+          {
+            "in": "query",
+            "name": "lifecycle_status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "observation",
+                    "candidate",
+                    "accepted",
+                    "superseded"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Lifecycle Status"
+            }
           }
         ],
         "responses": {
@@ -11949,6 +12295,158 @@
           }
         ],
         "summary": "Mark Knowledge Reviewed",
+        "tags": [
+          "Management"
+        ]
+      }
+    },
+    "/api/v1/knowledge/{item_id}/transitions": {
+      "post": {
+        "operationId": "transition_knowledge_api_v1_knowledge__item_id__transitions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeTransitionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeTransition"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Transition Knowledge",
         "tags": [
           "Management"
         ]

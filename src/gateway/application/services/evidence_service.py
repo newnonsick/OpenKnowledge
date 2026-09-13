@@ -93,7 +93,7 @@ class EvidenceService:
             title=revision.title or item.title,
             content=revision.content,
             version=revision.version,
-            superseded=item.current_revision_id != revision.id,
+            superseded=item.current_revision_id != revision.id or item.lifecycle_status == "superseded",
             citation_uri=(
                 f"openknowledge://spaces/{revision.space_id}/knowledge/{revision.item_id}"
                 f"/revisions/{revision.id}"
