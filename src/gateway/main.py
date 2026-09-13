@@ -91,6 +91,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings_token = set_runtime_settings(app.state.settings)
     logger.info("Starting OpenKnowledge infrastructure initialization...")
     try:
+        app.state.settings.gateway.validate_storage_backend()
+        app.state.settings.gateway.validate_oidc_settings()
+    except ValueError as exc:
+        app.state.schema_revision = None
+        app.state.schema_compatible = False
+        logger.error(
+            "Gateway configuration validation failed",
+            extra={"exception_class": type(exc).__name__},
+        )
+        try:
+            yield
+        finally:
+            await _shutdown_infrastructure(settings_token)
+        return
+    try:
         status = await get_schema_status_async(
             app.state.settings.database.url,
             expected_embedding_dimension=app.state.settings.embedding.dimension,
@@ -135,6 +150,11 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
 
     current_settings = app_settings or get_settings()
     current_settings.validate_runtime_safety()
+    try:
+        current_settings.gateway.validate_storage_backend()
+        current_settings.gateway.validate_oidc_settings()
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
     if current_settings.gateway.environment is not RuntimeEnvironment.TEST:
         configure_logging(
             current_settings.gateway.log_level,

@@ -38,6 +38,8 @@ PUBLIC_PATHS: Set[str] = {
     "/metrics",
     "/api/v1/auth/login",
     "/api/v1/auth/refresh",
+    "/api/v1/auth/oidc/login",
+    "/api/v1/auth/oidc/callback",
     "/mcp/versions",
     "/mcp/discovery",
     "/.well-known/oauth-protected-resource/mcp",

@@ -119,8 +119,16 @@ Returns the registered models. The `default` alias resolves to the configured ba
 | POST | `/api/v1/auth/mfa/totp/enroll` | current credentials | Starts TOTP enrollment, returns the shared secret and an `otpauth://` provisioning URI that the console renders as a QR code. |
 | POST | `/api/v1/auth/mfa/totp/confirm` | `factor_id`, `code`, current credentials | Completes enrollment, returns recovery codes and the first personal API key. |
 | POST | `/api/v1/auth/logout` | empty | Revokes the session family and clears cookies. |
+| GET | `/api/v1/auth/oidc/login` | empty, requires `OIDC_ENABLED=true` | Starts the OIDC authorization-code flow with PKCE (`S256`) and a signed state cookie, then redirects (302) to the provider. Answers 401 while OIDC is disabled. |
+| GET | `/api/v1/auth/oidc/callback` | `code`, `state` query params | Validates state, exchanges the code, verifies the RS256 ID token via JWKS (`iss`/`aud`/`exp`), JIT-provisions or updates the member, syncs the system role and space memberships from IdP groups, and issues the same session cookies as password login. Group removal revokes mapped memberships and disables grant-less members (audited as `member.deprovisioned`); members are never deleted. |
 
-Login responses report `requires_password_change` and `requires_mfa_enrollment` flags that the console uses to drive its first-use flows.
+Login responses report `requires_password_change` and `requires_mfa_enrollment` flags that the console uses to drive its first-use flows. OIDC logins always report both flags as `false` and are audited as `oidc.login`.
+
+OIDC membership sync is authoritative: the IdP groups on each login rewrite the mapped memberships and system role, so manual grants on mapped axes are overwritten on the next OIDC login. Authorization codes are single-use at the IdP, which is the replay backstop for the login flow.
+
+### OIDC identity-provider setup
+
+Any standards-compliant provider works (Keycloak, Auth0, Microsoft Entra ID, Okta, Zitadel). Register a confidential web client with the redirect URL `https://<gateway>/api/v1/auth/oidc/callback`, enable the `openid email profile` scopes, and expose group memberships in the ID token under the claim named by `OIDC_GROUP_CLAIM` (default `groups`). Keycloak mapsRealm or client roles through a "Group Membership" mapper; Auth0 adds them with an Action that sets `event.idToken`; Entra ID emits them as the `groups` claim once group assignment is enabled, using role IDs if overage applies. Point `OIDC_ISSUER` at the provider's issuer URL, copy the client id and secret, then map groups with `OIDC_ROLE_MAPPING` (group to `member` or `super_admin`) and `OIDC_GROUP_SPACE_MAP` (group to `[{space_id, role}]`). Verify locally with `PYTHONPATH=. .venv/Scripts/python.exe scripts/storage_drill.py` for storage and the OIDC unit tests before pointing production traffic at the provider.
 
 Cookies set by these endpoints (production names; local development uses unprefixed `openknowledge-access` and `openknowledge-refresh`):
 

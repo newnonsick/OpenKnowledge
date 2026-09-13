@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 from fastapi import APIRouter, Depends, Request, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,9 +13,20 @@ from src.gateway.application.security.totp import MFASecretService
 from src.gateway.application.services.api_key_service import APIKeyService, CreatedAPIKey
 from src.gateway.application.services.identity_service import IdentityService
 from src.gateway.application.services.login_throttle_service import LoginThrottleService, request_client_ip
+from src.gateway.application.services.oidc_service import (
+    authenticate_callback,
+    build_login_url,
+    build_principal,
+    clear_jwks_cache,
+    discover,
+    exchange_code,
+    fetch_jwks,
+    new_code_verifier,
+    new_state,
+)
 from src.gateway.application.services.session_service import RefreshStatus, SessionSecrets, SessionService
 from src.gateway.config import get_settings
-from src.gateway.domain.exceptions import AuthenticationException, CSRFException, MfaCodeRequiredException, RateLimitException
+from src.gateway.domain.exceptions import AuthenticationException, CSRFException, MfaCodeRequiredException, RateLimitException, ValidationException
 from src.gateway.domain.identity import Principal, PrincipalKind, SystemRole
 from src.gateway.infrastructure.database import get_db_session, get_session_factory
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, SessionCredentialModel
@@ -581,3 +593,147 @@ async def logout(
     response.delete_cookie(CSRF_COOKIE_NAME, path="/", secure=secure, httponly=False, samesite="strict")
     response.headers["Cache-Control"] = "no-store"
     return SignOut(status="signed_out")
+
+
+_OIDC_STATE_COOKIE = "openknowledge-oidc-state"
+_OIDC_STATE_TTL_SECONDS = 600
+
+
+def _require_oidc_gateway():
+    gateway = get_settings().gateway
+    if not gateway.oidc_enabled:
+        raise AuthenticationException("OIDC authentication is disabled.")
+    gateway.validate_oidc_settings()
+    return gateway
+
+
+def _oidc_state_cookie_name() -> str:
+    return _OIDC_STATE_COOKIE
+
+
+def _set_oidc_state_cookie(response: Response, *, state: str, nonce: str, code_verifier: str) -> None:
+    import base64 as _base64
+    import hashlib as _hashlib
+    import hmac as _hmac
+    import json as _json
+    import time as _time
+
+    gateway = get_settings().gateway
+    payload = _json.dumps(
+        {"state": state, "nonce": nonce, "code_verifier": code_verifier, "expires_at": int(_time.time()) + _OIDC_STATE_TTL_SECONDS},
+        separators=(",", ":"),
+    )
+    signing_secret = (gateway.oidc_client_secret or "").encode()
+    signature = _hmac.new(signing_secret, payload.encode(), _hashlib.sha256).hexdigest()
+    envelope = _json.dumps({"payload": payload, "signature": signature}, separators=(",", ":"))
+    encoded = _base64.urlsafe_b64encode(envelope.encode()).decode()
+    response.set_cookie(
+        _oidc_state_cookie_name(),
+        encoded,
+        max_age=_OIDC_STATE_TTL_SECONDS,
+        path="/api/v1/auth/oidc/callback",
+        secure=cookies_secure(),
+        httponly=True,
+        samesite="lax",
+    )
+
+
+def _read_oidc_state_cookie(request: Request) -> dict:
+    import base64 as _base64
+    import hashlib as _hashlib
+    import hmac as _hmac
+    import json as _json
+    import time as _time
+
+    raw = request.cookies.get(_oidc_state_cookie_name())
+    if not raw:
+        raise ValidationException("OIDC login session expired.")
+    try:
+        envelope = _json.loads(_base64.urlsafe_b64decode(raw.encode() + b"=").decode())
+        payload_text = envelope["payload"]
+        gateway = get_settings().gateway
+        expected = _hmac.new(
+            (gateway.oidc_client_secret or "").encode(), payload_text.encode(), _hashlib.sha256
+        ).hexdigest()
+        if not _hmac.compare_digest(expected, str(envelope.get("signature", ""))):
+            raise ValueError("bad signature")
+        payload = _json.loads(payload_text)
+    except (ValueError, KeyError):
+        raise ValidationException("OIDC login session expired.")
+    if not payload.get("state") or not payload.get("nonce") or not payload.get("code_verifier"):
+        raise ValidationException("OIDC login session expired.")
+    try:
+        expires_at = int(payload.get("expires_at", 0))
+    except (TypeError, ValueError):
+        raise ValidationException("OIDC login session expired.")
+    if expires_at <= int(_time.time()):
+        raise ValidationException("OIDC login session expired.")
+    return payload
+
+
+@router.get("/oidc/login", status_code=302, response_class=RedirectResponse)
+async def oidc_login(request: Request, response: Response) -> RedirectResponse:
+    gateway = _require_oidc_gateway()
+    endpoints = await discover((gateway.oidc_issuer or "").rstrip("/"))
+    state = new_state()
+    nonce = new_state()
+    code_verifier = new_code_verifier()
+    target = build_login_url(
+        endpoints,
+        client_id=gateway.oidc_client_id,
+        redirect_url=gateway.oidc_redirect_url or "",
+        state=state,
+        code_verifier=code_verifier,
+        nonce=nonce,
+    )
+    redirect = RedirectResponse(target, status_code=302)
+    _set_oidc_state_cookie(redirect, state=state, nonce=nonce, code_verifier=code_verifier)
+    return redirect
+
+
+@router.get("/oidc/callback", response_model=SessionAuthentication, response_model_exclude_none=True)
+async def oidc_callback(
+    request: Request,
+    response: Response,
+    code: str | None = None,
+    state: str | None = None,
+    session: AsyncSession = Depends(get_db_session),
+) -> SessionAuthentication:
+    gateway = _require_oidc_gateway()
+    stored = _read_oidc_state_cookie(request)
+    if not code or not state or state != stored["state"]:
+        raise ValidationException("OIDC state mismatch.")
+    endpoints = await discover((gateway.oidc_issuer or "").rstrip("/"))
+    exchanged = await exchange_code(
+        endpoints.token_endpoint,
+        code=code,
+        redirect_url=gateway.oidc_redirect_url or "",
+        client_id=gateway.oidc_client_id,
+        client_secret=gateway.oidc_client_secret,
+        code_verifier=stored["code_verifier"],
+    )
+    jwks = await fetch_jwks(endpoints.jwks_uri)
+    _, provisioned = await authenticate_callback(
+        session,
+        id_token=str(exchanged["id_token"]),
+        jwks=jwks,
+        request_id=get_request_id(request),
+        expected_nonce=str(stored["nonce"]),
+        jwks_uri=endpoints.jwks_uri,
+    )
+    if provisioned.member.status != "active":
+        raise AuthenticationException("OIDC account is disabled.")
+    current_time = datetime.now(timezone.utc)
+    secrets = await SessionService(session).issue(
+        build_principal(provisioned.member),
+        now=current_time,
+        step_up_at=current_time,
+    )
+    response.delete_cookie(_oidc_state_cookie_name(), path="/api/v1/auth/oidc/callback")
+    return _session_response(
+        response,
+        build_principal(provisioned.member),
+        secrets,
+        requires_password_change=False,
+        requires_mfa_enrollment=False,
+    )

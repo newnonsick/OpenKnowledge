@@ -17,6 +17,9 @@ from src.gateway.infrastructure.persistence.identity_models import MemberModel, 
 from src.gateway.infrastructure.persistence.ingestion_models import DocumentModel, DocumentRevisionChunkModel, DocumentRevisionModel, EmbeddingGenerationModel, RetrievalUnitModel
 from src.gateway.infrastructure.persistence.models import EMBED_DIM, KnowledgeItem, KnowledgeRevision, Workspace
 from src.gateway.infrastructure.persistence.retrieval_unit_repository import PostgresRetrievalUnitRepository
+from src.gateway.application.ports.object_storage import IVersionedObjectStorage
+from src.gateway.config import get_settings
+from src.gateway.infrastructure.storage.factory import build_versioned_object_storage
 from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
 
 
@@ -50,7 +53,7 @@ def _principal() -> Principal:
     )
 
 
-async def seed(factory: async_sessionmaker, storage: LocalVersionedObjectStorage) -> dict[str, bool]:
+async def seed(factory: async_sessionmaker, storage: IVersionedObjectStorage) -> dict[str, bool]:
     storage_key = f"objects/{SPACE_ID}/{DOCUMENT_ID}/{DOCUMENT_REVISION_ID}"
     if not await storage.exists(storage_key):
         staged = await storage.stage(
@@ -206,7 +209,7 @@ async def _hnsw_index_definition(factory: async_sessionmaker) -> str | None:
     return str(row) if row else None
 
 
-async def verify(factory: async_sessionmaker, storage: LocalVersionedObjectStorage) -> dict[str, bool]:
+async def verify(factory: async_sessionmaker, storage: IVersionedObjectStorage) -> dict[str, bool]:
     async with principal_session(factory, _principal()) as session:
         knowledge = await session.get(KnowledgeItem, KNOWLEDGE_ID)
         revision = await session.get(DocumentRevisionModel, DOCUMENT_REVISION_ID)
@@ -272,7 +275,7 @@ async def verify(factory: async_sessionmaker, storage: LocalVersionedObjectStora
 async def run(action: str, database_url: str, storage_dir: Path) -> None:
     engine = create_async_engine(normalize_database_url(database_url), pool_pre_ping=True)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    storage = LocalVersionedObjectStorage(storage_dir)
+    storage = build_versioned_object_storage(get_settings()) if get_settings().gateway.storage_backend == "s3" else LocalVersionedObjectStorage(storage_dir)
     try:
         result = await (seed(factory, storage) if action == "seed" else verify(factory, storage))
         print(json.dumps(result, sort_keys=True))

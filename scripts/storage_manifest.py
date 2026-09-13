@@ -8,13 +8,17 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.gateway.application.services.storage_manifest_service import StorageManifest, StorageManifestService
 from src.gateway.infrastructure.database import normalize_database_url
+from src.gateway.config import get_settings
+from src.gateway.infrastructure.storage.factory import build_versioned_object_storage
 from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
 
 
 async def run(action: str, database_url: str, storage_dir: Path, manifest_path: Path) -> None:
     engine = create_async_engine(normalize_database_url(database_url), pool_pre_ping=True)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    service = StorageManifestService(factory, LocalVersionedObjectStorage(storage_dir))
+    settings = get_settings()
+    storage = build_versioned_object_storage(settings) if settings.gateway.storage_backend == "s3" else LocalVersionedObjectStorage(storage_dir)
+    service = StorageManifestService(factory, storage)
     try:
         if action == "create":
             manifest = await service.create()

@@ -21,7 +21,7 @@ from src.gateway.config import get_settings
 from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.database import close_db_engine, get_worker_session_factory, normalize_database_url, validate_worker_database_role
 from src.gateway.infrastructure.migrations import get_schema_status_async
-from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
+from src.gateway.infrastructure.storage.factory import build_versioned_object_storage
 from src.gateway.observability import configure_logging, metrics_registry_context
 from src.gateway.presentation.metrics import MetricsRegistry
 
@@ -59,7 +59,7 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
         raise RuntimeError("Worker database schema is incompatible")
     await validate_worker_database_role()
     factory = get_worker_session_factory()
-    storage = LocalVersionedObjectStorage(settings.gateway.storage_dir)
+    storage = build_versioned_object_storage(settings)
     parser = BoundedDocumentParser(
         timeout_seconds=settings.gateway.parser_timeout_seconds,
         memory_limit_bytes=settings.gateway.parser_memory_limit_bytes,

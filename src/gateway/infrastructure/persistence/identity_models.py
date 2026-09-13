@@ -20,12 +20,15 @@ class MemberModel(Base):
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     system_role: Mapped[str] = mapped_column(String(24), nullable=False)
     force_password_change: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    oidc_subject: Mapped[str | None] = mapped_column(Text)
+    oidc_issuer: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         UniqueConstraint("username_normalized", name="uq_members_username_normalized"),
+        UniqueConstraint("oidc_issuer", "oidc_subject", name="uq_members_oidc_issuer_subject"),
         CheckConstraint("status IN ('pending','active','disabled')", name="ck_members_status"),
         CheckConstraint("system_role IN ('super_admin','member')", name="ck_members_system_role"),
     )

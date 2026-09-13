@@ -17,6 +17,24 @@ Settings are declared in `src/gateway/config.py`. Nested settings objects (`gate
 | `LOG_LEVEL` | `DEBUG` | `DEBUG`, `INFO`, `WARNING`, or `ERROR`. `DEBUG` is rejected in production. |
 | `LOG_FORMAT` | `auto` | `auto`, `console`, or `json`. Automatic output uses readable console records outside production and JSON records in production. |
 | `STORAGE_DIR` | `./data/storage` | Directory for uploaded document files. Compose mounts a shared volume at `/data/storage`. |
+| `STORAGE_BACKEND` | `local` | Versioned object storage backend: `local` disk or `s3` for any S3-compatible endpoint. Startup fails fast when `s3` is selected without complete credentials. |
+| `STORAGE_S3_ENDPOINT` | unset | S3-compatible endpoint URL, for example `https://s3.example.com` or a MinIO/Garage URL. Required when `STORAGE_BACKEND=s3`. |
+| `STORAGE_S3_BUCKET` | unset | S3 bucket holding versioned storage objects. Required when `STORAGE_BACKEND=s3`. |
+| `STORAGE_S3_REGION` | unset | S3 signing region for the bucket. Required when `STORAGE_BACKEND=s3`. |
+| `STORAGE_S3_ACCESS_KEY` | unset | S3 access key id. Required when `STORAGE_BACKEND=s3`. |
+| `STORAGE_S3_SECRET_KEY` | unset | S3 secret access key. Required when `STORAGE_BACKEND=s3`. |
+| `STORAGE_S3_SESSION_TOKEN` | unset | Optional session token for temporary S3 credentials. |
+| `STORAGE_S3_PREFIX` | unset | Optional key prefix inside the bucket. Local and S3 key layouts are otherwise identical (`staging/{space}/{upload}`, `objects/{space}/{doc}/{rev}`). |
+| `OIDC_ENABLED` | `false` | Enables OIDC single sign-on for management authentication. Startup fails fast when enabled without complete settings. |
+| `OIDC_ISSUER` | unset | OIDC issuer URL used for discovery (`/.well-known/openid-configuration`) and ID-token `iss` verification. |
+| `OIDC_CLIENT_ID` | unset | Client identifier registered with the identity provider; also the ID-token `aud`. |
+| `OIDC_CLIENT_SECRET` | unset | Client secret used for the authorization-code exchange. |
+| `OIDC_REDIRECT_URL` | unset | Public callback URL registered with the provider, ending in `/api/v1/auth/oidc/callback`. |
+| `OIDC_GROUP_CLAIM` | `groups` | ID-token claim carrying group memberships. |
+| `OIDC_USERNAME_CLAIM` | `email` | ID-token claim used as the member username, falling back to `email`, `preferred_username`, then `sub`. |
+| `OIDC_ROLE_MAPPING` | `{}` | JSON map of IdP group name to system role, for example `{"sso-admins":"super_admin"}`. Unmapped groups default to `member`. |
+| `OIDC_GROUP_SPACE_MAP` | `{}` | JSON map of IdP group name to space grants, for example `{"team-a":[{"space_id":"research","role":"editor"}]}`. Roles are `owner`, `editor`, or `reader`. |
+| `OIDC_DEPROVISION_DISABLE` | `true` | When all mapped grants disappear, remove the mapped memberships and disable the member instead of deleting it. Disabled members are audited as `member.deprovisioned` and their sessions revoked. |
 | `DEFAULT_WORKSPACE_ID` | `global` | Space used when a request does not specify one. Created at startup if missing. |
 | `PUBLIC_BASE_URL` | unset | Public HTTPS origin. Required in production; the exact origin is allowed for authenticated session mutations. Development falls back to the two local console origins when unset. |
 | `TRUSTED_HOSTS` | `localhost,127.0.0.1,[::1],testserver,test,gateway-test` | HTTP `Host` allowlist. Explicit non-wildcard values are required in production. Comma-separated or a JSON array. |

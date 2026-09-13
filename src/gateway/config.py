@@ -288,6 +288,102 @@ class GatewaySettings(BaseSettings):
         validation_alias=AliasChoices("STORAGE_DIR", "storage_dir"),
         description="Local disk storage directory for uploaded files",
     )
+    storage_backend: str = Field(
+        default="local",
+        pattern="^(local|s3)$",
+        validation_alias=AliasChoices("STORAGE_BACKEND", "storage_backend"),
+        description="Versioned object storage backend: local disk or S3-compatible endpoint",
+    )
+    storage_s3_endpoint: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("STORAGE_S3_ENDPOINT", "storage_s3_endpoint"),
+        description="S3-compatible endpoint URL used when STORAGE_BACKEND is s3",
+    )
+    storage_s3_bucket: str = Field(
+        default="",
+        validation_alias=AliasChoices("STORAGE_S3_BUCKET", "storage_s3_bucket"),
+        description="S3 bucket holding versioned storage objects",
+    )
+    storage_s3_region: str = Field(
+        default="",
+        validation_alias=AliasChoices("STORAGE_S3_REGION", "storage_s3_region"),
+        description="S3 signing region for the storage bucket",
+    )
+    storage_s3_access_key: str = Field(
+        default="",
+        repr=False,
+        validation_alias=AliasChoices("STORAGE_S3_ACCESS_KEY", "storage_s3_access_key"),
+        description="S3 access key id for the storage bucket",
+    )
+    storage_s3_secret_key: str = Field(
+        default="",
+        repr=False,
+        validation_alias=AliasChoices("STORAGE_S3_SECRET_KEY", "storage_s3_secret_key"),
+        description="S3 secret access key for the storage bucket",
+    )
+    storage_s3_session_token: Optional[str] = Field(
+        default=None,
+        repr=False,
+        validation_alias=AliasChoices("STORAGE_S3_SESSION_TOKEN", "storage_s3_session_token"),
+        description="Optional S3 session token for temporary credentials",
+    )
+    storage_s3_prefix: str = Field(
+        default="",
+        validation_alias=AliasChoices("STORAGE_S3_PREFIX", "storage_s3_prefix"),
+        description="Optional key prefix inside the S3 bucket",
+    )
+    oidc_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("OIDC_ENABLED", "oidc_enabled"),
+        description="Enable OIDC single sign-on for management authentication",
+    )
+    oidc_issuer: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("OIDC_ISSUER", "oidc_issuer"),
+        description="OIDC issuer URL used for discovery and token verification",
+    )
+    oidc_client_id: str = Field(
+        default="",
+        repr=False,
+        validation_alias=AliasChoices("OIDC_CLIENT_ID", "oidc_client_id"),
+        description="OIDC client identifier registered with the identity provider",
+    )
+    oidc_client_secret: str = Field(
+        default="",
+        repr=False,
+        validation_alias=AliasChoices("OIDC_CLIENT_SECRET", "oidc_client_secret"),
+        description="OIDC client secret used for the authorization code exchange",
+    )
+    oidc_redirect_url: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("OIDC_REDIRECT_URL", "oidc_redirect_url"),
+        description="Public callback URL registered with the identity provider",
+    )
+    oidc_group_claim: str = Field(
+        default="groups",
+        validation_alias=AliasChoices("OIDC_GROUP_CLAIM", "oidc_group_claim"),
+        description="ID token claim carrying group memberships",
+    )
+    oidc_username_claim: str = Field(
+        default="email",
+        validation_alias=AliasChoices("OIDC_USERNAME_CLAIM", "oidc_username_claim"),
+        description="ID token claim used as the member username",
+    )
+    oidc_role_mapping: Union[Dict[str, str], str] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("OIDC_ROLE_MAPPING", "oidc_role_mapping"),
+        description="JSON mapping of IdP group name to system role",
+    )
+    oidc_group_space_map: Union[Dict[str, List[Dict[str, str]]], str] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("OIDC_GROUP_SPACE_MAP", "oidc_group_space_map"),
+        description="JSON mapping of IdP group name to space membership grants",
+    )
+    oidc_deprovision_disable: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("OIDC_DEPROVISION_DISABLE", "oidc_deprovision_disable"),
+        description="Disable members whose OIDC-mapped grants are fully removed",
+    )
     api_keys: Union[List[str], str] = Field(
         default_factory=list,
         repr=False,
@@ -698,6 +794,44 @@ class GatewaySettings(BaseSettings):
             return [str(item).strip() for item in value if str(item).strip()]
         return value
 
+    @field_validator("oidc_role_mapping", mode="before")
+    @classmethod
+    def parse_oidc_role_mapping(cls, value: Any) -> Dict[str, str]:
+        if isinstance(value, str):
+            if not value.strip():
+                return {}
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"OIDC_ROLE_MAPPING is not valid JSON: {exc}") from exc
+            value = parsed
+        if isinstance(value, dict):
+            return {str(k): str(v) for k, v in value.items()}
+        return {}
+
+    @field_validator("oidc_group_space_map", mode="before")
+    @classmethod
+    def parse_oidc_group_space_map(cls, value: Any) -> Dict[str, List[Dict[str, str]]]:
+        if isinstance(value, str):
+            if not value.strip():
+                return {}
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"OIDC_GROUP_SPACE_MAP is not valid JSON: {exc}") from exc
+            value = parsed
+        if isinstance(value, dict):
+            normalized: Dict[str, List[Dict[str, str]]] = {}
+            for group, grants in value.items():
+                items = grants if isinstance(grants, list) else [grants]
+                cleaned = []
+                for grant in items:
+                    if isinstance(grant, dict) and grant.get("space_id") and grant.get("role"):
+                        cleaned.append({"space_id": str(grant["space_id"]), "role": str(grant["role"])})
+                normalized[str(group)] = cleaned
+            return normalized
+        return {}
+
     @field_validator("trusted_proxy_cidrs")
     @classmethod
     def validate_proxy_cidrs(cls, values: List[str]) -> List[str]:
@@ -781,6 +915,67 @@ class GatewaySettings(BaseSettings):
 
         if errors:
             raise ValidationError.from_exception_data("RuntimeSafety", errors)
+
+    def validate_storage_backend(self) -> None:
+        if self.storage_backend not in {"local", "s3"}:
+            raise ValueError("STORAGE_BACKEND must be 'local' or 's3'.")
+        if self.storage_backend != "s3":
+            return
+        missing = [
+            name
+            for name, value in (
+                ("STORAGE_S3_ENDPOINT", self.storage_s3_endpoint),
+                ("STORAGE_S3_BUCKET", self.storage_s3_bucket),
+                ("STORAGE_S3_REGION", self.storage_s3_region),
+                ("STORAGE_S3_ACCESS_KEY", self.storage_s3_access_key),
+                ("STORAGE_S3_SECRET_KEY", self.storage_s3_secret_key),
+            )
+            if not (value or "").strip()
+        ]
+        if missing:
+            raise ValueError(
+                "STORAGE_BACKEND=s3 requires " + ", ".join(missing) + "."
+            )
+
+    def validate_oidc_settings(self) -> None:
+        if not self.oidc_enabled:
+            return
+        missing = [
+            name
+            for name, value in (
+                ("OIDC_ISSUER", self.oidc_issuer),
+                ("OIDC_CLIENT_ID", self.oidc_client_id),
+                ("OIDC_CLIENT_SECRET", self.oidc_client_secret),
+                ("OIDC_REDIRECT_URL", self.oidc_redirect_url),
+            )
+            if not (value or "").strip()
+        ]
+        if missing:
+            raise ValueError(
+                "OIDC_ENABLED=true requires " + ", ".join(missing) + "."
+            )
+        issuer = (self.oidc_issuer or "").strip()
+        try:
+            parsed = urlparse(issuer)
+        except ValueError as exc:
+            raise ValueError("OIDC_ISSUER is not a valid URL.") from exc
+        is_https = parsed.scheme == "https" and bool(parsed.hostname)
+        is_localhost_http = parsed.scheme == "http" and (parsed.hostname or "").lower() in {"localhost", "127.0.0.1"}
+        if not (is_https or is_localhost_http):
+            raise ValueError("OIDC_ISSUER must be an HTTPS URL, except exact http://localhost[:port] or http://127.0.0.1[:port].")
+        valid_roles = {"member", "super_admin"}
+        valid_space_roles = {"owner", "editor", "reader"}
+        for group, role in (self.oidc_role_mapping or {}).items():
+            if role not in valid_roles:
+                raise ValueError(
+                    f"OIDC_ROLE_MAPPING group '{group}' must map to member or super_admin."
+                )
+        for group, grants in (self.oidc_group_space_map or {}).items():
+            for grant in grants:
+                if grant.get("role") not in valid_space_roles or not grant.get("space_id"):
+                    raise ValueError(
+                        f"OIDC_GROUP_SPACE_MAP group '{group}' grants require space_id and owner/editor/reader role."
+                    )
 
 class AppSettings(BaseSettings):
 

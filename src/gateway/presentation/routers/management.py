@@ -78,7 +78,7 @@ from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeMo
 from src.gateway.infrastructure.persistence.models import Workspace
 from src.gateway.infrastructure.persistence.runtime_settings_models import RuntimeSettingRevisionModel
 from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings, load_active_runtime_policy
-from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
+from src.gateway.infrastructure.storage.factory import build_versioned_object_storage
 from src.gateway.presentation.authorization import require_principal, require_scope
 from src.gateway.presentation.request_context import get_request_id
 from src.gateway.application.services.quota_service import quota_service_from_settings
@@ -2598,7 +2598,7 @@ async def upload_source(
     gateway = get_settings().gateway
     receipt = await DocumentUploadService(
         get_session_factory(),
-        LocalVersionedObjectStorage(gateway.storage_dir),
+        build_versioned_object_storage(),
         max_upload_bytes=gateway.max_upload_bytes,
     ).upload_new(
         principal=principal,
@@ -2783,7 +2783,7 @@ def _connector_service() -> GitConnectorService:
     gateway = get_settings().gateway
     return GitConnectorService(
         get_session_factory(),
-        LocalVersionedObjectStorage(gateway.storage_dir),
+        build_versioned_object_storage(),
         max_upload_bytes=gateway.max_upload_bytes,
     )
 
