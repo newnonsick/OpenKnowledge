@@ -37,6 +37,11 @@ from src.gateway.application.services.context_assembly_service import (
     context_package_response,
 )
 from src.gateway.application.services.evidence_service import EvidenceReference, EvidenceService, evidence_response
+from src.gateway.application.services.git_connector_service import (
+    GitConnectorService,
+    connector_payload,
+    sync_result_payload,
+)
 from src.gateway.application.services.idempotency_service import IdempotencyService, ReservationStatus
 from src.gateway.application.services.ingestion_job_service import IngestionJobService
 from src.gateway.application.services.knowledge_management_service import KnowledgeManagementService
@@ -116,6 +121,8 @@ from src.gateway.presentation.schemas.management_responses import (
     ReviewedKnowledge,
     RuntimeSettings,
     SessionSummary,
+    SourceConnectorSummary,
+    SourceConnectorSyncReceipt,
     SourceSummary,
     SourceUploadReceipt,
     SpaceDetail,
@@ -2762,6 +2769,189 @@ async def archive_source(
         resource_ids=[str(document_id)],
     )
     return Response(status_code=204)
+
+
+class SourceConnectorRegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    space_id: str = Field(min_length=1, max_length=64)
+    repo: str = Field(min_length=1, max_length=2000)
+    branch: str = Field(min_length=1, max_length=255)
+
+
+def _connector_service() -> GitConnectorService:
+    gateway = get_settings().gateway
+    return GitConnectorService(
+        get_session_factory(),
+        LocalVersionedObjectStorage(gateway.storage_dir),
+        max_upload_bytes=gateway.max_upload_bytes,
+    )
+
+
+@router.post("/sources/connectors", status_code=status.HTTP_201_CREATED, response_model=SourceConnectorSummary)
+async def register_source_connector(
+    payload: SourceConnectorRegisterRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "source.upload")
+    _require_mutation_tools(await _active_policy(principal))
+    reservation = await _reserve(
+        session,
+        principal,
+        "source.connector.register",
+        idempotency_key,
+        payload.model_dump(mode="json"),
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        registration = await _connector_service().registration_replay(
+            principal=principal,
+            space_id=payload.space_id,
+            resource_ids=reservation.resource_ids,
+        )
+    else:
+        registration = await _connector_service().register(
+            principal=principal,
+            space_id=payload.space_id,
+            repo=payload.repo,
+            branch=payload.branch,
+            idempotency_key=idempotency_key,
+        )
+        AuditService(AuditRepository(session)).record(
+            actor_member_id=_actor_id(principal),
+            actor_kind=principal.kind.value,
+            request_id=get_request_id(request),
+            action="connector.registered",
+            resource_type="source_connector",
+            resource_id=str(registration.connector_id),
+            details={"space_id": payload.space_id, "branch": payload.branch.strip()},
+        )
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=201,
+            resource_ids=[str(registration.connector_id)],
+        )
+    summaries = await _connector_service().list(principal=principal, space_id=payload.space_id)
+    for summary in summaries:
+        if summary.id == registration.connector_id:
+            return connector_payload(summary)
+    raise ResourceConflictException("The connector registration is unavailable.")
+
+
+@router.get("/sources/connectors", response_model=Page[SourceConnectorSummary])
+async def list_source_connectors(
+    space_id: str | None = Query(default=None, max_length=64),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+    principal: Principal = Depends(require_scope("knowledge:read")),
+) -> dict:
+    require_profile_route(principal, "source.list")
+    summaries = await _connector_service().list(principal=principal, space_id=space_id)
+    total_items = len(summaries)
+    metadata = _page_metadata(page=page, page_size=page_size, total_items=total_items)
+    if metadata["total_pages"] == 0:
+        return {"items": [], **metadata}
+    start = (metadata["page"] - 1) * page_size
+    selected = summaries[start:start + page_size]
+    return {"items": [connector_payload(summary) for summary in selected], **metadata}
+
+
+@router.delete("/sources/connectors/{connector_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def unregister_source_connector(
+    connector_id: UUID,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> Response:
+    require_profile_route(principal, "source.upload")
+    _require_mutation_tools(await _active_policy(principal))
+    reservation = await _reserve(
+        session,
+        principal,
+        "source.connector.unregister",
+        idempotency_key,
+        {"connector_id": str(connector_id)},
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        return Response(status_code=204)
+    await _connector_service().unregister(
+        principal=principal, connector_id=connector_id, request_id=get_request_id(request)
+    )
+    AuditService(AuditRepository(session)).record(
+        actor_member_id=_actor_id(principal),
+        actor_kind=principal.kind.value,
+        request_id=get_request_id(request),
+        action="connector.unregistered",
+        resource_type="source_connector",
+        resource_id=str(connector_id),
+        details={},
+    )
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=204,
+        resource_ids=[str(connector_id)],
+    )
+    return Response(status_code=204)
+
+
+@router.post("/sources/connectors/{connector_id}/sync", status_code=status.HTTP_202_ACCEPTED, response_model=SourceConnectorSyncReceipt)
+async def sync_source_connector(
+    connector_id: UUID,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "source.upload")
+    _require_mutation_tools(await _active_policy(principal))
+    reservation = await _reserve(
+        session,
+        principal,
+        "source.connector.sync",
+        idempotency_key,
+        {"connector_id": str(connector_id)},
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        if len(reservation.resource_ids) >= 6:
+            return {
+                "connector_id": reservation.resource_ids[0],
+                "commit": reservation.resource_ids[1],
+                "enqueued": int(reservation.resource_ids[2]),
+                "archived": int(reservation.resource_ids[3]),
+                "skipped": int(reservation.resource_ids[4]),
+                "skipped_reasons": reservation.resource_ids[5].split("\n") if reservation.resource_ids[5] else [],
+            }
+        raise ResourceConflictException("The connector sync result is unavailable.")
+    result = await _connector_service().sync(
+        principal=principal,
+        connector_id=connector_id,
+        idempotency_key=idempotency_key,
+    )
+    AuditService(AuditRepository(session)).record(
+        actor_member_id=_actor_id(principal),
+        actor_kind=principal.kind.value,
+        request_id=get_request_id(request),
+        action="connector.synced",
+        resource_type="source_connector",
+        resource_id=str(connector_id),
+        details={"commit": result.commit, "enqueued": result.enqueued, "archived": result.archived},
+    )
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=202,
+        resource_ids=[
+            str(result.connector_id),
+            result.commit,
+            str(result.enqueued),
+            str(result.archived),
+            str(result.skipped),
+            "\n".join(result.skipped_reasons[:32]),
+        ],
+    )
+    return sync_result_payload(result)
 
 
 @router.get("/ingestion-jobs", response_model=Page[IngestionJob])

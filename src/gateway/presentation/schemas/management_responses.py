@@ -476,6 +476,27 @@ class SourceSummary(ContractModel):
     updated_at: datetime
 
 
+class SourceConnectorSummary(ContractModel):
+    id: str
+    space_id: str
+    kind: str
+    repo_root: str
+    branch: str
+    last_synced_commit: str | None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class SourceConnectorSyncReceipt(ContractModel):
+    connector_id: str
+    commit: str
+    enqueued: int
+    archived: int
+    skipped: int
+    skipped_reasons: list[str]
+
+
 class IngestionJob(ContractModel):
     id: str
     space_id: str

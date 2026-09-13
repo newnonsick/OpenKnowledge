@@ -202,8 +202,14 @@ curl https://gateway.example.com/api/v1/retrieval/search \
 | GET | `/api/v1/ingestion-jobs` | List ingestion jobs with state, attempts, and progress. |
 | POST | `/api/v1/ingestion-jobs/{job_id}/cancel` | Request cooperative cancellation. |
 | POST | `/api/v1/ingestion-jobs/{job_id}/retry` | Request a retry of a failed job. |
+| POST | `/api/v1/sources/connectors` | Register a local git repository to a space (branch-pinned); idempotent via `Idempotency-Key`. |
+| GET | `/api/v1/sources/connectors` | List registered connectors, optionally filtered by `space_id`. |
+| POST | `/api/v1/sources/connectors/{id}/sync` | Incremental sync at 202: enqueues added/modified files, archives documents for deleted files, skips unchanged/binary/oversize files with reasons. |
+| DELETE | `/api/v1/sources/connectors/{id}` | Unregister; already-ingested documents stay preserved. |
 
 Document chunking uses the effective chunk policy: the space override when `PUT /api/v1/spaces/{space_id}/chunk-policy` set one, otherwise the global `INGESTION_CHUNK_SIZE` / `INGESTION_CHUNK_OVERLAP` config (semantic strategy). Invalid policies are rejected with 422 and never partially applied.
+
+Git connector identity is the normalized repository root plus branch per space; sync diffs against the stored commit so repeat syncs enqueue nothing. Ingested documents inherit the connector's space membership with the syncing member as author — per-file ACLs are out of scope for v1, so branch pinning and space membership are the access boundary. No docs-site crawler, hosted-git API, or sync scheduler ships in v1; sync is on-demand and the worker picks jobs up through the existing lease pipeline.
 
 ```bash
 curl https://gateway.example.com/api/v1/sources/upload \
