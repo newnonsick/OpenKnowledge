@@ -857,3 +857,116 @@ async def test_quota_usage_reports_limits_and_in_flight(tmp_path, monkeypatch) -
                 assert denied.status_code == 404
         finally:
             set_session_factory(None)
+
+
+async def test_audit_export_csv_and_jsonl_with_filters(tmp_path, monkeypatch) -> None:
+    now = datetime.now(timezone.utc)
+    admin_id = uuid4()
+    mfa_key = Fernet.generate_key().decode("ascii")
+    settings = Settings(
+        gateway={
+            "environment": "test",
+            "public_base_url": "https://gateway.test",
+            "api_key_peppers": {1: "p" * 32},
+            "active_api_key_pepper_version": 1,
+            "mfa_encryption_keys": {1: mfa_key},
+            "active_mfa_encryption_key_version": 1,
+            "storage_dir": str(tmp_path / "storage"),
+        }
+    )
+
+    async with isolated_postgres_database() as (_, factory):
+        async with factory.begin() as session:
+            session.add(
+                MemberModel(
+                    id=admin_id,
+                    username="audit-admin",
+                    username_normalized="audit-admin",
+                    display_name="Audit Admin",
+                    status=MemberStatus.ACTIVE.value,
+                    system_role=SystemRole.SUPER_ADMIN.value,
+                    force_password_change=False,
+                )
+            )
+            session.add(Workspace(id="global", name="Global", created_by_member_id=admin_id))
+            await session.flush()
+            session.add(
+                SpaceMembershipModel(
+                    id=uuid4(),
+                    space_id="global",
+                    member_id=admin_id,
+                    role=SpaceRole.OWNER.value,
+                )
+            )
+            admin_session = await SessionService(session).issue(
+                principal(admin_id, SystemRole.SUPER_ADMIN),
+                now=now,
+                step_up_at=now,
+            )
+            session.add(
+                AuditEventModel(
+                    id=uuid4(),
+                    occurred_at=now,
+                    actor_member_id=admin_id,
+                    actor_kind="member",
+                    request_id="audit-export-seed",
+                    action="space.created",
+                    resource_type="space",
+                    resource_id="global",
+                    outcome="success",
+                    details={},
+                )
+            )
+
+        app = FastAPI()
+        app.state.settings = settings
+        register_exception_handlers(app)
+        app.add_middleware(
+            APIKeyAuthMiddleware,
+            allowed_keys=[],
+            api_key_peppers={1: "p" * 32},
+            session_factory=factory,
+        )
+        app.add_middleware(SettingsContextMiddleware)
+        app.include_router(router)
+        set_session_factory(factory)
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="https://gateway.test",
+                cookies={"__Host-openknowledge-access": admin_session.access_token.reveal()},
+            ) as admin_client:
+                csv_export = await admin_client.get("/api/v1/audit-events/export", params={"format": "csv"})
+                assert csv_export.status_code == 200
+                assert csv_export.headers["content-type"].startswith("text/csv")
+                lines = csv_export.text.splitlines()
+                assert lines[0].startswith("id,occurred_at,")
+                assert any("space.created" in line and "audit-export-seed" in line for line in lines[1:])
+
+                jsonl_export = await admin_client.get("/api/v1/audit-events/export", params={"format": "jsonl"})
+                assert jsonl_export.status_code == 200
+                assert jsonl_export.headers["content-type"].startswith("application/x-ndjson")
+                import json as _json
+
+                records = [_json.loads(line) for line in jsonl_export.text.splitlines() if line.strip()]
+                assert records
+                seeded = [record for record in records if record["request_id"] == "audit-export-seed"]
+                assert len(seeded) == 1
+                assert seeded[0]["action"] == "space.created"
+
+                filtered = await admin_client.get(
+                    "/api/v1/audit-events/export",
+                    params={"format": "csv", "action": "space.created"},
+                )
+                assert filtered.status_code == 200
+                assert any("space.created" in line for line in filtered.text.splitlines()[1:])
+
+                empty = await admin_client.get(
+                    "/api/v1/audit-events/export",
+                    params={"format": "csv", "action": "no-such-action"},
+                )
+                assert empty.status_code == 200
+                assert len(empty.text.splitlines()) == 1
+        finally:
+            set_session_factory(None)

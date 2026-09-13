@@ -232,6 +232,7 @@ class PendingAIActionModel(Base):
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     actor_member_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True)
     proposed_by_kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    proposed_by_credential_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
     normalized_command: Mapped[dict] = mapped_column(JSONB, nullable=False)
     command_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -249,6 +250,7 @@ class PendingAIActionModel(Base):
         CheckConstraint("state IN ('pending','executed','expired','cancelled')", name="ck_pending_ai_actions_state"),
         Index("ix_pending_ai_actions_actor_state_expiry", "actor_member_id", "state", "expires_at"),
         Index("ix_pending_ai_actions_actor_pending_page", "actor_member_id", "state", "created_at", "id"),
+        Index("ix_pending_ai_actions_proposed_credential", "proposed_by_credential_id"),
     )
 
 

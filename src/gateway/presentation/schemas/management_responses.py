@@ -407,6 +407,49 @@ class IngestionMutation(ContractModel):
     state: IngestionMutationState
 
 
+class WebhookEventDetail(ContractModel):
+    id: str
+    event_type: str
+    job_id: str | None
+    deduplication_key: str
+    payload: dict
+    created_at: datetime | None
+
+
+class KnowledgeExportRevision(ContractModel):
+    id: str
+    version: int
+    title: str | None
+    content: str
+    tags: list[str]
+    change_summary: str | None
+    created_at: datetime | None
+
+
+class KnowledgeExportItem(ContractModel):
+    id: str
+    title: str
+    tags: list[str]
+    created_at: datetime | None
+    updated_at: datetime | None
+    revisions: list[KnowledgeExportRevision]
+
+
+class KnowledgeExport(ContractModel):
+    format: str
+    version: int
+    space_id: str
+    exported_at: datetime
+    exported_by: str
+    items: list[KnowledgeExportItem]
+
+
+class KnowledgeImportSummary(ContractModel):
+    space_id: str
+    created: int
+    skipped: int
+
+
 class APIKeySummary(ContractModel):
     id: str
     public_id: str

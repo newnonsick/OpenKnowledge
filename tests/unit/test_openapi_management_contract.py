@@ -16,6 +16,7 @@ MANAGEMENT_PREFIXES = (
     "/api/v1/ai-",
     "/api/v1/api-keys",
     "/api/v1/audit-events",
+    "/api/v1/events",
     "/api/v1/ingestion-jobs",
     "/api/v1/knowledge",
     "/api/v1/me",

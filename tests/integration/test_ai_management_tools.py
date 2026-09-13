@@ -346,32 +346,37 @@ async def test_destructive_ai_tool_requires_bound_one_time_website_confirmation(
 
                 proposed = await client.post(
                     "/api/v1/ai-tools/spaces.archive.v1",
-                    headers={"Idempotency-Key": "archive-private"},
+                    headers={
+                        "Idempotency-Key": "archive-private",
+                        "X-Test-Credential-ID": "00000000-0000-0000-0000-000000000001",
+                    },
                     json={"arguments": {"space_id": "private", "expected_revision": 2}},
                 )
                 assert proposed.status_code == 202
                 assert proposed.json()["status"] == "confirmation_required"
                 pending_id = proposed.json()["pending_action_id"]
 
-                model_cannot_confirm = await client.post(
+                foreign_credential_confirm = await client.post(
+                    f"/api/v1/ai-actions/{pending_id}/confirm",
+                    headers={
+                        "Idempotency-Key": "confirm-private-foreign-key",
+                        "X-Test-Principal-Kind": "api_key",
+                        "X-Test-Credential-ID": "00000000-0000-0000-0000-000000000002",
+                    },
+                )
+                assert foreign_credential_confirm.status_code == 404
+                assert foreign_credential_confirm.json()["error"]["type"] == "authorization_error"
+
+                credential_confirm = await client.post(
                     f"/api/v1/ai-actions/{pending_id}/confirm",
                     headers={
                         "Idempotency-Key": "confirm-private-api-key",
                         "X-Test-Principal-Kind": "api_key",
+                        "X-Test-Credential-ID": "00000000-0000-0000-0000-000000000001",
                     },
                 )
-                assert model_cannot_confirm.status_code == 404
-                assert model_cannot_confirm.json()["error"]["type"] == "authorization_error"
-
-                confirmed = await client.post(
-                    f"/api/v1/ai-actions/{pending_id}/confirm",
-                    headers={
-                        "Idempotency-Key": "confirm-private-session",
-                        "X-Test-Principal-Kind": "session",
-                    },
-                )
-                assert confirmed.status_code == 200
-                assert confirmed.json() == {
+                assert credential_confirm.status_code == 200
+                assert credential_confirm.json() == {
                     "pending_action_id": pending_id,
                     "status": "executed",
                     "tool_name": "spaces.archive.v1",
@@ -400,3 +405,87 @@ async def test_destructive_ai_tool_requires_bound_one_time_website_confirmation(
             failed_job = await session.get(IngestionJobModel, failed_job_id)
             assert queued_job is not None and queued_job.cancellation_requested
             assert failed_job is not None and failed_job.retry_requested
+
+
+async def test_api_key_owned_action_confirms_from_harness() -> None:
+    member_id = uuid4()
+    async with isolated_postgres_database() as (_, factory):
+        async with factory.begin() as session:
+            session.add(
+                MemberModel(
+                    id=member_id,
+                    username="harness-member",
+                    username_normalized="harness-member",
+                    display_name="Harness Member",
+                    status=MemberStatus.ACTIVE.value,
+                    system_role=SystemRole.MEMBER.value,
+                    force_password_change=False,
+                )
+            )
+            session.add(Workspace(id="harness", name="Harness", created_by_member_id=member_id))
+            await session.flush()
+            session.add(
+                SpaceMembershipModel(
+                    id=uuid4(),
+                    space_id="harness",
+                    member_id=member_id,
+                    role=SpaceRole.OWNER.value,
+                )
+            )
+
+        app = FastAPI()
+        register_exception_handlers(app)
+
+        @app.middleware("http")
+        async def test_principal(request: Request, call_next):
+            kind = PrincipalKind(request.headers.get("X-Test-Principal-Kind", "api_key"))
+            request.state.principal = Principal(
+                subject_id=str(member_id),
+                kind=kind,
+                system_role=SystemRole.MEMBER,
+                scopes=frozenset({"*"}),
+                credential_id=request.headers.get("X-Test-Credential-ID", str(uuid4())),
+            )
+            return await call_next(request)
+
+        app.include_router(router)
+        set_session_factory(factory)
+        try:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="https://gateway.test",
+            ) as client:
+                key_credential = str(uuid4())
+                proposed = await client.post(
+                    "/api/v1/ai-tools/spaces.archive.v1",
+                    headers={
+                        "Idempotency-Key": "harness-propose",
+                        "X-Test-Credential-ID": key_credential,
+                    },
+                    json={"arguments": {"space_id": "harness", "expected_revision": 1}},
+                )
+                assert proposed.status_code == 202
+                pending_id = proposed.json()["pending_action_id"]
+
+                review = await client.get(
+                    f"/api/v1/ai-actions/{pending_id}",
+                    headers={"X-Test-Credential-ID": key_credential},
+                )
+                assert review.status_code == 200
+                assert review.json()["command_hash"]
+
+                confirmed = await client.post(
+                    f"/api/v1/ai-actions/{pending_id}/confirm",
+                    headers={
+                        "Idempotency-Key": "harness-confirm",
+                        "X-Test-Credential-ID": key_credential,
+                    },
+                )
+                assert confirmed.status_code == 200
+                assert confirmed.json()["status"] == "executed"
+
+                async with factory.begin() as session:
+                    space = await session.get(Workspace, "harness")
+                    assert space is not None and space.archived_at is not None
+        finally:
+            set_session_factory(None)

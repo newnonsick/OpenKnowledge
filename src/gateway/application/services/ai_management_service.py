@@ -74,6 +74,7 @@ class AIManagementService:
             id=uuid4(),
             actor_member_id=actor_id,
             proposed_by_kind=actor.kind.value,
+            proposed_by_credential_id=actor.credential_id,
             tool_name=tool_name,
             normalized_command=command,
             command_hash=command_hash,
@@ -190,7 +191,11 @@ class AIManagementService:
         request_id: str,
         now: datetime | None = None,
     ) -> PendingAIActionModel:
-        if actor.kind is not PrincipalKind.SESSION:
+        if actor.kind is PrincipalKind.SESSION:
+            pass
+        elif actor.kind is PrincipalKind.API_KEY and actor.credential_id is not None:
+            pass
+        else:
             raise AuthorizationException()
         current_time = now or datetime.now(timezone.utc)
         actor_id = self._member_id(actor)
@@ -201,6 +206,16 @@ class AIManagementService:
         )
         if action is None or action.actor_member_id != actor_id:
             raise AuthorizationException()
+        if actor.kind is PrincipalKind.API_KEY:
+            if action.proposed_by_kind != PrincipalKind.API_KEY.value:
+                raise AuthorizationException()
+            if actor.credential_id is None:
+                raise AuthorizationException()
+            if (
+                action.proposed_by_credential_id is not None
+                and action.proposed_by_credential_id != actor.credential_id
+            ):
+                raise AuthorizationException()
         if action.state != "pending" or current_time >= action.expires_at:
             increment_metric("gateway_tool_events_total", event="confirmation", outcome="expired")
             raise ResourceConflictException("The pending AI action is unavailable.")

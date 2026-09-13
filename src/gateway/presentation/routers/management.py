@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import csv
+import io
+import json
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, Response, UploadFile, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError as PydanticValidationError
 from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -81,6 +85,8 @@ from src.gateway.presentation.schemas.management_responses import (
     IngestionJob,
     IngestionMutation,
     KnowledgeDetail,
+    KnowledgeExport,
+    KnowledgeImportSummary,
     KnowledgeSummary,
     MemberSummary,
     OperationSummary,
@@ -97,6 +103,7 @@ from src.gateway.presentation.schemas.management_responses import (
     SpaceMemberCandidate,
     SpaceMembership,
     SpaceSummary,
+    WebhookEventDetail,
 )
 from src.gateway.observability import increment_metric
 
@@ -400,6 +407,13 @@ def _actor_id(principal: Principal) -> UUID:
         return UUID(principal.subject_id)
     except ValueError as exc:
         raise AuthorizationException() from exc
+
+def _require_human_approval_principal(principal: Principal) -> None:
+    if principal.kind is PrincipalKind.SESSION:
+        return
+    if principal.kind is PrincipalKind.API_KEY and principal.credential_id is not None:
+        return
+    raise AuthorizationException()
 
 
 async def _family_id(session: AsyncSession, principal: Principal) -> UUID:
@@ -1058,8 +1072,7 @@ async def confirm_ai_action(
     principal: Principal = Depends(require_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    if principal.kind is not PrincipalKind.SESSION:
-        raise AuthorizationException()
+    _require_human_approval_principal(principal)
     reservation = await _reserve(
         session,
         principal,
@@ -1096,8 +1109,7 @@ async def list_ai_actions(
     principal: Principal = Depends(require_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    if principal.kind is not PrincipalKind.SESSION:
-        raise AuthorizationException()
+    _require_human_approval_principal(principal)
     current_time = datetime.now(timezone.utc)
     query = (
         select(PendingAIActionModel)
@@ -1138,8 +1150,7 @@ async def review_ai_action(
     principal: Principal = Depends(require_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    if principal.kind is not PrincipalKind.SESSION:
-        raise AuthorizationException()
+    _require_human_approval_principal(principal)
     return await review_pending_action(session, principal, action_id)
 
 
@@ -1645,6 +1656,84 @@ async def archive_space(
             resource_ids=[space_id],
         )
     return Response(status_code=204)
+
+
+@router.get("/knowledge/export", response_model=KnowledgeExport)
+async def export_knowledge(
+    space_id: str = Query(min_length=1, max_length=64),
+    principal: Principal = Depends(require_scope("knowledge:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "knowledge.export")
+    from src.gateway.application.services.knowledge_export_service import KnowledgeExportService
+
+    return await KnowledgeExportService(session).export_space(
+        UseCaseContext(principal=principal),
+        space_id,
+    )
+
+
+class KnowledgeImportRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    format: str = Field(min_length=1, max_length=64)
+    version: int = Field(ge=1)
+    space_id: str = Field(min_length=1, max_length=64)
+    items: list[dict] = Field(default_factory=list, max_length=5000)
+
+
+@router.post("/knowledge/import", response_model=KnowledgeImportSummary)
+async def import_knowledge(
+    payload: KnowledgeImportRequest,
+    request: Request,
+    space_id: str = Query(min_length=1, max_length=64),
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("knowledge:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "knowledge.import")
+    from src.gateway.application.services.knowledge_export_service import (
+        KnowledgeExportService,
+        import_summary_payload,
+    )
+
+    reservation = await _reserve(
+        session,
+        principal,
+        "knowledge.import",
+        idempotency_key,
+        {"space_id": space_id, "document": payload.model_dump()},
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        if not reservation.resource_ids:
+            raise ResourceConflictException()
+        replayed = await KnowledgeExportService(session).import_space(
+            UseCaseContext(
+                principal=principal,
+                policy=await _active_policy(principal),
+                request_id=get_request_id(request),
+                idempotency_key=idempotency_key,
+            ),
+            space_id,
+            payload.model_dump(),
+        )
+        return import_summary_payload(replayed)
+    result = await KnowledgeExportService(session).import_space(
+        UseCaseContext(
+            principal=principal,
+            policy=await _active_policy(principal),
+            request_id=get_request_id(request),
+            idempotency_key=idempotency_key,
+        ),
+        space_id,
+        payload.model_dump(),
+    )
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=200,
+        resource_ids=[space_id],
+    )
+    return import_summary_payload(result)
 
 
 @router.get("/knowledge", response_model=Page[KnowledgeSummary])
@@ -2234,6 +2323,44 @@ async def retry_ingestion_job(
     return await _mutate_ingestion_job(job_id, "retry", request, idempotency_key, principal, session)
 
 
+@router.get("/events", response_model=Page[WebhookEventDetail])
+async def list_webhook_events(
+    event_type: str | None = Query(default=None, min_length=1, max_length=64),
+    after_id: UUID | None = Query(default=None),
+    space_id: str | None = Query(default=None, min_length=1, max_length=64),
+    page_size: int = Query(default=100, ge=1, le=500),
+    principal: Principal = Depends(require_scope("knowledge:read")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "webhook.read")
+    from src.gateway.application.services.webhook_service import list_webhook_events as _list_events
+
+    effective = await AuthorizationService(session).effective_space_ids(_actor_id(principal), principal=principal)
+    if not effective:
+        return {"items": [], **_page_metadata(page=1, page_size=page_size, total_items=0)}
+    if space_id is not None:
+        if space_id not in effective:
+            return {"items": [], **_page_metadata(page=1, page_size=page_size, total_items=0)}
+        scoped = (space_id,)
+    else:
+        scoped = effective
+    rows = await _list_events(session, event_type=event_type, after_id=after_id, limit=page_size, space_ids=scoped)
+    return {
+        "items": [
+            {
+                "id": str(event.id),
+                "event_type": event.event_type,
+                "job_id": str(event.job_id),
+                "deduplication_key": event.deduplication_key,
+                "payload": dict(event.payload or {}),
+                "created_at": event.created_at,
+            }
+            for event in rows
+        ],
+        **_page_metadata(page=1, page_size=page_size, total_items=len(rows)),
+    }
+
+
 @router.get("/api-keys", response_model=Page[APIKeySummary])
 async def list_api_keys(
     page: int = Query(default=1, ge=1),
@@ -2739,6 +2866,107 @@ async def list_audit_events(
         ],
         **metadata,
     }
+
+
+def _audit_event_filters(
+    q: str | None,
+    action_filter: str | None,
+    outcome: Literal["success", "denied", "failed"] | None,
+    resource_type: str | None,
+):
+    query = select(AuditEventModel).order_by(AuditEventModel.occurred_at.desc(), AuditEventModel.id.desc())
+    if q is not None and q.strip():
+        pattern = _contains_pattern(q)
+        query = query.where(
+            or_(
+                AuditEventModel.action.ilike(pattern, escape="\\"),
+                AuditEventModel.resource_type.ilike(pattern, escape="\\"),
+                AuditEventModel.resource_id.ilike(pattern, escape="\\"),
+                AuditEventModel.request_id.ilike(pattern, escape="\\"),
+            )
+        )
+    if action_filter is not None:
+        query = query.where(AuditEventModel.action == action_filter)
+    if outcome is not None:
+        query = query.where(AuditEventModel.outcome == outcome)
+    if resource_type is not None:
+        query = query.where(AuditEventModel.resource_type == resource_type)
+    return query
+
+
+@router.get("/audit-events/export")
+async def export_audit_events(
+    q: str | None = Query(default=None, min_length=1, max_length=255),
+    action_filter: str | None = Query(default=None, min_length=1, max_length=128, alias="action"),
+    outcome: Literal["success", "denied", "failed"] | None = Query(default=None),
+    resource_type: str | None = Query(default=None, min_length=1, max_length=64),
+    format: Literal["csv", "jsonl"] = Query(default="csv"),
+    limit: int = Query(default=10000, ge=1, le=50000),
+    principal: Principal = Depends(require_scope("members:write")),
+    session: AsyncSession = Depends(get_db_session),
+):
+    require_profile_route(principal, "member.admin")
+    if principal.system_role is not SystemRole.SUPER_ADMIN:
+        raise AuthorizationException()
+    query = _audit_event_filters(q, action_filter, outcome, resource_type).limit(limit)
+    rows = list(await session.scalars(query))
+    if format == "jsonl":
+        lines = [
+            _audit_event_json(event).encode("utf-8") + b"\n"
+            for event in rows
+        ]
+        return StreamingResponse(
+            _iter_bytes(lines),
+            media_type="application/x-ndjson",
+            headers={"Content-Disposition": "attachment; filename=audit-events.jsonl"},
+        )
+    header = b"id,occurred_at,actor_member_id,actor_kind,action,resource_type,resource_id,outcome,request_id\n"
+    lines = [header] + [_audit_event_csv(event) for event in rows]
+    return StreamingResponse(
+        _iter_bytes(lines),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=audit-events.csv"},
+    )
+
+
+def _audit_event_json(event: AuditEventModel) -> str:
+    return json.dumps(
+        {
+            "id": str(event.id),
+            "occurred_at": event.occurred_at.isoformat(),
+            "actor_member_id": str(event.actor_member_id) if event.actor_member_id else None,
+            "actor_kind": event.actor_kind,
+            "action": event.action,
+            "resource_type": event.resource_type,
+            "resource_id": event.resource_id,
+            "outcome": event.outcome,
+            "request_id": event.request_id,
+        },
+        ensure_ascii=False,
+    )
+
+
+def _audit_event_csv(event: AuditEventModel) -> bytes:
+    buffer = io.StringIO()
+    csv.writer(buffer).writerow(
+        [
+            str(event.id),
+            event.occurred_at.isoformat(),
+            str(event.actor_member_id) if event.actor_member_id else "",
+            event.actor_kind,
+            event.action,
+            event.resource_type,
+            event.resource_id or "",
+            event.outcome,
+            event.request_id,
+        ]
+    )
+    return buffer.getvalue().encode("utf-8")
+
+
+async def _iter_bytes(chunks):
+    for chunk in chunks:
+        yield chunk
 
 
 @router.get("/settings", response_model=RuntimeSettings)
