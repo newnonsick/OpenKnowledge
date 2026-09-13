@@ -119,6 +119,10 @@ def test_public_path_bypass_detection():
     assert is_public_path("/v1/chat/completions") is False
     assert is_public_path("/v1/messages") is False
     assert is_public_path("/v1/models") is False
+    assert is_public_path("/mcp/") is True
+    assert is_public_path("/mcp/versions") is True
+    assert is_public_path("/mcp/discovery") is True
+    assert is_public_path("/.well-known/oauth-protected-resource/mcp") is True
 
 
 def test_api_key_auth_middleware_with_fastapi():

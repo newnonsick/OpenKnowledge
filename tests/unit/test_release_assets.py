@@ -75,6 +75,14 @@ def test_edge_routes_management_api_directly_to_gateway() -> None:
     assert "reverse_proxy web:3000" not in api_block
 
 
+def test_edge_routes_mcp_directly_to_gateway() -> None:
+    caddy = read("deploy/Caddyfile")
+    mcp_block = caddy.split("handle /mcp/*")[1].split("handle {")[0]
+    assert "reverse_proxy gateway:8000" in mcp_block
+    assert "reverse_proxy web:3000" not in mcp_block
+    assert "handle /.well-known/oauth-protected-resource/*" in caddy
+
+
 def test_backup_and_restore_publish_success_metrics_atomically() -> None:
     backup = read("scripts/backup.sh")
     recovery_metric = read("scripts/recovery_metric.py")

@@ -9,6 +9,12 @@
     handle /api/* {
         reverse_proxy gateway:8000
     }
+    handle /mcp/* {
+        reverse_proxy gateway:8000
+    }
+    handle /.well-known/oauth-protected-resource/* {
+        reverse_proxy gateway:8000
+    }
     handle {
         reverse_proxy web:3000
     }

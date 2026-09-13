@@ -43,8 +43,18 @@ from src.gateway.presentation.routers import (
     messages_router,
     models_router,
 )
+from src.gateway.mcp.router import build_mcp_components, router as mcp_router
 
 logger = logging.getLogger(__name__)
+
+
+async def _shutdown_infrastructure(settings_token) -> None:
+    logger.info("Shutting down OpenKnowledge...")
+    await close_db_engine()
+    await HttpLLMClient.close_shared_client()
+    await HTTPEmbeddingClient.close_shared_client()
+    reset_runtime_settings(settings_token)
+    logger.info("OpenKnowledge shutdown complete.")
 
 async def bootstrap_global_workspace(
     app_settings: Optional[AppSettings] = None,
@@ -107,15 +117,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
 
     logger.info("OpenKnowledge startup completed successfully.")
-    try:
-        yield
-    finally:
-        logger.info("Shutting down OpenKnowledge...")
-        await close_db_engine()
-        await HttpLLMClient.close_shared_client()
-        await HTTPEmbeddingClient.close_shared_client()
-        reset_runtime_settings(settings_token)
-        logger.info("OpenKnowledge shutdown complete.")
+    mcp_manager = getattr(app.state, "mcp_session_manager", None)
+    if mcp_manager is None:
+        try:
+            yield
+        finally:
+            await _shutdown_infrastructure(settings_token)
+        return
+    async with mcp_manager.run():
+        try:
+            yield
+        finally:
+            await _shutdown_infrastructure(settings_token)
 
 def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
 
@@ -192,6 +205,13 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
     app.include_router(chat_completions_router)
     app.include_router(messages_router)
     app.include_router(files_router)
+    app.include_router(mcp_router)
+    mcp_server, mcp_sub_app = build_mcp_components(
+        trusted_hosts=current_settings.gateway.trusted_hosts,
+    )
+    app.state.mcp_server = mcp_server
+    app.state.mcp_session_manager = mcp_server.session_manager
+    app.mount("/mcp", mcp_sub_app, name="mcp")
 
     def authoritative_openapi() -> dict:
         if app.openapi_schema is not None:
@@ -231,6 +251,9 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
             ("/healthz/live", "get"),
             ("/healthz/ready", "get"),
             ("/v1/health", "get"),
+            ("/mcp/versions", "get"),
+            ("/mcp/discovery", "get"),
+            ("/.well-known/oauth-protected-resource/mcp", "get"),
         }
         for path, path_item in schema.get("paths", {}).items():
             for method, operation in path_item.items():

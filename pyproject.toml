@@ -24,6 +24,7 @@ dependencies = [
     "argon2-cffi>=25.1.0",
     "cryptography>=45.0.0",
     "pyotp>=2.9.0",
+    "mcp>=2.2.0",
 ]
 
 [project.optional-dependencies]

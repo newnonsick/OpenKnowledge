@@ -5616,6 +5616,25 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/.well-known/oauth-protected-resource/mcp": {
+      "get": {
+        "operationId": "mcp_protected_resource__well_known_oauth_protected_resource_mcp_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Mcp Protected Resource",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
     "/api/v1/admin/spaces": {
       "get": {
         "operationId": "list_admin_spaces_api_v1_admin_spaces_get",
@@ -14178,6 +14197,52 @@
         "summary": "Readiness Check",
         "tags": [
           "Health"
+        ]
+      }
+    },
+    "/mcp/discovery": {
+      "get": {
+        "operationId": "mcp_discovery_mcp_discovery_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Mcp Discovery Mcp Discovery Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Mcp Discovery",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/mcp/versions": {
+      "get": {
+        "operationId": "mcp_versions_mcp_versions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Mcp Versions Mcp Versions Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Mcp Versions",
+        "tags": [
+          "mcp"
         ]
       }
     },

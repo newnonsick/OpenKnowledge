@@ -2,7 +2,8 @@
 
 This page shows how to use OpenKnowledge without the web console. Every
 workflow below works while the console is stopped: the edge routes
-`/api/*`, `/v1/*`, and `/health*` directly to the gateway.
+`/api/*`, `/v1/*`, `/mcp*`, `/.well-known/oauth-protected-resource/*`,
+and `/health*` directly to the gateway.
 
 ## Prerequisites
 
@@ -68,6 +69,59 @@ curl -s "$OPENKNOWLEDGE_URL/api/v1/sources/upload" \
 JOB=$(jq -r .job_id upload.json)
 python -m src.gateway.client job --job-id "$JOB" --watch
 ```
+
+## MCP recipes
+
+The gateway exposes Streamable HTTP MCP at `/mcp` with the same policy
+path as REST: personal API key auth, scopes, space grants, permission
+profiles, and per-credential quotas apply identically. Discovery lives at
+`GET /mcp/discovery`, the version matrix at `GET /mcp/versions`, and the
+OAuth protected-resource metadata at
+`GET /.well-known/oauth-protected-resource/mcp`. The metadata advertises
+an empty `authorization_servers` list because the gateway uses personal
+API keys rather than OAuth: there is no authorization server to direct
+clients to, and auth failures surface as MCP tool errors carrying the
+gateway code instead of `WWW-Authenticate` challenges.
+
+Available tools: `knowledge.search`, `knowledge.fetch`,
+`knowledge.create`, `knowledge.update`, `knowledge.archive`,
+`context.assemble`, `evidence.resolve`, `ingestion.status`,
+`ingestion.control`. Protocol versions `2024-11-05` through `2025-11-25`
+negotiate via `initialize`; `2026-07-28` uses the modern per-request
+envelope. The transport is stateless: every request carries its own
+auth headers, there is no session tracking or resumption, no SSE
+subscription stream, and client notifications are acknowledged and
+dropped. Only personal API keys authenticate MCP tools (`Authorization:
+Bearer <key>` or `X-API-Key: <key>`); legacy gateway keys and session
+cookies are rejected. Browser `Origin` headers are rejected; MCP is a
+server-to-server surface.
+
+With the Python MCP SDK (`pip install "mcp>=2.2.0"`):
+
+```python
+import httpx
+from mcp.client.session import ClientSession
+from mcp.client.streamable_http import streamable_http_client
+
+http = httpx.AsyncClient(
+    base_url="http://127.0.0.1:8000",
+    headers={"Authorization": "Bearer $OPENKNOWLEDGE_API_KEY"},
+)
+async with http:
+    async with streamable_http_client(
+        "http://127.0.0.1:8000/mcp/", http_client=http
+    ) as (read_stream, write_stream):
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            tools = await session.list_tools()
+            result = await session.call_tool(
+                "knowledge.search", {"query": "blue valve", "limit": 10}
+            )
+```
+
+Writes need an explicit `idempotency_key` argument; auth, quota, and
+grant denials arrive as tool errors carrying the gateway error code
+(`resource_unavailable`, `quota_exceeded`, `invalid_api_key`).
 
 ## Harness notes
 

@@ -38,6 +38,13 @@ PUBLIC_PATHS: Set[str] = {
     "/metrics",
     "/api/v1/auth/login",
     "/api/v1/auth/refresh",
+    "/mcp/versions",
+    "/mcp/discovery",
+    "/.well-known/oauth-protected-resource/mcp",
+}
+
+PUBLIC_PREFIXES: Set[str] = {
+    "/mcp/",
 }
 
 def is_public_path(path: str) -> bool:
@@ -47,6 +54,9 @@ def is_public_path(path: str) -> bool:
         normalized = "/"
     for pub in PUBLIC_PATHS:
         if normalized == pub or path.startswith(pub + "/"):
+            return True
+    for prefix in PUBLIC_PREFIXES:
+        if path.startswith(prefix):
             return True
     return False
 
