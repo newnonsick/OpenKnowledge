@@ -1071,9 +1071,18 @@ html[data-theme="dark"] .score-pill { color: var(--accent); }
 .evidence-detail dd { margin: 0; overflow-wrap: anywhere; }
 .evidence-citation { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
 .evidence-citation-text { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.revision-diff { margin-top: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); padding: 12px; min-width: 0; }
+.revision-diff-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.revision-diff-column { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-soft); padding: 12px; }
+.revision-diff-column h4 { margin: 6px 0 4px; font-size: 13px; overflow-wrap: anywhere; }
+.revision-diff-meta { margin: 0 0 8px; color: var(--ink-soft); font-size: 11.5px; overflow-wrap: anywhere; }
+.revision-diff-column pre { margin: 0; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: auto; max-width: 100%; }
+.revision-diff-column .evidence-detail { margin-top: 10px; }
 @media (max-width: 700px) {
   .result-evidence-row .evidence-toggle-button { width: auto; min-height: 34px; }
   .evidence-detail > div { grid-template-columns: 72px minmax(0, 1fr); }
+  .revision-diff { padding: 10px; }
+  .revision-diff-columns { grid-template-columns: minmax(0, 1fr); }
 }
 
 .permission-panel { display: flex; align-items: flex-start; gap: 16px; padding: 24px; }

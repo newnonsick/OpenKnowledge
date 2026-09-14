@@ -131,7 +131,10 @@ function shortIdentifier(value: string) {
   return value.length > 13 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
 }
 
-export function ShortIdentifier({ label, value }: { label: string; value: string }) {
+export function ShortIdentifier({ label, value }: { label: string; value: string | null | undefined }) {
+  if (value === null || value === undefined || value === "") {
+    return <span className="short-identifier"><code>—</code></span>;
+  }
   return (
     <span className="short-identifier">
       <code aria-label={`${label} ${value}`} title={value}>{shortIdentifier(value)}</code>
@@ -642,6 +645,7 @@ export function KnowledgeConsole() {
       await contractData(contractClient.POST("/api/v1/knowledge", {
         body: {
           content: content.trim(),
+          enrich_async: false,
           lifecycle_status: createStatus as "accepted" | "candidate" | "observation",
           origin: createOrigin.trim() || undefined,
           space_id: spaceId,
@@ -710,6 +714,7 @@ export function KnowledgeConsole() {
         body: {
           change_summary: "Updated through the management console",
           content: editContent.trim(),
+          enrich_async: false,
           expected_version: editing.version,
           tags: editTags.split(",").map((value) => value.trim()).filter(Boolean),
           title: editTitle.trim(),
@@ -942,13 +947,59 @@ export function KnowledgeConsole() {
 
 type RetrievalHit = RetrievalResponse["hits"][number];
 type EvidenceDetail = components["schemas"]["EvidenceDetail"];
+type KnowledgeDetailSummary = Pick<KnowledgeDetail, "content" | "id" | "space_id" | "title" | "version">;
+
+function RevisionDiffPanel({ after, before, spaceName }: { after: KnowledgeDetailSummary | null; before: EvidenceDetail | null; spaceName: string }) {
+  const unchanged = before !== null && after !== null && before.content === after.content && before.title === after.title;
+  return (
+    <div aria-live="polite" className="revision-diff">
+      <div className="revision-diff-columns">
+        <article className="revision-diff-column">
+          <p className="console-eyebrow">Before · cited revision</p>
+          {before ? (
+            <>
+              <h4>{before.title}</h4>
+              <p className="revision-diff-meta">{spaceName} · v{before.version ?? "—"}{before.superseded ? " · superseded" : ""}</p>
+              <pre>{before.content === "" ? "—" : before.content}</pre>
+              <dl className="evidence-detail">
+                <div><dt>Revision</dt><dd><ShortIdentifier label="Before revision ID" value={before.revision_id} /></dd></div>
+                <div><dt>Citation</dt><dd className="evidence-citation"><span className="evidence-citation-text">{before.citation_uri}</span><CopyButton label="Copy before citation URI" value={before.citation_uri} /></dd></div>
+              </dl>
+            </>
+          ) : <p className="list-context-line">The cited revision is unavailable. It may have been removed or sit outside your access.</p>}
+        </article>
+        <article className="revision-diff-column">
+          <p className="console-eyebrow">After · current version</p>
+          {after ? (
+            <>
+              <h4>{after.title}</h4>
+              <p className="revision-diff-meta">{spaceName} · v{after.version}</p>
+              <pre>{after.content === "" ? "—" : after.content}</pre>
+              <dl className="evidence-detail">
+                <div><dt>Item</dt><dd><ShortIdentifier label="Knowledge item ID" value={after.id} /></dd></div>
+              </dl>
+            </>
+          ) : <p className="list-context-line">The current version is unavailable. It may have been archived or sit outside your access.</p>}
+        </article>
+      </div>
+      {unchanged ? <p className="list-context-line" role="status">No content changes between the cited revision and the current version.</p> : null}
+    </div>
+  );
+}
 
 function EvidenceResultCard({ hit, spaceName }: { hit: RetrievalHit; spaceName: string }) {
   const [evidence, setEvidence] = useState<EvidenceDetail | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [loadingEvidence, setLoadingEvidence] = useState(false);
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const [evidenceRequestId, setEvidenceRequestId] = useState<string | null>(null);
+  const [diffOpen, setDiffOpen] = useState(false);
+  const [current, setCurrent] = useState<KnowledgeDetailSummary | null>(null);
+  const [loadingDiff, setLoadingDiff] = useState(false);
+  const [diffError, setDiffError] = useState<string | null>(null);
+  const [diffRequestId, setDiffRequestId] = useState<string | null>(null);
   const isDocument = hit.source_type === "document_chunk";
+  const isKnowledge = !isDocument;
 
   const loadEvidence = useCallback(async () => {
     if (evidence || loadingEvidence) {
@@ -957,6 +1008,7 @@ function EvidenceResultCard({ hit, spaceName }: { hit: RetrievalHit; spaceName: 
     }
     setLoadingEvidence(true);
     setEvidenceError(null);
+    setEvidenceRequestId(null);
     try {
       const detail = isDocument
         ? await contractData(contractClient.GET("/api/v1/evidence/documents/{document_id}/revisions/{revision_id}", {
@@ -969,10 +1021,46 @@ function EvidenceResultCard({ hit, spaceName }: { hit: RetrievalHit; spaceName: 
       setExpanded(true);
     } catch (loadError) {
       setEvidenceError(message(loadError));
+      if (loadError instanceof ApiError && loadError.requestId) {
+        setEvidenceRequestId(loadError.requestId);
+      }
     } finally {
       setLoadingEvidence(false);
     }
   }, [evidence, hit.canonical_id, hit.revision_id, isDocument, loadingEvidence]);
+
+  const loadDiff = useCallback(async () => {
+    if (!isKnowledge) {
+      return;
+    }
+    if (diffOpen) {
+      setDiffOpen(false);
+      return;
+    }
+    setDiffOpen(true);
+    setDiffError(null);
+    setDiffRequestId(null);
+    if (current || loadingDiff) {
+      return;
+    }
+    if (!evidence && !loadingEvidence) {
+      await loadEvidence();
+    }
+    setLoadingDiff(true);
+    try {
+      const detail = await contractData(contractClient.GET("/api/v1/knowledge/{item_id}", {
+        params: { path: { item_id: hit.canonical_id } },
+      }));
+      setCurrent({ content: detail.content, id: detail.id, space_id: detail.space_id, title: detail.title, version: detail.version });
+    } catch (loadError) {
+      setDiffError(message(loadError));
+      if (loadError instanceof ApiError && loadError.requestId) {
+        setDiffRequestId(loadError.requestId);
+      }
+    } finally {
+      setLoadingDiff(false);
+    }
+  }, [current, diffOpen, evidence, hit.canonical_id, isKnowledge, loadEvidence, loadingDiff, loadingEvidence]);
 
   return (
     <article className="result-card" key={`${hit.source_type}-${hit.canonical_id}`}>
@@ -985,9 +1073,14 @@ function EvidenceResultCard({ hit, spaceName }: { hit: RetrievalHit; spaceName: 
           <button aria-expanded={expanded} aria-label={`${expanded ? "Hide" : "Show"} evidence for ${hit.title}`} className="evidence-toggle-button" disabled={loadingEvidence} onClick={() => void loadEvidence()} type="button">
             {loadingEvidence ? "Loading evidence…" : expanded ? "Hide evidence" : "Show evidence"}
           </button>
+          {isKnowledge ? (
+            <button aria-expanded={diffOpen} aria-label={`${diffOpen ? "Hide" : "Show"} revision changes for ${hit.title}`} className="evidence-toggle-button" disabled={loadingDiff} onClick={() => void loadDiff()} type="button">
+              {loadingDiff ? "Loading changes…" : diffOpen ? "Hide changes" : "Show revision changes"}
+            </button>
+          ) : null}
           {hit.citation_uri ? <CopyButton label="Copy citation URI" value={hit.citation_uri} /> : null}
         </div>
-        {evidenceError ? <p className="inline-error" role="alert">{evidenceError}</p> : null}
+        {evidenceError ? <p className="inline-error" role="alert">{evidenceError}{evidenceRequestId ? <> <ShortIdentifier label="Request ID" value={evidenceRequestId} /></> : null}</p> : null}
         {expanded && evidence ? (
           <dl className="evidence-detail">
             <div><dt>Source</dt><dd>{evidence.space_id} · {evidence.kind.replaceAll("_", " ")}</dd></div>
@@ -995,6 +1088,17 @@ function EvidenceResultCard({ hit, spaceName }: { hit: RetrievalHit; spaceName: 
             <div><dt>Revision</dt><dd><ShortIdentifier label="Revision ID" value={evidence.revision_id} /></dd></div>
             <div><dt>Citation</dt><dd className="evidence-citation"><span className="evidence-citation-text">{evidence.citation_uri}</span><CopyButton label="Copy citation URI" value={evidence.citation_uri} /></dd></div>
           </dl>
+        ) : null}
+        {expanded && !evidence && !evidenceError && !loadingEvidence ? (
+          <div className="console-empty result-empty">
+            <strong>No evidence returned</strong>
+            <span>The cited revision came back empty. Reload the evidence to try again.</span>
+          </div>
+        ) : null}
+        {diffOpen && isKnowledge ? (
+          loadingDiff ? <div className="console-loading"><LoaderCircle className="spin" size={18} /> Loading revision changes…</div>
+          : diffError ? <p className="inline-error" role="alert">{diffError}{diffRequestId ? <> <ShortIdentifier label="Request ID" value={diffRequestId} /></> : null}</p>
+          : <RevisionDiffPanel after={current} before={evidence} spaceName={spaceName} />
         ) : null}
       </div>
       <span className="score-pill">{Number.isFinite(hit.rank_score) ? `${Math.round(Math.max(0, Math.min(1, hit.rank_score)) * 100)}%` : "—"}</span>

@@ -446,6 +446,7 @@ describe("management console", () => {
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/knowledge", {
       body: {
         content: "Turn the red handle clockwise.",
+        enrich_async: false,
         lifecycle_status: "accepted",
         space_id: "global",
         tags: ["home"],
@@ -611,6 +612,7 @@ describe("management console", () => {
       body: {
         change_summary: "Updated through the management console",
         content: "Turn clockwise, then close the main tap.",
+        enrich_async: false,
         expected_version: 1,
         tags: ["home"],
         title: "Water valve",
@@ -814,6 +816,129 @@ describe("management console", () => {
     expect(within(detail as HTMLElement).getByText("v3 · superseded")).toBeInTheDocument();
     expect(requested).toContain("/api/v1/evidence/documents/doc-1/revisions/rev-9");
     expect(requested).not.toContain("/api/v1/evidence/knowledge/doc-1/revisions/rev-9");
+  });
+
+  it("compares a cited knowledge revision against the current version", async () => {
+    navigation.search = "";
+    const requested: string[] = [];
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      requested.push(path);
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }] } as never;
+      }
+      if (path === "/api/v1/retrieval/search" && options?.method === "POST") {
+        return {
+          hits: [{ canonical_id: "note-1", citation_uri: "openknowledge://spaces/global/knowledge/note-1/revisions/rev-1", content_excerpt: "Turn it.", rank: 1, rank_score: 0.9, revision_id: "rev-1", source_type: "knowledge_revision", space_id: "global", title: "Valve", version: 1 }],
+          health: { semantic_status: "active", degraded_reasons: [] },
+          explanation: { effective_space_ids: ["global"], abstained: false },
+        } as never;
+      }
+      if (path === "/api/v1/evidence/knowledge/note-1/revisions/rev-1") {
+        return {
+          canonical_id: "note-1", chunk_id: null, citation_uri: "openknowledge://spaces/global/knowledge/note-1/revisions/rev-1",
+          content: "Turn it clockwise.", kind: "knowledge_revision", revision_id: "rev-1",
+          space_id: "global", superseded: true, title: "Valve", version: 1,
+        } as never;
+      }
+      if (path === "/api/v1/knowledge/note-1") {
+        return {
+          content: "Turn it clockwise, then close the main valve.", content_excerpt: "Turn it clockwise, then close the main valve.",
+          created_at: "2026-08-20T12:00:00Z", id: "note-1", space_id: "global", tags: [], title: "Valve",
+          updated_at: "2026-08-21T12:00:00Z", version: 2,
+        } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<ExploreConsole />);
+    fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "valve" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search knowledge" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Show revision changes for Valve" }));
+    expect(await screen.findByText("Before · cited revision")).toBeInTheDocument();
+    expect(screen.getByText("After · current version")).toBeInTheDocument();
+    expect(screen.getByText("Family Shared · v1 · superseded")).toBeInTheDocument();
+    expect(screen.getByText("Family Shared · v2")).toBeInTheDocument();
+    expect(screen.getByText("Turn it clockwise.")).toBeInTheDocument();
+    expect(screen.getByText("Turn it clockwise, then close the main valve.")).toBeInTheDocument();
+    expect(requested).toContain("/api/v1/evidence/knowledge/note-1/revisions/rev-1");
+    expect(requested).toContain("/api/v1/knowledge/note-1");
+    expect(await screen.findByRole("button", { name: "Copy before citation URI" })).toBeInTheDocument();
+  });
+
+  it("reports revision fetch failures with the gateway request ID", async () => {
+    navigation.search = "";
+    const { ApiError } = await import("@/lib/api-client");
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }] } as never;
+      }
+      if (path === "/api/v1/retrieval/search" && options?.method === "POST") {
+        return {
+          hits: [{ canonical_id: "note-1", citation_uri: "openknowledge://spaces/global/knowledge/note-1/revisions/rev-1", content_excerpt: "Turn it.", rank: 1, rank_score: 0.9, revision_id: "rev-1", source_type: "knowledge_revision", space_id: "global", title: "Valve", version: 1 }],
+          health: { semantic_status: "active", degraded_reasons: [] },
+          explanation: { effective_space_ids: ["global"], abstained: false },
+        } as never;
+      }
+      if (path === "/api/v1/evidence/knowledge/note-1/revisions/rev-1") {
+        return {
+          canonical_id: "note-1", chunk_id: null, citation_uri: "openknowledge://spaces/global/knowledge/note-1/revisions/rev-1",
+          content: "Turn it.", kind: "knowledge_revision", revision_id: "rev-1",
+          space_id: "global", superseded: false, title: "Valve", version: 1,
+        } as never;
+      }
+      if (path === "/api/v1/knowledge/note-1") {
+        throw new ApiError(503, { error: { code: "upstream_error", message: "Current version unavailable.", type: "upstream_error" }, request_id: "req-diff-1" });
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<ExploreConsole />);
+    fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "valve" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search knowledge" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Show revision changes for Valve" }));
+    expect(await screen.findByText("Current version unavailable.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Request ID req-diff-1")).toHaveAttribute("title", "req-diff-1");
+  });
+
+  it("keeps the revision diff stacked within a narrow viewport", async () => {
+    navigation.search = "";
+    vi.mocked(apiRequest).mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/v1/spaces")) {
+        return { items: [{ id: "global", name: "Family Shared", role: "reader", revision: 1 }] } as never;
+      }
+      if (path === "/api/v1/retrieval/search" && options?.method === "POST") {
+        return {
+          hits: [{ canonical_id: "note-1", citation_uri: "openknowledge://spaces/global/knowledge/note-1/revisions/rev-1", content_excerpt: "Turn it.", rank: 1, rank_score: 0.9, revision_id: "rev-1", source_type: "knowledge_revision", space_id: "global", title: "Valve", version: 1 }],
+          health: { semantic_status: "active", degraded_reasons: [] },
+          explanation: { effective_space_ids: ["global"], abstained: false },
+        } as never;
+      }
+      if (path === "/api/v1/evidence/knowledge/note-1/revisions/rev-1") {
+        return {
+          canonical_id: "note-1", chunk_id: null, citation_uri: "openknowledge://spaces/global/knowledge/note-1/revisions/rev-1",
+          content: "unbrokencontenttoken".repeat(40), kind: "knowledge_revision", revision_id: "rev-1",
+          space_id: "global", superseded: false, title: "Valve", version: 1,
+        } as never;
+      }
+      if (path === "/api/v1/knowledge/note-1") {
+        return {
+          content: "updatedunbrokencontenttoken".repeat(40), content_excerpt: "Updated.",
+          created_at: "2026-08-20T12:00:00Z", id: "note-1", space_id: "global", tags: [], title: "Valve",
+          updated_at: "2026-08-21T12:00:00Z", version: 2,
+        } as never;
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+    render(<ExploreConsole />);
+    fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "valve" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search knowledge" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Show revision changes for Valve" }));
+    const diff = await screen.findByText("Before · cited revision");
+    const columns = diff.closest(".revision-diff")?.querySelector(".revision-diff-columns");
+    expect(columns).toBeInTheDocument();
+    const overflowing = Array.from(diff.closest(".revision-diff")?.querySelectorAll<HTMLElement>("*") ?? []).filter((element) => {
+      const style = getComputedStyle(element);
+      return style.display !== "none" && style.overflowX === "visible" && element.scrollWidth > element.clientWidth + 1;
+    });
+    expect(overflowing).toEqual([]);
   });
 
   it.each([
