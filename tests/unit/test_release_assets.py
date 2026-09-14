@@ -25,6 +25,7 @@ def test_github_actions_are_commit_pinned_and_cover_release_gates() -> None:
     assert "pytest" in quality
     assert "npm test" in quality
     assert "npm run build" in quality
+    assert "tests/integration/test_full_stack_smoke.py" in quality
     assert "gh-action-pip-audit" in security
     assert "npm audit" in security
     assert "trivy-action" in security
@@ -165,10 +166,15 @@ def test_compose_healthcheck_sends_allowed_host() -> None:
 
 def test_compose_worker_has_controlled_egress_without_exposing_postgres() -> None:
     compose = read("compose.yaml")
+    postgres = compose.split("  postgres:")[1].split("\n  migrate:")[0]
     worker = compose.split("\n  worker:")[1].split("\n  web:")[0]
     assert "host.docker.internal" in worker
-    assert "networks: [data]" in worker
+    assert "networks: [data, egress]" in worker
     assert "ports:" not in worker
+    assert "\n  egress:" in compose
+    assert "internal: true" in compose.split("  data:")[1].split("  egress:")[0]
+    assert "networks: [data]" in postgres
+    assert "egress" not in postgres
 
 
 def test_dockerfile_initializes_storage_ownership_for_application_user() -> None:

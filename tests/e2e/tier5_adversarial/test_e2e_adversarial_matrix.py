@@ -52,6 +52,9 @@ def _test_settings() -> Settings:
             "environment": "test",
             "api_keys": [get_valid_api_key()],
             "legacy_api_keys_enabled": True,
+            "quota_requests_per_minute": 600,
+            "quota_burst_requests": 60,
+            "quota_concurrent_requests": 32,
         }
     )
 

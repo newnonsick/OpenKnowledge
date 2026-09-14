@@ -1,22 +1,28 @@
 from __future__ import annotations
 
+import base64
 import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
 import httpx
+import jwt
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from src.gateway.application.security.tokens import APIKeyCodec, SecretValue
+from src.gateway.application.services import oidc_service
 from src.gateway.application.services.api_key_service import APIKeyService
 from src.gateway.application.services.session_service import SessionService
-from src.gateway.config import Settings
+from src.gateway.config import Settings, reset_runtime_settings, set_runtime_settings
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SystemRole
 from src.gateway.infrastructure.database import set_session_factory
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, SpaceMembershipModel
 from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGenerationModel
 from src.gateway.infrastructure.persistence.models import EMBED_DIM, Workspace
 from src.gateway.main import create_app
+from src.gateway.mcp import auth as mcp_auth_module
 from src.gateway.mcp.contracts import MCP_MODERN_PROTOCOL_VERSION
 from src.gateway.mcp.server import build_mcp_server, version_matrix_payload
 from tests.integration.postgres_test_database import isolated_postgres_database
@@ -747,3 +753,381 @@ async def test_mcp_internal_errors_are_sanitized(mcp_provisioned) -> None:
                 assert "postgresql" not in result["content"][0]["text"]
     finally:
         mcp_server_module.MCPToolRuntime.knowledge_search = real_search
+
+
+async def _sdk_tool_call(session, name: str, arguments: dict):
+    result = await session.call_tool(name, arguments)
+    assert result.is_error is False
+    return result.structured_content
+
+
+async def test_mcp_dual_harness_conformance_with_grant_boundary_and_revoke(mcp_provisioned) -> None:
+    from mcp.client.session import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+    from sqlalchemy import select
+
+    from src.gateway.infrastructure.persistence.identity_models import PersonalAPIKeyModel
+    from src.gateway.mcp.contracts import MCP_PINNED_SPEC_VERSION, MCP_TESTED_CLIENTS
+
+    app, factory, full_key, member_a = mcp_provisioned
+    now = datetime.now(timezone.utc)
+    codec = APIKeyCodec({1: SecretValue(PEPPER)}, active_pepper_version=1)
+    async with factory.begin() as session:
+        website_session = await SessionService(session).issue(_member_principal(member_a), now=now, step_up_at=now)
+        created = await APIKeyService(session, codec).create(
+            member_a,
+            family_id=website_session.family_id,
+            name="MCP narrow harness",
+            scopes={"knowledge:read", "knowledge:write"},
+            request_id="mcp-dual-harness-key",
+            now=now,
+            space_grants={"space-a"},
+        )
+        narrow_key = created.secret.reveal()
+    assert MCP_PINNED_SPEC_VERSION == "2026-07-28"
+    assert [entry.client for entry in MCP_TESTED_CLIENTS] == ["python-sdk-mcp==2.2.0", "raw-http-streamable"]
+    assert all(entry.protocol_version == MCP_PINNED_SPEC_VERSION for entry in MCP_TESTED_CLIENTS)
+    async with app.state.mcp_session_manager.run():
+        transport = httpx.ASGITransport(app=app)
+        sdk_http = httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            headers={"Authorization": f"Bearer {full_key}"},
+        )
+        raw_http = httpx.AsyncClient(transport=transport, base_url="http://testserver")
+        async with sdk_http, raw_http:
+            await _initialize(raw_http)
+            async with streamable_http_client(
+                "http://testserver/mcp/", http_client=sdk_http, terminate_on_close=False
+            ) as (read_stream, write_stream):
+                async with ClientSession(read_stream, write_stream) as sdk:
+                    await sdk.initialize()
+                    shared_a = await _sdk_tool_call(
+                        sdk,
+                        "knowledge.create",
+                        {
+                            "space_id": "space-a",
+                            "title": "Dual harness note",
+                            "content": "Written by the SDK harness.",
+                            "tags": ["dual"],
+                            "idempotency_key": f"dual-a-{uuid4()}",
+                        },
+                    )
+                    shared_b = await _sdk_tool_call(
+                        sdk,
+                        "knowledge.create",
+                        {
+                            "space_id": "space-b",
+                            "title": "Dual harness private note",
+                            "content": "Outside the narrow grant.",
+                            "tags": ["dual"],
+                            "idempotency_key": f"dual-b-{uuid4()}",
+                        },
+                    )
+                    found = await _call_tool(
+                        raw_http, 10, "knowledge.search", {"query": "dual harness", "space_ids": ["space-a"]}, api_key=narrow_key
+                    )
+                    assert found["isError"] is False
+                    assert shared_a["id"] in {hit["canonical_id"] for hit in found["structuredContent"]["hits"]}
+                    fetched = await _call_tool(
+                        raw_http,
+                        11,
+                        "knowledge.fetch",
+                        {"citation_uri": (await _sdk_tool_call(sdk, "knowledge.search", {"query": "dual harness", "space_ids": ["space-a"]}))["hits"][0]["citation_uri"]},
+                        api_key=narrow_key,
+                    )
+                    assert fetched["isError"] is False
+                    assert fetched["structuredContent"]["canonical_id"] == shared_a["id"]
+                    written = await _call_tool(
+                        raw_http,
+                        12,
+                        "knowledge.create",
+                        {
+                            "space_id": "space-a",
+                            "title": "Raw harness reply",
+                            "content": "Written by the raw HTTP harness.",
+                            "tags": ["dual"],
+                            "idempotency_key": f"dual-raw-{uuid4()}",
+                        },
+                        api_key=narrow_key,
+                    )
+                    assert written["isError"] is False
+                    denied_write = await _call_tool(
+                        raw_http,
+                        13,
+                        "knowledge.create",
+                        {
+                            "space_id": "space-b",
+                            "title": "nope",
+                            "content": "outside the narrow grant",
+                            "idempotency_key": f"dual-denied-{uuid4()}",
+                        },
+                        api_key=narrow_key,
+                    )
+                    assert denied_write["isError"] is True
+                    assert "resource_unavailable" in denied_write["content"][0]["text"]
+                    private_hits = await _sdk_tool_call(
+                        sdk, "knowledge.search", {"query": "private note", "space_ids": ["space-b"]}
+                    )
+                    private_uri = next(
+                        hit["citation_uri"]
+                        for hit in private_hits["hits"]
+                        if hit["canonical_id"] == shared_b["id"]
+                    )
+                    denied_fetch = await _call_tool(
+                        raw_http,
+                        14,
+                        "knowledge.fetch",
+                        {"citation_uri": private_uri},
+                        api_key=narrow_key,
+                    )
+                    assert denied_fetch["isError"] is True
+                    assert "resource_unavailable" in denied_fetch["content"][0]["text"]
+                    both = await _sdk_tool_call(sdk, "knowledge.search", {"query": "dual harness"})
+                    assert {shared_a["id"], shared_b["id"], written["structuredContent"]["id"]} <= {
+                        hit["canonical_id"] for hit in both["hits"]
+                    }
+                    async with factory.begin() as session:
+                        key_id = await session.scalar(
+                            select(PersonalAPIKeyModel.id).where(
+                                PersonalAPIKeyModel.member_id == member_a,
+                                PersonalAPIKeyModel.name == "MCP narrow harness",
+                            )
+                        )
+                        assert key_id is not None
+                        await APIKeyService(session, codec).revoke(
+                            _member_principal(member_a), key_id, request_id="mcp-dual-revoke"
+                        )
+                    revoked = await _call_tool(
+                        raw_http, 15, "knowledge.search", {"query": "dual harness"}, api_key=narrow_key
+                    )
+                    assert revoked["isError"] is True
+                    assert "invalid_api_key" in revoked["content"][0]["text"]
+                    still_ok = await _sdk_tool_call(sdk, "knowledge.search", {"query": "dual harness"})
+                    assert still_ok["hits"]
+
+
+OIDC_ISSUER = "https://mcp-idp.example.test"
+OIDC_CLIENT_ID = "mcp-remote-harness"
+OIDC_JWK_KID = "mcp-oidc-key-1"
+
+
+def _oidc_jwks(public_key):
+    numbers = public_key.public_numbers()
+    raw_n = numbers.n.to_bytes((numbers.n.bit_length() + 7) // 8, "big")
+    raw_e = numbers.e.to_bytes((numbers.e.bit_length() + 7) // 8, "big")
+    return {
+        OIDC_JWK_KID: {
+            "kty": "RSA",
+            "kid": OIDC_JWK_KID,
+            "use": "sig",
+            "alg": "RS256",
+            "n": base64.urlsafe_b64encode(raw_n).rstrip(b"=").decode(),
+            "e": base64.urlsafe_b64encode(raw_e).rstrip(b"=").decode(),
+        }
+    }
+
+
+def _mint_oidc(private_key, *, groups, audience=OIDC_CLIENT_ID, extra=None):
+    now = int(datetime.now(timezone.utc).timestamp())
+    payload = {
+        "iss": OIDC_ISSUER,
+        "aud": audience,
+        "sub": "mcp-oidc-sub-1",
+        "iat": now,
+        "exp": now + 600,
+        "email": "mcp.harness@example.test",
+        "email_verified": True,
+        "groups": groups,
+    }
+    payload.update(extra or {})
+    pem = private_key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    return jwt.encode(payload, pem, algorithm="RS256", headers={"kid": OIDC_JWK_KID})
+
+
+def _oidc_settings() -> Settings:
+    return Settings(
+        gateway={
+            "environment": "test",
+            "public_base_url": "https://gateway.test",
+            "api_key_peppers": {1: PEPPER},
+            "active_api_key_pepper_version": 1,
+            "trusted_hosts": ["testserver", "gateway.test"],
+            "oidc_enabled": True,
+            "oidc_issuer": OIDC_ISSUER,
+            "oidc_client_id": OIDC_CLIENT_ID,
+            "oidc_client_secret": "test-client-secret-with-length",
+            "oidc_redirect_url": "https://gateway.test/api/v1/auth/oidc/callback",
+            "oidc_group_claim": "groups",
+            "oidc_username_claim": "email",
+            "oidc_group_space_map": {"mcp-oidc": [{"space_id": "space-a", "role": "editor"}]},
+        }
+    )
+
+
+async def _provision_oidc(monkeypatch, jwks):
+    async def _fake_discover(issuer, *, client=None):
+        return oidc_service.OidcEndpoints(
+            authorization_endpoint=f"{issuer}/authorize",
+            token_endpoint=f"{issuer}/token",
+            jwks_uri=f"{issuer}/jwks",
+            issuer=issuer,
+        )
+
+    async def _fake_fetch_jwks(jwks_uri, *, client=None):
+        return dict(jwks)
+
+    monkeypatch.setattr(oidc_service, "discover", _fake_discover)
+    monkeypatch.setattr(oidc_service, "fetch_jwks", _fake_fetch_jwks)
+    oidc_service.clear_jwks_cache()
+    mcp_auth_module.clear_oidc_endpoint_cache()
+    settings = _oidc_settings()
+    async with isolated_postgres_database() as (_, factory):
+        member_a = uuid4()
+        async with factory.begin() as session:
+            session.add(
+                MemberModel(
+                    id=member_a,
+                    username="mcp-owner",
+                    username_normalized="mcp-owner",
+                    display_name="MCP Owner",
+                    status=MemberStatus.ACTIVE.value,
+                    system_role=SystemRole.MEMBER.value,
+                    force_password_change=False,
+                )
+            )
+            session.add(Workspace(id="space-a", name="Space A", created_by_member_id=member_a))
+            session.add(Workspace(id="space-b", name="Space B", created_by_member_id=member_a))
+            session.add(
+                EmbeddingGenerationModel(
+                    id=uuid4(),
+                    purpose="retrieval",
+                    model_id="mcp-test-generation",
+                    dimensions=EMBED_DIM,
+                    status="active",
+                )
+            )
+        app = create_app(settings)
+        set_session_factory(factory)
+        runtime_token = set_runtime_settings(settings)
+        try:
+            yield app, factory
+        finally:
+            set_session_factory(None)
+            reset_runtime_settings(runtime_token)
+
+
+@pytest.fixture()
+async def mcp_provisioned_oidc(monkeypatch):
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwks = _oidc_jwks(private_key.public_key())
+    async for app, factory in _provision_oidc(monkeypatch, jwks):
+        yield app, factory, private_key
+
+
+async def test_mcp_oidc_bearer_accepted_with_audience_check(mcp_provisioned_oidc) -> None:
+    app, _, private_key = mcp_provisioned_oidc
+    full_access = _mint_oidc(private_key, groups=["mcp-oidc"])
+    wrong_audience = _mint_oidc(private_key, groups=["mcp-oidc"], audience="someone-else")
+    async with app.state.mcp_session_manager.run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            await _initialize(client)
+            created = await _call_tool(
+                client,
+                2,
+                "knowledge.create",
+                {
+                    "space_id": "space-a",
+                    "title": "OIDC remote note",
+                    "content": "Written with an OIDC bearer.",
+                    "tags": ["oidc"],
+                    "idempotency_key": f"mcp-oidc-{uuid4()}",
+                },
+                api_key=full_access,
+            )
+            assert created["isError"] is False
+            assert created["structuredContent"]["space_id"] == "space-a"
+            searched = await _call_tool(
+                client, 3, "knowledge.search", {"query": "OIDC remote", "space_ids": ["space-a"]}, api_key=full_access
+            )
+            assert searched["isError"] is False
+            assert created["structuredContent"]["id"] in {
+                hit["canonical_id"] for hit in searched["structuredContent"]["hits"]
+            }
+            rejected = await _call_tool(
+                client, 4, "knowledge.search", {"query": "OIDC remote"}, api_key=wrong_audience
+            )
+            assert rejected["isError"] is True
+            assert "invalid_api_key" in rejected["content"][0]["text"]
+
+
+async def test_mcp_oidc_scope_claim_challenges_writes(mcp_provisioned_oidc) -> None:
+    app, _, private_key = mcp_provisioned_oidc
+    read_only = _mint_oidc(private_key, groups=["mcp-oidc"], extra={"scope": "knowledge:read"})
+    full_scope = _mint_oidc(private_key, groups=["mcp-oidc"])
+    async with app.state.mcp_session_manager.run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            await _initialize(client)
+            allowed_read = await _call_tool(
+                client, 2, "knowledge.search", {"query": "scope probe"}, api_key=read_only
+            )
+            assert allowed_read["isError"] is False
+            challenged = await _call_tool(
+                client,
+                3,
+                "knowledge.create",
+                {
+                    "space_id": "space-a",
+                    "title": "nope",
+                    "content": "read-scoped OIDC bearer",
+                    "idempotency_key": f"mcp-oidc-scope-{uuid4()}",
+                },
+                api_key=read_only,
+            )
+            assert challenged["isError"] is True
+            assert "resource_unavailable" in challenged["content"][0]["text"]
+            allowed_write = await _call_tool(
+                client,
+                4,
+                "knowledge.create",
+                {
+                    "space_id": "space-a",
+                    "title": "OIDC full note",
+                    "content": "unscoped OIDC bearer keeps session scopes",
+                    "idempotency_key": f"mcp-oidc-full-{uuid4()}",
+                },
+                api_key=full_scope,
+            )
+            assert allowed_write["isError"] is False
+
+
+async def test_mcp_oidc_protected_resource_advertises_issuer(mcp_provisioned_oidc) -> None:
+    app, _, _ = mcp_provisioned_oidc
+    async with app.state.mcp_session_manager.run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            protected = await client.get("/.well-known/oauth-protected-resource/mcp")
+            assert protected.status_code == 200
+            assert protected.json()["authorization_servers"] == [OIDC_ISSUER]
+            assert protected.json()["scopes_supported"] == ["knowledge:read", "knowledge:write"]
+            discovery = await client.get("/mcp/discovery")
+            assert discovery.status_code == 200
+            auth = discovery.json()["auth"]
+            assert "oidc_bearer" in auth["schemes"]
+            assert auth["flows"]["oidc_bearer"]["enabled"] is True
+            assert auth["flows"]["oidc_bearer"]["issuer"] == OIDC_ISSUER
+            assert auth["flows"]["oidc_bearer"]["audience"] == OIDC_CLIENT_ID
+            assert auth["flows"]["personal_api_key_bridge"]["use"]
+            versions = await client.get("/mcp/versions")
+            assert versions.status_code == 200
+            assert versions.json()["pinned_spec_version"] == "2026-07-28"
+            assert [entry["client"] for entry in versions.json()["clients"]] == [
+                "python-sdk-mcp==2.2.0",
+                "raw-http-streamable",
+            ]

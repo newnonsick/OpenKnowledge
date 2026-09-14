@@ -8,7 +8,7 @@ from src.gateway.application.services.api_key_service import APIKeyService
 from src.gateway.application.security.tokens import APIKeyCodec, SecretValue
 from src.gateway.application.services.session_service import SessionService
 from src.gateway.config import Settings
-from src.gateway.domain.canonical import CanonicalChatResponse, CanonicalTextBlock, CanonicalUsage
+from src.gateway.domain.canonical import CanonicalChatResponse, CanonicalStreamChunk, CanonicalTextBlock, CanonicalUsage
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SpaceRole, SystemRole
 from src.gateway.infrastructure.database import set_session_factory
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, SpaceMembershipModel
@@ -57,7 +57,14 @@ class StubOrchestrator:
         )
 
     async def orchestrate_chat_stream(self, request, workspace_id="global"):
-        raise AssertionError("streaming must not be used")
+        self.seen.append(request)
+        yield CanonicalStreamChunk(id="chunk-1", model=request.model, delta_content="Convention ")
+        yield CanonicalStreamChunk(id="chunk-2", model=request.model, delta_content="answer.")
+        yield CanonicalStreamChunk(
+            id="chunk-3",
+            model=request.model,
+            usage=CanonicalUsage(prompt_tokens=7, completion_tokens=3, total_tokens=10),
+        )
 
 
 @pytest.fixture()
@@ -177,7 +184,7 @@ async def test_responses_happy_path_string_and_messages(responses_provisioned, m
         ]
 
 
-async def test_responses_rejects_unknown_fields_stream_and_images(responses_provisioned) -> None:
+async def test_responses_rejects_unknown_fields_and_images(responses_provisioned) -> None:
     app, stub, raw_key, _ = responses_provisioned
     calls_before = len(stub.seen)
     transport = httpx.ASGITransport(app=app)
@@ -188,14 +195,6 @@ async def test_responses_rejects_unknown_fields_stream_and_images(responses_prov
             json={"model": "default", "input": "Hi", "max_tokens": 16},
         )
         assert extra.status_code == 422
-
-        streamed = await client.post(
-            "/v1/responses",
-            headers={"Authorization": f"Bearer {raw_key}"},
-            json={"model": "default", "input": "Hi", "stream": True},
-        )
-        assert streamed.status_code == 400
-        assert streamed.json()["error"]["code"] == "unsupported_stream"
 
         image = await client.post(
             "/v1/responses",
@@ -215,6 +214,110 @@ async def test_responses_rejects_unknown_fields_stream_and_images(responses_prov
         )
         assert empty.status_code == 400
         assert len(stub.seen) == calls_before
+
+
+async def test_responses_no_silent_drop_contract() -> None:
+    from src.gateway.presentation.routers import responses as responses_module
+    from src.gateway.presentation.schemas.responses_schemas import ResponsesRequest
+
+    handled = {
+        "model",
+        "input",
+        "stream",
+        "max_output_tokens",
+        "metadata",
+        "workspace_id",
+        "instructions",
+        "tools",
+        "tool_choice",
+        "reasoning",
+        "temperature",
+        "top_p",
+    }
+    schema_fields = set(ResponsesRequest.model_fields)
+    assert schema_fields == handled | set(responses_module.UNSUPPORTED_RESPONSES_FIELDS), (
+        f"schema drift: {schema_fields ^ (handled | set(responses_module.UNSUPPORTED_RESPONSES_FIELDS))}"
+    )
+
+    req = ResponsesRequest(
+        model="default",
+        input="Hi",
+        instructions="Be brief.",
+        tools=[{"type": "function", "function": {"name": "knowledge_search", "description": "d", "parameters": {}}}],
+        tool_choice="auto",
+        reasoning={"effort": "low"},
+        temperature=0.5,
+        top_p=0.9,
+        max_output_tokens=32,
+        metadata={"trace": "abc"},
+        workspace_id="resp-space",
+        stream=True,
+    )
+    canonical = responses_module.responses_request_to_canonical(req)
+    assert canonical.model == "default"
+    assert canonical.system_prompt == "Be brief."
+    assert [t.function.name for t in canonical.tools] == ["knowledge_search"]
+    assert canonical.tool_choice == "auto"
+    assert canonical.temperature == 0.5
+    assert canonical.top_p == 0.9
+    assert canonical.max_tokens == 32
+    assert canonical.stream is True
+    assert canonical.workspace_id == "resp-space"
+    assert canonical.extra_params["metadata"] == {"trace": "abc"}
+    assert canonical.extra_params["reasoning"] == {"effort": "low"}
+
+    for field in responses_module.UNSUPPORTED_RESPONSES_FIELDS:
+        rejected = responses_module.reject_unsupported_field(field)
+        assert rejected.status_code == 400
+        assert field in str(rejected.body.decode())
+
+
+async def test_responses_rejects_explicit_unsupported_fields(responses_provisioned) -> None:
+    app, stub, raw_key, _ = responses_provisioned
+    calls_before = len(stub.seen)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        for field, value in [
+            ("truncation", "auto"),
+            ("previous_response_id", "resp_abc"),
+            ("parallel_tool_calls", False),
+        ]:
+            resp = await client.post(
+                "/v1/responses",
+                headers={"Authorization": f"Bearer {raw_key}"},
+                json={"model": "default", "input": "Hi", field: value},
+            )
+            assert resp.status_code == 400
+            body = resp.json()
+            assert body["error"]["code"] == "unsupported_field"
+            assert body["error"]["param"] == field
+        assert len(stub.seen) == calls_before
+
+
+async def test_responses_streams_multi_chunk_and_done(responses_provisioned) -> None:
+    import json
+
+    app, stub, raw_key, _ = responses_provisioned
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        resp = await client.post(
+            "/v1/responses",
+            headers={"Authorization": f"Bearer {raw_key}"},
+            json={"model": "default", "input": "Hi", "stream": True},
+        )
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers["content-type"]
+        events = [line for line in resp.text.splitlines() if line.startswith("data: ")]
+        payloads = [line[len("data: "):] for line in events]
+        assert payloads[-1] == "[DONE]"
+        decoded = [json.loads(p) for p in payloads[:-1]]
+        types = [d.get("type") for d in decoded]
+        assert types[0] == "response.created"
+        assert types[1] == "response.in_progress"
+        assert types[-1] == "response.completed"
+        deltas = [d for d in decoded if d.get("type") == "response.output_text.delta"]
+        assert [d["delta"] for d in deltas] == ["Convention ", "answer."]
+        assert stub.seen[-1].stream is True
 
 
 async def test_responses_auth_and_model_errors(responses_provisioned) -> None:

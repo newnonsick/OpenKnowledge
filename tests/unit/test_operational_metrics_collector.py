@@ -137,6 +137,51 @@ def test_worker_entrypoint_installs_registry_and_collector() -> None:
     assert "operational_metrics.run_until_stopped(stopping)" in worker
 
 
+async def test_worker_failure_counter_reaches_gateway_metrics_through_shared_file(collector_factory) -> None:
+    from src.gateway.observability import increment_metric, metrics_registry_context
+    from src.gateway.presentation.metrics import MetricsRegistry, render_with_worker_file
+
+    factory, tmp_path = collector_factory
+    worker_registry = MetricsRegistry()
+    metrics_file = tmp_path / "storage" / "metrics" / "worker.prom"
+    collector = OperationalMetricsCollector(
+        factory,
+        worker_registry,
+        interval_seconds=60,
+        metrics_file=metrics_file,
+    )
+
+    worker_token = metrics_registry_context.set(worker_registry)
+    try:
+        await collector.run_once()
+        increment_metric("gateway_ingestion_events_total", event="terminal", outcome="failed")
+        collector._publish()
+    finally:
+        metrics_registry_context.reset(worker_token)
+
+    gateway_registry = MetricsRegistry()
+    combined = render_with_worker_file(gateway_registry, str(metrics_file))
+    assert 'gateway_ingestion_queue_depth{state="queued"} 2' in combined
+    assert 'gateway_ingestion_events_total{event="terminal",outcome="failed"} 1' in combined
+    assert metrics_file.read_text(encoding="utf-8") in combined
+
+
+def test_worker_failure_counter_survives_missing_metrics_file() -> None:
+    from src.gateway.presentation.metrics import MetricsRegistry, render_with_worker_file
+
+    gateway_registry = MetricsRegistry()
+    combined = render_with_worker_file(gateway_registry, "/nonexistent/storage/metrics/worker.prom")
+    assert "gateway_http_active_requests 0" in combined
+
+
+def test_compose_and_settings_share_default_worker_metrics_file() -> None:
+    from src.gateway.config import Settings
+
+    compose = Path("compose.yaml").read_text(encoding="utf-8")
+    assert "WORKER_METRICS_FILE: ${WORKER_METRICS_FILE:-/data/storage/metrics/worker.prom}" in compose
+    assert Settings().gateway.worker_metrics_file == "/data/storage/metrics/worker.prom"
+
+
 def test_operations_summary_no_longer_writes_global_gauges() -> None:
     management = Path("src/gateway/presentation/routers/management.py").read_text(encoding="utf-8")
     assert "gateway_ingestion_queue_depth" not in management

@@ -5,6 +5,7 @@ import httpx
 import pyotp
 from cryptography.fernet import Fernet
 from fastapi import FastAPI
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from src.gateway.application.security.passwords import PasswordService
 from src.gateway.application.services.bootstrap_service import BootstrapService
@@ -47,6 +48,7 @@ async def test_full_stack_smoke_login_rotate_upload_ingest_search_revoke(tmp_pat
         gateway={
             "environment": "test",
             "public_base_url": "https://gateway.test",
+            "trusted_hosts": ["gateway.test"],
             "api_key_peppers": {1: "test-api-key-pepper-with-adequate-length"},
             "active_api_key_pepper_version": 1,
             "mfa_encryption_keys": {1: mfa_key},
@@ -91,12 +93,12 @@ async def test_full_stack_smoke_login_rotate_upload_ingest_search_revoke(tmp_pat
         registry = MetricsRegistry()
         metrics_token = metrics_registry_context.set(registry)
         try:
-            import src.gateway.presentation.routers.management as management_module
+            import src.gateway.application.services.authorized_retrieval_service as retrieval_module
             import src.gateway.application.services.knowledge_management_service as knowledge_module
 
-            original_retrieval_client = management_module.default_retrieval_embedding_client
+            original_retrieval_client = retrieval_module.default_retrieval_embedding_client
             original_knowledge_client = knowledge_module.default_embedding_client
-            management_module.default_retrieval_embedding_client = lambda: _EmbeddingClient()
+            retrieval_module.default_retrieval_embedding_client = lambda: _EmbeddingClient()
             knowledge_module.default_embedding_client = lambda: _EmbeddingClient()
 
             app = FastAPI()
@@ -109,12 +111,19 @@ async def test_full_stack_smoke_login_rotate_upload_ingest_search_revoke(tmp_pat
                 session_factory=factory,
             )
             app.add_middleware(SettingsContextMiddleware)
+            app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.gateway.trusted_hosts)
             app.include_router(management_auth_router)
             app.include_router(management_router)
             set_session_factory(factory)
             try:
                 transport = httpx.ASGITransport(app=app)
                 async with httpx.AsyncClient(transport=transport, base_url="https://gateway.test") as client:
+                    rejected = await client.post(
+                        "/api/v1/auth/login",
+                        headers={"Host": "evil.example"},
+                        json={"username": "admin", "password": temporary_password},
+                    )
+                    assert rejected.status_code == 400
                     first_login = await client.post(
                         "/api/v1/auth/login",
                         json={"username": "admin", "password": temporary_password},
@@ -236,7 +245,7 @@ async def test_full_stack_smoke_login_rotate_upload_ingest_search_revoke(tmp_pat
                     assert denied.status_code in (401, 403, 404)
             finally:
                 set_session_factory(None)
-                management_module.default_retrieval_embedding_client = original_retrieval_client
+                retrieval_module.default_retrieval_embedding_client = original_retrieval_client
                 knowledge_module.default_embedding_client = original_knowledge_client
             assert 'gateway_ingestion_events_total{event="terminal",outcome="succeeded"} 1' in registry.render()
         finally:

@@ -1,6 +1,13 @@
 {
   "version": 2,
   "minimum_lexical_recall": 1.0,
+  "minimum_no_answer_precision": 1.0,
+  "baseline": {
+    "lexical_recall": 1.0,
+    "no_answer_precision": 1.0,
+    "recorded_at": "2026-09-14",
+    "note": "CI regression gate fails when measured recall or no-answer precision drops below these baselines."
+  },
   "cases": [
     {
       "id": "thai-valve-procedure",
@@ -22,6 +29,63 @@
       "distractor_for": "thai-valve-procedure"
     },
     {
+      "id": "thai-backup-window",
+      "slice": "thai",
+      "query": "สำรองข้อมูลทุกคืนกี่โมง",
+      "space_index": 0,
+      "slot": 2,
+      "title": "ตารางสำรองข้อมูล",
+      "content": "ระบบสำรองข้อมูลทุกคืนกี่โมง คำตอบคือเวลาตีสองพร้อมตรวจสอบความถูกต้อง"
+    },
+    {
+      "id": "thai-backup-distractor",
+      "slice": "thai_distractor",
+      "query": "สำรองข้อมูลทุกคืนกี่โมง",
+      "space_index": 0,
+      "slot": 3,
+      "title": "บันทึกสำรองข้อมูลเก่า",
+      "content": "สำรองข้อมูลทุกคืนกี่โมงสำหรับระบบเก่า เคยรันตอนตีสี่โดยไม่ตรวจสอบ",
+      "distractor_for": "thai-backup-window"
+    },
+    {
+      "id": "thai-leave-policy",
+      "slice": "thai",
+      "query": "ลาพักร้อนได้กี่วันต่อปี",
+      "space_index": 0,
+      "slot": 4,
+      "title": "นโยบายการลา",
+      "content": "พนักงานลาพักร้อนได้กี่วันต่อปี คำตอบคือสิบห้าวันต่อปีปฏิทิน"
+    },
+    {
+      "id": "thai-leave-legacy",
+      "slice": "thai",
+      "query": "ลาพักร้อนได้กี่วันต่อปี",
+      "space_index": 0,
+      "slot": 5,
+      "title": "นโยบายการลาเดิม",
+      "content": "พนักงานลาพักร้อนได้กี่วันต่อปีตามระเบียบเดิมคือสิบวันต่อปี",
+      "superseded_by": "thai-leave-policy"
+    },
+    {
+      "id": "thai-expense-form",
+      "slice": "thai",
+      "query": "เบิกค่าเดินทางยื่นแบบฟอร์มอะไร",
+      "space_index": 0,
+      "slot": 6,
+      "title": "การเบิกค่าเดินทาง",
+      "content": "เบิกค่าเดินทางยื่นแบบฟอร์มอะไร ให้ยื่นแบบฟอร์ม EXP-11 พร้อมใบเสร็จตัวจริง"
+    },
+    {
+      "id": "thai-expense-faq",
+      "slice": "thai_distractor",
+      "query": "เบิกค่าเดินทางยื่นแบบฟอร์มอะไร",
+      "space_index": 0,
+      "slot": 7,
+      "title": "คำถามเบิกค่าเดินทาง",
+      "content": "เบิกค่าเดินทางยื่นแบบฟอร์มอะไรเป็นคำถามที่พบบ่อย ดูรายละเอียดในคู่มือหมวดการเงิน",
+      "distractor_for": "thai-expense-form"
+    },
+    {
       "id": "english-runbook",
       "slice": "english",
       "query": "database nightly backup runbook",
@@ -41,6 +105,53 @@
       "superseded_by": "english-runbook"
     },
     {
+      "id": "english-deploy-freeze",
+      "slice": "english",
+      "query": "production deploy freeze calendar",
+      "space_index": 1,
+      "slot": 2,
+      "title": "Deploy freeze calendar",
+      "content": "The production deploy freeze calendar blocks releases during the last week of December"
+    },
+    {
+      "id": "english-deploy-legacy",
+      "slice": "english",
+      "query": "production deploy freeze calendar",
+      "space_index": 1,
+      "slot": 3,
+      "title": "Deploy freeze calendar draft",
+      "content": "The production deploy freeze calendar draft once proposed blocking only Christmas day",
+      "superseded_by": "english-deploy-freeze"
+    },
+    {
+      "id": "english-oncall-escalation",
+      "slice": "english",
+      "query": "oncall escalation path payments",
+      "space_index": 1,
+      "slot": 4,
+      "title": "Oncall escalation path",
+      "content": "The oncall escalation path for payments pages the primary then the secondary within ten minutes"
+    },
+    {
+      "id": "english-oncall-shadow",
+      "slice": "english",
+      "query": "oncall escalation path payments",
+      "space_index": 1,
+      "slot": 5,
+      "title": "Oncall shadowing rota",
+      "content": "The oncall escalation path shadow rota lets new engineers observe payments pages without paging",
+      "distractor_for": "english-oncall-escalation"
+    },
+    {
+      "id": "english-vpn-setup",
+      "slice": "english",
+      "query": "vpn setup new laptop wireguard",
+      "space_index": 1,
+      "slot": 6,
+      "title": "VPN setup",
+      "content": "For vpn setup on a new laptop install wireguard and import the profile from the vault"
+    },
+    {
       "id": "code-retry-guard",
       "slice": "code",
       "query": "ingestion retry backoff lease heartbeat",
@@ -55,9 +166,47 @@
       "query": "ingestion retry backoff lease heartbeat",
       "space_index": 2,
       "slot": 1,
-      "title": "Unrelated scheduler",
-      "content": "def cron_midnight():\n    rotate logs\n    compact segments",
+      "title": "Heartbeat monitor without retry",
+      "content": "def heartbeat_monitor(lease_name):\n    check heartbeat without retry\n    never acquire lease and never backoff on ingestion lag",
       "distractor_for": "code-retry-guard"
+    },
+    {
+      "id": "code-idempotency-key",
+      "slice": "code",
+      "query": "idempotency key mutation replay guard",
+      "space_index": 2,
+      "slot": 2,
+      "title": "Idempotency guard",
+      "content": "def mutate(idempotency_key):\n    check idempotency key store before each mutation\n    replay guard returns the stored outcome on retry"
+    },
+    {
+      "id": "code-idempotency-naive",
+      "slice": "code_distractor",
+      "query": "idempotency key mutation replay guard",
+      "space_index": 2,
+      "slot": 3,
+      "title": "Naive mutation helper",
+      "content": "def mutate_naive(payload):\n    write payload directly\n    no idempotency key mutation replay guard present",
+      "distractor_for": "code-idempotency-key"
+    },
+    {
+      "id": "code-pgvector-hnsw",
+      "slice": "code",
+      "query": "pgvector hnsw ef_search recall tuning",
+      "space_index": 2,
+      "slot": 4,
+      "title": "Vector recall tuning",
+      "content": "Tuning pgvector hnsw ef_search upward when filtered ANN recall drops below the baseline threshold"
+    },
+    {
+      "id": "code-hnsw-legacy",
+      "slice": "code",
+      "query": "pgvector hnsw ef_search recall tuning",
+      "space_index": 2,
+      "slot": 5,
+      "title": "Vector recall tuning draft",
+      "content": "An early pgvector hnsw ef_search recall tuning draft suggested disabling the index scan entirely",
+      "superseded_by": "code-pgvector-hnsw"
     },
     {
       "id": "conflict-current-policy",
@@ -79,6 +228,25 @@
       "superseded_by": "conflict-current-policy"
     },
     {
+      "id": "conflict-expense-cap-current",
+      "slice": "conflict",
+      "query": "team dinner expense cap per person",
+      "space_index": 3,
+      "slot": 2,
+      "title": "Expense cap current",
+      "content": "The team dinner expense cap is forty dollars per person effective this quarter"
+    },
+    {
+      "id": "conflict-expense-cap-legacy",
+      "slice": "conflict",
+      "query": "team dinner expense cap per person",
+      "space_index": 3,
+      "slot": 3,
+      "title": "Expense cap legacy",
+      "content": "The team dinner expense cap was twenty five dollars per person per last year memo",
+      "superseded_by": "conflict-expense-cap-current"
+    },
+    {
       "id": "acl-restricted-secret",
       "slice": "acl",
       "query": "HIDDEN-ORCHID-XYZZY-ACL-9",
@@ -89,6 +257,37 @@
       "visible_to": "hidden_member"
     },
     {
+      "id": "acl-salary-band",
+      "slice": "acl",
+      "query": "HIDDEN-ORCHID-XYZZY-ACL-9 salary band seven",
+      "space_index": 4,
+      "slot": 1,
+      "title": "Salary bands",
+      "content": "HIDDEN-ORCHID-XYZZY-ACL-9 salary band seven details stay inside the hidden space",
+      "visible_to": "hidden_member"
+    },
+    {
+      "id": "acl-revoked-note",
+      "slice": "acl",
+      "query": "HIDDEN-ORCHID-XYZZY-ACL-9 revoked contractor note",
+      "space_index": 4,
+      "slot": 2,
+      "title": "Contractor note",
+      "content": "HIDDEN-ORCHID-XYZZY-ACL-9 revoked contractor note must disappear after access is revoked",
+      "visible_to": "hidden_member",
+      "revoked": true
+    },
+    {
+      "id": "acl-budget-forecast",
+      "slice": "acl",
+      "query": "quarterly budget forecast worksheet",
+      "space_index": 1,
+      "slot": 7,
+      "title": "Budget forecast",
+      "content": "The quarterly budget forecast worksheet lives in the shared space for all members",
+      "visible_to": "member"
+    },
+    {
       "id": "no-answer-query",
       "slice": "no_answer",
       "query": "ZQLX-nebula-harbor-404",
@@ -96,6 +295,26 @@
       "slot": 0,
       "title": "Unrelated filler",
       "content": "Harbor maintenance window notes without the query token",
+      "expect_empty": true
+    },
+    {
+      "id": "no-answer-query-2",
+      "slice": "no_answer",
+      "query": "QRXZ-krypton-vault-909",
+      "space_index": 5,
+      "slot": 1,
+      "title": "Unrelated filler two",
+      "content": "Vault rotation schedule notes without the query token",
+      "expect_empty": true
+    },
+    {
+      "id": "no-answer-query-3",
+      "slice": "no_answer",
+      "query": "WQVM-photon-dock-707",
+      "space_index": 5,
+      "slot": 2,
+      "title": "Unrelated filler three",
+      "content": "Dock capacity planning notes without the query token",
       "expect_empty": true
     }
   ]

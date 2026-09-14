@@ -122,6 +122,7 @@ async def test_hybrid_search_blends_knowledge_and_documents():
             document_repository=d_repo,
             embedding_client=emb_client,
             chunk_size=200,
+            chunk_overlap=50,
         )
         retrieval = RetrievalService(
             knowledge_repo=k_repo,

@@ -158,6 +158,10 @@ async def test_held_out_slices_acl_noanswer_stale_conflict_and_distractors() -> 
         repository = PostgresRetrievalUnitRepository(factory)
         spaces = [f"slice-{index}" for index in range(6)]
 
+        baseline = fixture.get("baseline", {})
+        baseline_recall = float(baseline.get("lexical_recall", minimum_recall))
+        baseline_no_answer = float(baseline.get("no_answer_precision", 1.0))
+
         recall_cases = [
             case
             for case in fixture["cases"]
@@ -165,33 +169,111 @@ async def test_held_out_slices_acl_noanswer_stale_conflict_and_distractors() -> 
             and case["slice"] not in ("thai_distractor", "code_distractor", "acl")
         ]
         recalled = 0
+        missed: list[str] = []
         for case in recall_cases:
             hits = await repository.lexical_search(principal, spaces, case["query"], generation_id, 10, 0.01)
             if _id(case["space_index"], case["slot"], "item") in {hit.canonical_id for hit in hits}:
                 recalled += 1
+            else:
+                missed.append(case["id"])
 
+        recall = recalled / len(recall_cases)
         assert recalled / len(recall_cases) >= minimum_recall
-
-        acl_case = cases["acl-restricted-secret"]
-        visible = await repository.lexical_search(hidden_principal, spaces, acl_case["query"], generation_id, 10, 0.01)
-        assert _id(acl_case["space_index"], acl_case["slot"], "item") in {hit.canonical_id for hit in visible}
-        leaked = await repository.lexical_search(principal, spaces, acl_case["query"], generation_id, 10, 0.01)
-        assert _id(acl_case["space_index"], acl_case["slot"], "item") not in {hit.canonical_id for hit in leaked}
-
-        empty_case = cases["no-answer-query"]
-        no_answer = await repository.lexical_search(principal, spaces, empty_case["query"], generation_id, 10, 0.9)
-        assert not no_answer
-
-        distractor_hits = await repository.lexical_search(
-            principal, spaces, cases["thai-valve-procedure"]["query"], generation_id, 10, 0.0
+        assert recall >= baseline_recall, (
+            f"lexical recall {recall:.3f} dropped below recorded baseline {baseline_recall:.3f}; missed={missed}"
         )
-        found = {hit.canonical_id for hit in distractor_hits}
-        assert _id(0, 0, "item") in found
-        assert _id(0, 1, "item") in found
 
-        conflict_hits = await repository.lexical_search(
-            principal, spaces, cases["conflict-current-policy"]["query"], generation_id, 10, 0.01
+        acl_cases = [case for case in fixture["cases"] if case["slice"] == "acl"]
+        for acl_case in acl_cases:
+            if acl_case.get("visible_to") == "hidden_member":
+                visible = await repository.lexical_search(
+                    hidden_principal, spaces, acl_case["query"], generation_id, 10, 0.01
+                )
+                assert _id(acl_case["space_index"], acl_case["slot"], "item") in {
+                    hit.canonical_id for hit in visible
+                }, acl_case["id"]
+                leaked = await repository.lexical_search(
+                    principal, spaces, acl_case["query"], generation_id, 10, 0.01
+                )
+                assert _id(acl_case["space_index"], acl_case["slot"], "item") not in {
+                    hit.canonical_id for hit in leaked
+                }, acl_case["id"]
+            else:
+                own = await repository.lexical_search(
+                    principal, spaces, acl_case["query"], generation_id, 10, 0.01
+                )
+                assert _id(acl_case["space_index"], acl_case["slot"], "item") in {
+                    hit.canonical_id for hit in own
+                }, acl_case["id"]
+
+        revoked_cases = [case for case in fixture["cases"] if case.get("revoked") is True]
+        assert revoked_cases, "fixture must cover acl-revocation"
+        for revoked_case in revoked_cases:
+            revoked_item = _id(revoked_case["space_index"], revoked_case["slot"], "item")
+            async with factory.begin() as session:
+                session.add(
+                    SpaceMembershipModel(
+                        space_id=f"slice-{revoked_case['space_index']}",
+                        member_id=member_id,
+                        role="reader",
+                    )
+                )
+            granted = await repository.lexical_search(
+                principal, spaces, revoked_case["query"], generation_id, 10, 0.01
+            )
+            assert revoked_item in {hit.canonical_id for hit in granted}, revoked_case["id"]
+            async with factory.begin() as session:
+                await session.execute(
+                    text(
+                        "DELETE FROM space_memberships WHERE space_id = :space_id AND member_id = :member_id"
+                    ),
+                    {
+                        "space_id": f"slice-{revoked_case['space_index']}",
+                        "member_id": member_id,
+                    },
+                )
+            after_revoke = await repository.lexical_search(
+                principal, spaces, revoked_case["query"], generation_id, 10, 0.01
+            )
+            assert revoked_item not in {hit.canonical_id for hit in after_revoke}, revoked_case["id"]
+
+        empty_cases = [case for case in fixture["cases"] if case.get("expect_empty")]
+        assert empty_cases, "fixture must cover no-answer"
+        quiet = 0
+        for empty_case in empty_cases:
+            no_answer = await repository.lexical_search(
+                principal, spaces, empty_case["query"], generation_id, 10, 0.9
+            )
+            if not no_answer:
+                quiet += 1
+        no_answer_precision = quiet / len(empty_cases)
+        assert no_answer_precision >= baseline_no_answer, (
+            f"no-answer precision {no_answer_precision:.3f} dropped below recorded baseline "
+            f"{baseline_no_answer:.3f}"
         )
-        conflict_found = {hit.canonical_id for hit in conflict_hits}
-        assert _id(3, 0, "item") in conflict_found
-        assert _id(3, 1, "item") in conflict_found
+
+        distractor_cases = [case for case in fixture["cases"] if case.get("distractor_for")]
+        assert distractor_cases, "fixture must cover distractors"
+        for distractor_case in distractor_cases:
+            target = cases[distractor_case["distractor_for"]]
+            distractor_hits = await repository.lexical_search(
+                principal, spaces, target["query"], generation_id, 10, 0.0
+            )
+            found = {hit.canonical_id for hit in distractor_hits}
+            assert _id(target["space_index"], target["slot"], "item") in found, distractor_case["id"]
+            assert _id(distractor_case["space_index"], distractor_case["slot"], "item") in found, (
+                distractor_case["id"]
+            )
+
+        stale_cases = [case for case in fixture["cases"] if case.get("superseded_by")]
+        assert stale_cases, "fixture must cover stale/superseded"
+        for stale_case in stale_cases:
+            current = cases[stale_case["superseded_by"]]
+            conflict_hits = await repository.lexical_search(
+                principal, spaces, current["query"], generation_id, 10, 0.01
+            )
+            conflict_found = {hit.canonical_id for hit in conflict_hits}
+            assert _id(current["space_index"], current["slot"], "item") in conflict_found, stale_case["id"]
+            assert _id(stale_case["space_index"], stale_case["slot"], "item") in conflict_found, (
+                stale_case["id"]
+            )

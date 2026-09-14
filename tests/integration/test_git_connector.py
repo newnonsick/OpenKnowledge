@@ -30,6 +30,7 @@ from src.gateway.observability import metrics_registry_context
 from src.gateway.presentation.metrics import MetricsRegistry
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
 from src.gateway.presentation.errors import register_exception_handlers
+from src.gateway.application.services import authorized_retrieval_service as authorized_retrieval_module
 from src.gateway.presentation.routers import management as management_module
 from src.gateway.presentation.routers.management import router
 from src.gateway.presentation.settings_context import SettingsContextMiddleware
@@ -173,7 +174,7 @@ def _fixture_repo(path: Path) -> Path:
 @needs_git
 async def test_git_connector_register_sync_deltas_and_unregister(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(knowledge_management_module, "default_embedding_client", lambda: StubEmbeddingClient())
-    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(authorized_retrieval_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     monkeypatch.setattr(retrieval_unit_repository_module, "EMBED_DIM", EMBED_DIM)
     now = datetime.now(timezone.utc)
     owner_id = uuid4()
@@ -364,7 +365,7 @@ async def test_git_connector_register_sync_deltas_and_unregister(tmp_path, monke
 @needs_git
 async def test_git_connector_rejects_invalid_repo_and_branch(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(knowledge_management_module, "default_embedding_client", lambda: StubEmbeddingClient())
-    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(authorized_retrieval_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     now = datetime.now(timezone.utc)
     owner_id = uuid4()
     reader_id = uuid4()

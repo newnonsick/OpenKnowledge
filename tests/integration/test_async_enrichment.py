@@ -21,6 +21,7 @@ from src.gateway.observability import metrics_registry_context
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
 from src.gateway.presentation.errors import register_exception_handlers
 from src.gateway.presentation.metrics import MetricsRegistry
+from src.gateway.application.services import authorized_retrieval_service as authorized_retrieval_module
 from src.gateway.presentation.routers import management as management_module
 from src.gateway.presentation.routers.management import router
 from src.gateway.presentation.settings_context import SettingsContextMiddleware
@@ -143,7 +144,7 @@ async def _run_worker_once(factory):
 
 async def test_async_create_returns_202_with_lexical_read_before_enrichment(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(knowledge_management_module, "default_embedding_client", lambda: FailingEmbeddingClient())
-    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(authorized_retrieval_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     monkeypatch.setattr(retrieval_unit_repository_module, "EMBED_DIM", EMBED_DIM)
     now = datetime.now(timezone.utc)
     owner_id = uuid4()
@@ -232,7 +233,7 @@ async def test_async_create_returns_202_with_lexical_read_before_enrichment(tmp_
 
 async def test_sync_default_unchanged_and_failed_enrichment_retries(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(knowledge_management_module, "default_embedding_client", lambda: StubEmbeddingClient())
-    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(authorized_retrieval_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     monkeypatch.setattr(retrieval_unit_repository_module, "EMBED_DIM", EMBED_DIM)
     now = datetime.now(timezone.utc)
     owner_id = uuid4()
@@ -340,7 +341,7 @@ async def test_sync_default_unchanged_and_failed_enrichment_retries(tmp_path, mo
 
 async def test_async_update_returns_202_and_tracks_revision(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(knowledge_management_module, "default_embedding_client", lambda: StubEmbeddingClient())
-    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(authorized_retrieval_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     monkeypatch.setattr(retrieval_unit_repository_module, "EMBED_DIM", EMBED_DIM)
     now = datetime.now(timezone.utc)
     owner_id = uuid4()

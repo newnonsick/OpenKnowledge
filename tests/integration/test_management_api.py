@@ -9,6 +9,7 @@ from sqlalchemy import select
 from src.gateway.application.security.tokens import OpaqueTokenCodec
 from src.gateway.application.services.session_service import SessionService
 from src.gateway.application.services import knowledge_management_service as knowledge_management_module
+from src.gateway.application.services import authorized_retrieval_service as authorized_retrieval_module
 from src.gateway.config import Settings
 from src.gateway.infrastructure.persistence import retrieval_unit_repository as retrieval_unit_repository_module
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SpaceRole, SystemRole
@@ -176,7 +177,7 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 lambda: StubEmbeddingClient(),
             )
             monkeypatch.setattr(
-                management_module,
+                authorized_retrieval_module,
                 "default_retrieval_embedding_client",
                 lambda: StubEmbeddingClient(),
             )
@@ -630,7 +631,7 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
 
 async def test_knowledge_listing_and_detail_are_scoped_to_effective_spaces(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(knowledge_management_module, "default_embedding_client", lambda: StubEmbeddingClient())
-    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(authorized_retrieval_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     now = datetime.now(timezone.utc)
     admin_id = uuid4()
     member_id = uuid4()

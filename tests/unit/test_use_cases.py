@@ -197,3 +197,163 @@ async def test_idempotency_conflict_surfaces_as_resource_conflict() -> None:
 
     with pytest.raises(ResourceConflictException):
         await commands.create(ctx, CreateKnowledgeCommand(space_id="s", title="t", content="c"))
+
+
+async def test_mark_reviewed_records_audit_and_replays_idempotently(monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    from src.gateway.application.use_cases import knowledge as knowledge_module
+
+    recorded = []
+
+    class _AuditStub:
+        def __init__(self, repository) -> None:
+            pass
+
+        def record(self, **kwargs):
+            recorded.append(kwargs)
+
+    class _AuthzStub:
+        def __init__(self, session) -> None:
+            pass
+
+        async def authorize_space(self, principal, space_id, action):
+            recorded.append({"authorized": (space_id, action)})
+            from src.gateway.domain.identity import SpaceRole
+
+            return SpaceRole.OWNER
+
+    monkeypatch.setattr(knowledge_module, "AuditService", _AuditStub)
+    monkeypatch.setattr(knowledge_module, "AuthorizationService", _AuthzStub)
+
+    item_id = uuid4()
+    model = MagicMock()
+    model.workspace_id = "s"
+    model.is_deleted = False
+    model.revision = 3
+    session = MagicMock()
+
+    async def _get(model_class, ident):
+        assert ident == item_id
+        return model
+
+    session.get = _get
+    commands = KnowledgeCommands(
+        session,
+        knowledge_factory=lambda _: _KnowledgeStub(session),
+        idempotency_factory=lambda _: _IdempotencyStub(session),
+    )
+    ctx = UseCaseContext(principal=_principal(), policy=EffectiveRuntimePolicy.default(), request_id="r", idempotency_key="k")
+
+    outcome = await commands.mark_reviewed(ctx, item_id)
+
+    assert outcome.replayed is False
+    assert outcome.value == item_id
+    assert {"authorized": ("s", __import__("src.gateway.domain.authorization", fromlist=["Action"]).Action.CONTENT_WRITE)} in recorded
+    assert [entry for entry in recorded if entry.get("action") == "knowledge.reviewed"][0]["resource_id"] == str(item_id)
+
+    replay_commands = KnowledgeCommands(
+        session,
+        knowledge_factory=lambda _: _KnowledgeStub(session),
+        idempotency_factory=lambda _: _ReplayIdempotencyStub(session, item_id),
+    )
+    before = len(recorded)
+    replayed = await replay_commands.mark_reviewed(ctx, item_id)
+
+    assert replayed.replayed is True
+    assert len([entry for entry in recorded if entry.get("action") == "knowledge.reviewed"]) == 1
+    assert len(recorded) == before + 1
+
+
+async def test_mark_reviewed_missing_item_denies_without_audit(monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    from src.gateway.application.use_cases import knowledge as knowledge_module
+
+    class _AuditStub:
+        def __init__(self, repository) -> None:
+            raise AssertionError("audit must not record on denial")
+
+    monkeypatch.setattr(knowledge_module, "AuditService", _AuditStub)
+    session = MagicMock()
+
+    async def _get(model_class, ident):
+        return None
+
+    session.get = _get
+    commands = KnowledgeCommands(
+        session,
+        knowledge_factory=lambda _: _KnowledgeStub(session),
+        idempotency_factory=lambda _: _IdempotencyStub(session),
+    )
+    ctx = UseCaseContext(principal=_principal(), policy=EffectiveRuntimePolicy.default(), request_id="r", idempotency_key="k")
+
+    with pytest.raises(AuthorizationException):
+        await commands.mark_reviewed(ctx, uuid4())
+
+
+async def test_require_profile_alias_matches_route_enforcement() -> None:
+    from src.gateway.application.services.permission_service import require_profile
+    from src.gateway.domain.identity import PermissionProfile
+
+    reader = Principal(
+        subject_id=str(uuid4()),
+        kind=PrincipalKind.API_KEY,
+        system_role=SystemRole.MEMBER,
+        scopes=frozenset({"knowledge:read"}),
+        permission_profile=PermissionProfile.READER,
+    )
+    require_profile(reader, "knowledge.search")
+    with pytest.raises(AuthorizationException):
+        require_profile(reader, "space.chunk_policy")
+    with pytest.raises(AuthorizationException):
+        require_profile(reader, "knowledge.create")
+    with pytest.raises(AuthorizationException):
+        require_profile(reader, "settings.mutate")
+    with pytest.raises(AuthorizationException):
+        require_profile(reader, "space.members.set")
+    service = Principal(
+        subject_id=str(uuid4()),
+        kind=PrincipalKind.SERVICE,
+        system_role=SystemRole.MEMBER,
+        scopes=frozenset({"knowledge:read", "knowledge:write"}),
+        permission_profile=PermissionProfile.IMPORT_WORKER,
+    )
+    require_profile(service, "knowledge.create")
+    with pytest.raises(AuthorizationException):
+        require_profile(service, "space.archive")
+    unprofiled_service = Principal(
+        subject_id=str(uuid4()),
+        kind=PrincipalKind.SERVICE,
+        system_role=SystemRole.MEMBER,
+        scopes=frozenset({"knowledge:read"}),
+    )
+    require_profile(unprofiled_service, "knowledge.search")
+
+
+async def test_sensitive_profile_operations_require_session_principal() -> None:
+    from src.gateway.application.services.permission_service import require_profile
+    from src.gateway.domain.identity import PermissionProfile
+
+    maintainer_key = Principal(
+        subject_id=str(uuid4()),
+        kind=PrincipalKind.API_KEY,
+        system_role=SystemRole.MEMBER,
+        scopes=frozenset({"*"}),
+        credential_id=str(uuid4()),
+        permission_profile=PermissionProfile.TRUSTED_MAINTAINER,
+    )
+    with pytest.raises(AuthorizationException):
+        require_profile(maintainer_key, "space.members.set")
+    with pytest.raises(AuthorizationException):
+        require_profile(maintainer_key, "settings.mutate")
+    require_profile(maintainer_key, "knowledge.update")
+    maintainer_session = Principal(
+        subject_id=str(uuid4()),
+        kind=PrincipalKind.SESSION,
+        system_role=SystemRole.MEMBER,
+        scopes=frozenset({"*"}),
+        credential_id=str(uuid4()),
+        permission_profile=PermissionProfile.TRUSTED_MAINTAINER,
+    )
+    require_profile(maintainer_session, "space.members.set")

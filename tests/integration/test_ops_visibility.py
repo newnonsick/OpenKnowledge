@@ -26,6 +26,7 @@ from src.gateway.domain.entities import KnowledgeRevision as DomainKnowledgeRevi
 from src.gateway.infrastructure.persistence.models import EMBED_DIM, KnowledgeItem, KnowledgeRevision, Workspace
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
 from src.gateway.presentation.errors import register_exception_handlers
+from src.gateway.application.services import authorized_retrieval_service as authorized_retrieval_module
 from src.gateway.presentation.routers import management as management_module
 from src.gateway.presentation.routers.management import router
 from src.gateway.presentation.settings_context import SettingsContextMiddleware
@@ -185,7 +186,7 @@ def _auth_headers(session):
 
 async def test_stale_list_ordering_threshold_space_scope_and_summary(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(knowledge_management_module, "default_embedding_client", lambda: StubEmbeddingClient())
-    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(authorized_retrieval_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     monkeypatch.setattr(retrieval_unit_repository_module, "EMBED_DIM", EMBED_DIM)
     now = datetime.now(timezone.utc)
     owner_id = uuid4()
@@ -284,7 +285,7 @@ async def test_stale_list_ordering_threshold_space_scope_and_summary(tmp_path, m
 
 async def test_reviewed_writes_audit_only_and_replays_idempotently(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(knowledge_management_module, "default_embedding_client", lambda: StubEmbeddingClient())
-    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(authorized_retrieval_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     now = datetime.now(timezone.utc)
     owner_id = uuid4()
     reader_id = uuid4()
@@ -360,7 +361,7 @@ async def test_reviewed_writes_audit_only_and_replays_idempotently(tmp_path, mon
 
 
 async def test_reindex_status_shape_enqueue_idempotency_and_audit(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(authorized_retrieval_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     now = datetime.now(timezone.utc)
     owner_id = uuid4()
     reader_id = uuid4()
@@ -470,7 +471,7 @@ async def test_reindex_status_shape_enqueue_idempotency_and_audit(tmp_path, monk
 
 
 async def test_promote_guards_pending_and_rollback_restores_previous(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(authorized_retrieval_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     now = datetime.now(timezone.utc)
     owner_id = uuid4()
     reader_id = uuid4()
@@ -627,7 +628,7 @@ async def test_promote_guards_pending_and_rollback_restores_previous(tmp_path, m
 
 
 async def test_promote_happy_path_without_pending_and_no_knowledge_mutation(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(authorized_retrieval_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     now = datetime.now(timezone.utc)
     owner_id = uuid4()
     reader_id = uuid4()
@@ -699,7 +700,7 @@ async def test_promote_happy_path_without_pending_and_no_knowledge_mutation(tmp_
 
 
 async def test_reindex_requires_operator_identity(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(authorized_retrieval_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     now = datetime.now(timezone.utc)
     owner_id = uuid4()
     settings = _test_settings(tmp_path)

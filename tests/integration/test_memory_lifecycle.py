@@ -21,6 +21,7 @@ from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGen
 from src.gateway.infrastructure.persistence.models import EMBED_DIM, Workspace
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
 from src.gateway.presentation.errors import register_exception_handlers
+from src.gateway.application.services import authorized_retrieval_service as authorized_retrieval_module
 from src.gateway.presentation.routers import management as management_module
 from src.gateway.presentation.routers.management import router
 from src.gateway.presentation.settings_context import SettingsContextMiddleware
@@ -130,7 +131,7 @@ def _auth_headers(session):
 
 async def test_lifecycle_create_defaults_and_transition_graph(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(knowledge_management_module, "default_embedding_client", lambda: StubEmbeddingClient())
-    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(authorized_retrieval_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     monkeypatch.setattr(retrieval_unit_repository_module, "EMBED_DIM", EMBED_DIM)
     now = datetime.now(timezone.utc)
     owner_id = uuid4()
@@ -267,7 +268,7 @@ async def test_lifecycle_create_defaults_and_transition_graph(tmp_path, monkeypa
 
 async def test_superseded_excluded_from_search_but_evidence_resolves(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(knowledge_management_module, "default_embedding_client", lambda: StubEmbeddingClient())
-    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(authorized_retrieval_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     monkeypatch.setattr(retrieval_unit_repository_module, "EMBED_DIM", EMBED_DIM)
     now = datetime.now(timezone.utc)
     owner_id = uuid4()
@@ -360,7 +361,7 @@ async def test_superseded_excluded_from_search_but_evidence_resolves(tmp_path, m
 
 async def test_lifecycle_transition_requires_write_and_export_round_trip(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(knowledge_management_module, "default_embedding_client", lambda: StubEmbeddingClient())
-    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(authorized_retrieval_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     monkeypatch.setattr(retrieval_unit_repository_module, "EMBED_DIM", EMBED_DIM)
     now = datetime.now(timezone.utc)
     owner_id = uuid4()
@@ -443,7 +444,7 @@ async def test_transition_replay_denied_after_membership_removed_and_overlong_im
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setattr(knowledge_management_module, "default_embedding_client", lambda: StubEmbeddingClient())
-    monkeypatch.setattr(management_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
+    monkeypatch.setattr(authorized_retrieval_module, "default_retrieval_embedding_client", lambda: StubEmbeddingClient())
     monkeypatch.setattr(retrieval_unit_repository_module, "EMBED_DIM", EMBED_DIM)
     now = datetime.now(timezone.utc)
     owner_id = uuid4()
