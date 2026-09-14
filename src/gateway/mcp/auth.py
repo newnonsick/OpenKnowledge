@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.gateway.application.security.tokens import APIKeyCodec, SecretValue
+from src.gateway.application.services import oidc_service
 from src.gateway.application.services.api_key_service import APIKeyService
 from src.gateway.application.services.quota_service import QuotaGuard, quota_service_from_settings
 from src.gateway.config import get_settings
-from src.gateway.domain.exceptions import AuthenticationException, AuthorizationException, QuotaExceededException
+from src.gateway.domain.exceptions import AuthenticationException, AuthorizationException, GatewayException, QuotaExceededException
 from src.gateway.domain.identity import Principal
 from src.gateway.infrastructure.database import get_session_factory
 from src.gateway.presentation.request_context import normalized_request_id
+
+
+_OIDC_ENDPOINT_CACHE: dict[str, oidc_service.OidcEndpoints] = {}
 
 
 class MCPRequestAuthenticator:
@@ -62,9 +68,45 @@ class MCPRequestAuthenticator:
         token = self._bearer_token(headers)
         if token is None:
             raise AuthenticationException("Missing or malformed authentication credentials.")
+        try:
+            factory = self._factory()
+            async with factory.begin() as session:
+                return await APIKeyService(session, self._codec_or_default()).resolve(token)
+        except AuthenticationException:
+            pass
+        return await self._authenticate_oidc(token, headers)
+
+    async def _authenticate_oidc(self, token: str, headers: Mapping[str, str]) -> Principal:
+        gateway = get_settings().gateway
+        if not gateway.oidc_enabled:
+            raise AuthenticationException("Invalid API key provided.")
+        issuer = (gateway.oidc_issuer or "").rstrip("/")
+        if not issuer or not gateway.oidc_client_id:
+            raise AuthenticationException("Invalid API key provided.")
+        endpoints = await _oidc_endpoints(issuer)
+        try:
+            jwks = await oidc_service.fetch_jwks(endpoints.jwks_uri)
+        except GatewayException as exc:
+            raise AuthenticationException("Invalid API key provided.") from exc
         factory = self._factory()
         async with factory.begin() as session:
-            return await APIKeyService(session, self._codec_or_default()).resolve(token)
+            try:
+                tokens, result = await oidc_service.authenticate_callback(
+                    session,
+                    id_token=token,
+                    jwks=jwks,
+                    request_id=self.request_id(headers),
+                    jwks_uri=endpoints.jwks_uri,
+                )
+            except AuthenticationException:
+                raise
+            except GatewayException as exc:
+                raise AuthenticationException("Invalid API key provided.") from exc
+        principal = oidc_service.build_principal(result.member)
+        scopes = _oidc_token_scopes(tokens.claims)
+        if scopes:
+            principal = replace(principal, scopes=frozenset(scopes))
+        return principal
 
     @staticmethod
     def request_id(headers: Mapping[str, str]) -> str:
@@ -78,6 +120,33 @@ class MCPRequestAuthenticator:
         if not candidate or len(candidate) > 128:
             return str(uuid4())
         return candidate
+
+
+async def _oidc_endpoints(issuer: str) -> oidc_service.OidcEndpoints:
+    cached = _OIDC_ENDPOINT_CACHE.get(issuer)
+    if cached is not None:
+        return cached
+    try:
+        endpoints = await oidc_service.discover(issuer)
+    except GatewayException as exc:
+        raise AuthenticationException("Invalid API key provided.") from exc
+    _OIDC_ENDPOINT_CACHE[issuer] = endpoints
+    return endpoints
+
+
+def clear_oidc_endpoint_cache() -> None:
+    _OIDC_ENDPOINT_CACHE.clear()
+
+
+def _oidc_token_scopes(claims: Mapping[str, Any]) -> frozenset[str]:
+    raw = claims.get("scope", claims.get("scp", ()))
+    if isinstance(raw, str):
+        items: list[Any] = raw.split()
+    elif isinstance(raw, (list, tuple)):
+        items = list(raw)
+    else:
+        items = []
+    return frozenset({str(item).strip() for item in items if str(item).strip()})
 
 
 async def require_mcp_scope(principal: Principal, scope: str) -> Principal:

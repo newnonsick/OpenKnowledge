@@ -63,9 +63,11 @@ async def mcp_discovery(request: Request) -> dict[str, Any]:
 async def mcp_protected_resource(request: Request) -> JSONResponse:
     settings = get_settings()
     base_url = str(settings.gateway.public_base_url).rstrip("/") or str(request.base_url).rstrip("/")
+    gateway = settings.gateway
+    issuer = (gateway.oidc_issuer or "").rstrip("/") if gateway.oidc_enabled else ""
     metadata = {
         "resource": f"{base_url}{MCP_PATH}/",
-        "authorization_servers": [],
+        "authorization_servers": [issuer] if issuer else [],
         "scopes_supported": ["knowledge:read", "knowledge:write"],
         "bearer_methods_supported": ["header"],
     }

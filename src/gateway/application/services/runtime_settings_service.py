@@ -33,6 +33,10 @@ class RetrievalRuntimeSettings(BaseModel):
     active_space_boost: float = Field(default=0.08, ge=0, le=1)
     semantic_policy: Literal["prefer", "required", "disabled"] = "prefer"
     hnsw_ef_search: int = Field(default=100, ge=1, le=1000)
+    rerank_enabled: bool = False
+    rerank_overlap_weight: float = Field(default=0.25, ge=0, le=1)
+    rerank_tag_boost: float = Field(default=0.15, ge=0, le=1)
+    rerank_recency_boost: float = Field(default=0.10, ge=0, le=1)
 
     @model_validator(mode="after")
     def validate_branches(self):

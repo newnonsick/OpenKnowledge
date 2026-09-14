@@ -1,5 +1,6 @@
 from collections import defaultdict
 import logging
+from pathlib import Path
 from threading import Lock
 from time import perf_counter
 
@@ -149,6 +150,16 @@ class MetricsRegistry:
     @staticmethod
     def _number(value: float) -> str:
         return str(int(value)) if float(value).is_integer() else f"{value:.9f}"
+
+
+def render_with_worker_file(registry: MetricsRegistry, metrics_file: str | None) -> str:
+    combined = [registry.render()]
+    if metrics_file:
+        try:
+            combined.append(Path(metrics_file).read_text(encoding="utf-8"))
+        except OSError:
+            logger.debug("Worker metrics file is unavailable")
+    return "".join(combined)
 
 
 class MetricsMiddleware:

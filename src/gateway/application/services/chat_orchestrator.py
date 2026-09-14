@@ -90,11 +90,13 @@ class ChatOrchestratorService(IChatOrchestrator):
         max_tool_wall_clock_seconds: Optional[float] = None,
         max_hidden_turn_bytes: int = 8 * 1024 * 1024,
         runtime_policy_provider: Optional[Callable[[Any], Awaitable[EffectiveRuntimePolicy]]] = None,
+        context_assembler_factory: Optional[Callable[[], Any]] = None,
     ) -> None:
         self.llm_client = llm_client
         self.knowledge_service = knowledge_service
         self.retrieval_service = retrieval_service
         self._runtime_policy_provider = runtime_policy_provider
+        self._context_assembler_factory = context_assembler_factory
         self.max_tool_iterations = (
             max_tool_iterations
             if max_tool_iterations is not None
@@ -446,41 +448,47 @@ class ChatOrchestratorService(IChatOrchestrator):
                                 workspace_id, get_settings().gateway.default_workspace_id
                             )
                         )
-                        response = await self.retrieval_service.search(
+                        package = await self._assemble_chat_context(
                             principal,
-                            query,
-                            requested_space_ids=narrow_requested_spaces(
-                                request_scope,
-                                {str(requested_workspace)} if requested_workspace else None,
+                            effective_policy,
+                            query=query,
+                            workspace_id=workspace_id,
+                            request_scope=request_scope,
+                            requested_workspace=(
+                                str(requested_workspace) if requested_workspace else None
                             ),
-                            active_space_id=workspace_id,
-                            limit=limit,
-                            semantic_policy=effective_policy.effective_semantic_policy("prefer"),
-                            tags=(
+                            requested_tags=(
                                 [str(tag) for tag in requested_tags]
                                 if isinstance(requested_tags, list)
                                 else None
                             ),
+                            requested_limit=limit,
                         )
                         content_payload = [
                             {
-                                "id": str(hit.candidate.canonical_id),
-                                "revision_id": str(hit.candidate.revision_id),
-                                "citation": hit.candidate.citation_uri,
-                                "title": hit.candidate.title,
-                                "content": hit.candidate.content,
-                                "score": hit.rank_score,
-                                "source_type": hit.candidate.source_type,
-                                "workspace_id": hit.candidate.space_id,
-                                "version": hit.candidate.version,
+                                "id": snippet.canonical_id,
+                                "revision_id": snippet.revision_id,
+                                "citation": snippet.citation_uri,
+                                "title": snippet.title,
+                                "snippet": snippet.snippet,
+                                "truncated": snippet.truncated,
+                                "rank": snippet.rank,
+                                "source_type": snippet.source_type,
+                                "workspace_id": snippet.space_id,
+                                "version": snippet.version,
+                                "superseded": snippet.superseded,
                             }
-                            for hit in response.hits
+                            for snippet in package.snippets
                         ]
                         health_payload = {
-                            "semantic_status": response.health.semantic_status,
-                            "degraded_reasons": list(response.health.degraded_reasons),
-                            "embedding_coverage": response.health.embedding_coverage,
-                            "abstained": response.explanation.abstained,
+                            "semantic_status": "degraded" if package.degraded else "active",
+                            "status": package.status,
+                            "total_tokens": package.total_tokens,
+                            "budget_tokens": package.budget_tokens,
+                            "estimation_method": package.estimation_method,
+                            "omitted_count": package.omitted_count,
+                            "omitted_reason": package.omitted_reason,
+                            "abstained": package.abstained,
                         }
                         if not effective_policy.retrieval_explanations_enabled:
                             health_payload = None
@@ -571,6 +579,53 @@ class ChatOrchestratorService(IChatOrchestrator):
                 ),
                 is_error=True,
             )
+
+    async def _assemble_chat_context(
+        self,
+        principal: Any,
+        policy: EffectiveRuntimePolicy,
+        *,
+        query: str,
+        workspace_id: str,
+        request_scope: frozenset[str] | None,
+        requested_workspace: str | None,
+        requested_tags: List[str] | None,
+        requested_limit: int | None,
+    ) -> Any:
+        from src.gateway.application.services.context_assembly_service import (
+            AssembleContextQuery,
+            ContextAssembler,
+        )
+        from src.gateway.application.use_cases.context import UseCaseContext
+
+        gateway = get_settings().gateway
+        max_sources = min(
+            requested_limit or gateway.chat_context_max_sources,
+            gateway.chat_context_max_sources,
+        )
+        if self._context_assembler_factory is not None:
+            assembler = self._context_assembler_factory()
+        else:
+            retrieval_service = self.retrieval_service
+            assembler = ContextAssembler(service_factory=lambda: retrieval_service)
+        narrowed_spaces = narrow_requested_spaces(
+            request_scope,
+            {requested_workspace} if requested_workspace else None,
+        )
+        return await assembler.assemble(
+            UseCaseContext(principal=principal, policy=policy),
+            AssembleContextQuery(
+                query=query,
+                space_ids=None if narrowed_spaces is None else tuple(narrowed_spaces),
+                active_space_id=workspace_id,
+                semantic_policy="prefer",
+                max_sources=max_sources,
+                max_snippet_chars=gateway.chat_context_max_snippet_chars,
+                max_total_chars=gateway.chat_context_max_total_chars,
+                max_total_tokens=gateway.chat_context_max_total_tokens,
+                tags=tuple(requested_tags) if requested_tags is not None else None,
+            ),
+        )
 
     async def _execute_internal_tool_bounded(
         self,

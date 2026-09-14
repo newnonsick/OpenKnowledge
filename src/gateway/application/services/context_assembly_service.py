@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -11,6 +12,39 @@ from src.gateway.domain.authorization import narrow_requested_spaces, resolve_re
 from src.gateway.domain.retrieval import RetrievalCandidate
 
 
+TOKEN_ESTIMATION_METHOD = "char-based estimate max(1, len(text)//4); per-model tokenizers differ"
+
+STATUS_OK = "ok"
+STATUS_OVERSIZED = "oversized"
+STATUS_NO_ANSWER = "no_answer"
+
+_WHITESPACE_PATTERN = re.compile(r"\s+")
+
+
+def estimate_tokens(text: str) -> int:
+    return max(1, len(text) // 4)
+
+
+def normalize_text(value: str) -> str:
+    return _WHITESPACE_PATTERN.sub(" ", value.strip().lower())
+
+
+def candidate_is_superseded(candidate: RetrievalCandidate) -> bool:
+    metadata = candidate.source_metadata or {}
+    return metadata.get("lifecycle_status") == "superseded" or metadata.get("superseded") is True
+
+
+def candidate_version(candidate: RetrievalCandidate) -> int:
+    version = candidate.version
+    if isinstance(version, int):
+        return version
+    metadata = candidate.source_metadata or {}
+    raw_version = metadata.get("version")
+    if isinstance(raw_version, int):
+        return raw_version
+    return 0
+
+
 @dataclass(frozen=True, slots=True)
 class AssembleContextQuery:
     query: str
@@ -20,6 +54,7 @@ class AssembleContextQuery:
     max_sources: int = 8
     max_snippet_chars: int = 600
     max_total_chars: int = 8000
+    max_total_tokens: int | None = None
     tags: tuple[str, ...] | None = None
 
 
@@ -34,6 +69,7 @@ class ContextSnippet:
     revision_id: str
     citation_uri: str
     version: int | None
+    source_type: str = "knowledge_revision"
     superseded: bool = False
 
 
@@ -43,11 +79,14 @@ class ContextPackage:
     snippets: tuple[ContextSnippet, ...] = ()
     total_chars: int = 0
     budget_chars: int = 0
+    total_tokens: int = 0
+    budget_tokens: int | None = None
+    status: str = STATUS_OK
     omitted_count: int = 0
     omitted_reason: str | None = None
     abstained: bool = False
     degraded: bool = False
-    estimation_method: str = "characters/4 approximates tokens; per-model tokenizers differ"
+    estimation_method: str = TOKEN_ESTIMATION_METHOD
     generated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -100,6 +139,8 @@ class ContextAssembler:
         require_knowledge_tools(policy)
         if query.max_sources <= 0 or query.max_snippet_chars <= 0 or query.max_total_chars <= 0:
             raise ValueError("Context budgets must be positive")
+        if query.max_total_tokens is not None and query.max_total_tokens <= 0:
+            raise ValueError("Context budgets must be positive")
         default_ws = get_settings().gateway.default_workspace_id
         request_scope = resolve_request_space_scope(query.active_space_id, default_ws)
         result = await self._service_factory().search(
@@ -114,25 +155,64 @@ class ContextAssembler:
             limit=max(query.max_sources * 3, query.max_sources),
             tags=list(query.tags) if query.tags is not None else None,
         )
-        seen: set[str] = set()
-        snippets: list[ContextSnippet] = []
-        total_chars = 0
-        omitted = 0
+        token_budget = query.max_total_tokens
+        seen_sources: set[str] = set()
+        seen_texts: set[str] = set()
+        freshest: dict[str, RetrievalCandidate] = {}
         for hit in result.hits:
             candidate: RetrievalCandidate = hit.candidate
             key = f"{candidate.source_type}:{candidate.canonical_id}"
-            if key in seen:
+            current = freshest.get(key)
+            if current is None or candidate_version(candidate) > candidate_version(current):
+                freshest[key] = candidate
+        ordered_hits = sorted(
+            result.hits,
+            key=lambda hit: (
+                candidate_is_superseded(hit.candidate),
+                hit.rank,
+                str(hit.candidate.canonical_id),
+                str(hit.candidate.unit_id),
+            ),
+        )
+        snippets: list[ContextSnippet] = []
+        total_chars = 0
+        total_tokens = 0
+        omitted = 0
+        status = STATUS_OK
+        for hit in ordered_hits:
+            candidate: RetrievalCandidate = hit.candidate
+            key = f"{candidate.source_type}:{candidate.canonical_id}"
+            if key in seen_sources:
                 omitted += 1
                 continue
-            seen.add(key)
+            if freshest.get(key) is not candidate:
+                omitted += 1
+                continue
+            seen_sources.add(key)
             if len(snippets) >= query.max_sources:
                 omitted += 1
                 continue
             snippet, truncated = query_snippet(candidate.content, query.query, max_chars=query.max_snippet_chars)
+            normalized = normalize_text(snippet)
+            if normalized in seen_texts:
+                omitted += 1
+                continue
             if total_chars + len(snippet) > query.max_total_chars and snippets:
                 omitted += 1
                 continue
+            snippet_tokens = estimate_tokens(snippet)
+            if token_budget is not None and total_tokens + snippet_tokens > token_budget:
+                if snippets:
+                    omitted += 1
+                    continue
+                allowed_chars = max(token_budget * 4, 1)
+                snippet = snippet[:allowed_chars].rstrip()
+                snippet_tokens = estimate_tokens(snippet)
+                truncated = True
+                status = STATUS_OVERSIZED
+            seen_texts.add(normalize_text(snippet))
             total_chars += len(snippet)
+            total_tokens += snippet_tokens
             snippets.append(
                 ContextSnippet(
                     rank=hit.rank,
@@ -144,19 +224,27 @@ class ContextAssembler:
                     revision_id=str(candidate.revision_id),
                     citation_uri=candidate.citation_uri,
                     version=candidate.version,
+                    source_type=candidate.source_type,
+                    superseded=candidate_is_superseded(candidate),
                 )
             )
+        if not snippets:
+            status = STATUS_NO_ANSWER
         omitted_reason = None
         if omitted:
             omitted_reason = f"{omitted} candidate(s) omitted by source-diversity and budget limits"
+        abstained = result.explanation.abstained or not snippets
         return ContextPackage(
             query=result.query,
             snippets=tuple(snippets),
             total_chars=total_chars,
             budget_chars=query.max_total_chars,
+            total_tokens=total_tokens,
+            budget_tokens=token_budget,
+            status=status if not abstained else STATUS_NO_ANSWER,
             omitted_count=omitted,
             omitted_reason=omitted_reason,
-            abstained=result.explanation.abstained or not snippets,
+            abstained=abstained,
             degraded=result.health.semantic_status != "active",
         )
 
@@ -182,12 +270,16 @@ def context_package_response(package: ContextPackage) -> dict:
                 "revision_id": snippet.revision_id,
                 "citation_uri": snippet.citation_uri,
                 "version": snippet.version,
+                "source_type": snippet.source_type,
                 "superseded": snippet.superseded,
             }
             for snippet in package.snippets
         ],
         "total_chars": package.total_chars,
         "budget_chars": package.budget_chars,
+        "total_tokens": package.total_tokens,
+        "budget_tokens": package.budget_tokens,
+        "status": package.status,
         "omitted_count": package.omitted_count,
         "omitted_reason": package.omitted_reason,
         "abstained": package.abstained,

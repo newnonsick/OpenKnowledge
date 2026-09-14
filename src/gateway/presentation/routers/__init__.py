@@ -8,6 +8,7 @@ from .responses import router as responses_router
 from .management_auth import router as management_auth_router
 from .management import router as management_router
 from .models import router as models_router
+from .webhooks import router as webhooks_router
 
 __all__ = [
     "health_router",
@@ -18,4 +19,5 @@ __all__ = [
     "management_auth_router",
     "management_router",
     "files_router",
+    "webhooks_router",
 ]

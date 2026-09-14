@@ -157,7 +157,12 @@ class EmbeddingReembedService:
                 run.updated_at = await session.scalar(select(func.now()))
         return await self.status()
 
-    async def run_batch(self, batch_size: Optional[int] = None) -> ReembedBatch:
+    async def run_batch(
+        self,
+        batch_size: Optional[int] = None,
+        *,
+        generation_id: Optional[UUID] = None,
+    ) -> ReembedBatch:
         size = batch_size or self._batch_size
         for target in REEMBED_TARGETS:
             async with self._session_factory() as session:
@@ -168,9 +173,12 @@ class EmbeddingReembedService:
                 if not rows:
                     await self._complete(session, run)
                     continue
-                generation_id = (
-                    await self._active_generation_id() if target.generation_aware else None
-                )
+                resolved_generation_id = generation_id
+                if target.generation_aware:
+                    if resolved_generation_id is None:
+                        resolved_generation_id = await self._active_generation_id()
+                    else:
+                        await self._require_shadow_generation(session, resolved_generation_id)
                 try:
                     vectors = await self._embedding_client.embed_texts(
                         [row[1] for row in rows]
@@ -185,7 +193,7 @@ class EmbeddingReembedService:
                         f"Embedding provider returned {len(vectors)} vectors for "
                         f"{len(rows)} rows while re-embedding {target.name}."
                     )
-                await self._write_embeddings(session, target, rows, vectors, generation_id)
+                await self._write_embeddings(session, target, rows, vectors, resolved_generation_id)
                 run.cursor_id = rows[-1][0]
                 run.rows_migrated += len(rows)
                 run.last_error_code = None
@@ -254,6 +262,16 @@ class EmbeddingReembedService:
                 )
                 .values(embedding=vector, embedding_generation_id=generation_id)
             )
+
+    async def _require_shadow_generation(self, session: AsyncSession, generation_id: UUID) -> None:
+        status = await session.scalar(
+            select(EmbeddingGenerationModel.status).where(
+                EmbeddingGenerationModel.id == generation_id,
+                EmbeddingGenerationModel.purpose == "retrieval",
+            )
+        )
+        if status != "building":
+            raise RuntimeError("Shadow re-embed requires a building retrieval generation.")
 
     async def _active_generation_id(self) -> UUID:
         async with self._session_factory() as session:

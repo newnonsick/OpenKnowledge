@@ -32,9 +32,11 @@ TOOL_ACTION: dict[str, Action] = {
 }
 
 ROUTE_ACTION: dict[str, Action] = {
+    "chat.execute": Action.CONTENT_READ,
     "space.list": Action.SPACE_READ,
     "space.create": Action.SPACE_CREATE,
     "space.archive": Action.SPACE_ARCHIVE,
+    "space.chunk_policy": Action.SPACE_UPDATE,
     "space.members.list": Action.MEMBERSHIP_MANAGE,
     "space.members.set": Action.MEMBERSHIP_MANAGE,
     "knowledge.search": Action.CONTENT_READ,
@@ -56,10 +58,15 @@ ROUTE_ACTION: dict[str, Action] = {
     "operations.reindex.mutate": Action.CONTENT_WRITE,
     "settings.inspect": Action.SPACE_READ,
     "settings.mutate": Action.MEMBER_ADMIN,
+    "settings.propose": Action.MEMBER_ADMIN,
     "api_key.manage": Action.API_KEY_MANAGE,
     "session.manage": Action.SESSION_MANAGE,
     "member.admin": Action.MEMBER_ADMIN,
 }
+
+
+def require_profile(principal: Principal, operation: str) -> None:
+    require_profile_route(principal, operation)
 
 
 def require_profile_operation(principal: Principal, action: Action) -> None:

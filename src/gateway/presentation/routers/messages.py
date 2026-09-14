@@ -35,11 +35,14 @@ from src.gateway.domain.canonical import (
 )
 from src.gateway.domain.exceptions import (
     AuthenticationException,
+    AuthorizationException,
     GatewayException,
     LLMProviderException,
     ModelNotFoundException,
     ToolExecutionException,
 )
+from src.gateway.domain.identity import Principal
+from src.gateway.application.services.permission_service import require_profile_route
 from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.adapters.http_llm_client import HttpLLMClient
 from src.gateway.infrastructure.persistence.retrieval_unit_repository import PostgresRetrievalUnitRepository
@@ -76,6 +79,13 @@ from src.gateway.presentation.schemas.anthropic_schemas import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["Anthropic Messages"])
+
+
+def _request_principal(http_request: Request) -> Principal:
+    principal = getattr(http_request.state, "principal", None)
+    if principal is None:
+        raise AuthorizationException()
+    return principal
 
 def _canonical_to_upstream_payload(
     canonical_req: CanonicalChatRequest,
@@ -187,6 +197,7 @@ async def create_message(
     model_registry: ModelRegistryService = Depends(get_model_registry),
 ) -> Union[AnthropicMessagesResponse, StreamingResponse, JSONResponse]:
 
+    require_profile_route(_request_principal(http_request), "chat.execute")
     try:
 
         if not request.messages:

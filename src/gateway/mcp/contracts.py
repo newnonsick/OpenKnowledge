@@ -33,6 +33,13 @@ MCP_TOOL_NAMES = (
     "ingestion.control",
 )
 
+MCP_PINNED_SPEC_VERSION = MCP_MODERN_PROTOCOL_VERSION
+
+MCP_AUTH_SCOPES = (
+    "knowledge:read",
+    "knowledge:write",
+)
+
 
 class MCPSearchArguments(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
@@ -115,12 +122,48 @@ class MCPCompatibilityEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class MCPClientCompatibilityEntry:
+    client: str
+    transport: str
+    protocol_version: str
+    tested: bool = True
+    notes: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "client": self.client,
+            "transport": self.transport,
+            "protocol_version": self.protocol_version,
+            "tested": self.tested,
+            "notes": self.notes,
+        }
+
+
+MCP_TESTED_CLIENTS: tuple[MCPClientCompatibilityEntry, ...] = (
+    MCPClientCompatibilityEntry(
+        client="python-sdk-mcp==2.2.0",
+        transport="streamable-http",
+        protocol_version=MCP_PINNED_SPEC_VERSION,
+        notes="ClientSession over streamable_http_client; initialize plus list_tools plus tools/call",
+    ),
+    MCPClientCompatibilityEntry(
+        client="raw-http-streamable",
+        transport="streamable-http",
+        protocol_version=MCP_PINNED_SPEC_VERSION,
+        notes="Raw httpx JSON-RPC 2.0 POST with Accept application/json plus text/event-stream; SSE frame decode",
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
 class MCPVersionMatrix:
     server_name: str = MCP_SERVER_NAME
     sdk_version: str = ""
     latest_handshake_version: str = MCP_LATEST_HANDSHAKE_VERSION
     latest_modern_version: str = MCP_MODERN_PROTOCOL_VERSION
+    pinned_spec_version: str = MCP_PINNED_SPEC_VERSION
     entries: tuple[MCPCompatibilityEntry, ...] = field(default_factory=tuple)
+    clients: tuple[MCPClientCompatibilityEntry, ...] = MCP_TESTED_CLIENTS
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -128,6 +171,7 @@ class MCPVersionMatrix:
             "sdk_version": self.sdk_version,
             "latest_handshake_version": self.latest_handshake_version,
             "latest_modern_version": self.latest_modern_version,
+            "pinned_spec_version": self.pinned_spec_version,
             "protocols": [
                 {
                     "protocol_version": entry.protocol_version,
@@ -139,6 +183,7 @@ class MCPVersionMatrix:
                 }
                 for entry in self.entries
             ],
+            "clients": [entry.as_dict() for entry in self.clients],
         }
 
 
@@ -162,19 +207,43 @@ def default_version_matrix(sdk_version: str = "", *, supported_versions: tuple[s
     return MCPVersionMatrix(sdk_version=sdk_version, entries=entries)
 
 
-def discovery_document(*, base_url: str, version_matrix: MCPVersionMatrix | None = None) -> dict[str, Any]:
+def discovery_document(
+    *,
+    base_url: str,
+    version_matrix: MCPVersionMatrix | None = None,
+    oidc_issuer: str | None = None,
+    oidc_audience: str | None = None,
+) -> dict[str, Any]:
     normalized = base_url.rstrip("/")
     matrix = version_matrix or default_version_matrix()
+    schemes = ["personal_api_key"]
+    if oidc_issuer:
+        schemes.append("oidc_bearer")
     return {
         "server": MCP_SERVER_NAME,
         "endpoint": f"{normalized}{MCP_PATH}",
         "transports": ["streamable-http"],
         "tools": list(MCP_TOOL_NAMES),
         "auth": {
-            "schemes": ["personal_api_key"],
+            "schemes": schemes,
             "header": "Authorization: Bearer <personal-api-key>",
             "alternative_header": "X-API-Key: <personal-api-key>",
             "discovery": f"{normalized}/.well-known/oauth-protected-resource{MCP_PATH}",
+            "scopes_supported": list(MCP_AUTH_SCOPES),
+            "flows": {
+                "personal_api_key_bridge": {
+                    "use": "private and local harnesses",
+                    "header": "Authorization: Bearer <personal-api-key>",
+                    "alternative_header": "X-API-Key: <personal-api-key>",
+                },
+                "oidc_bearer": {
+                    "use": "remote and SSO harnesses",
+                    "enabled": bool(oidc_issuer),
+                    "issuer": oidc_issuer,
+                    "audience": oidc_audience,
+                    "header": "Authorization: Bearer <oidc-access-token>",
+                },
+            },
         },
         "protocol_versions": list(MCP_PROTOCOL_VERSIONS),
         "latest_handshake_version": MCP_LATEST_HANDSHAKE_VERSION,

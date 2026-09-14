@@ -433,7 +433,14 @@ def version_matrix_payload() -> dict[str, Any]:
 
 
 def discovery_payload(base_url: str) -> dict[str, Any]:
+    from src.gateway.config import get_settings
     from src.gateway.mcp.contracts import discovery_document
 
     normalized = base_url.rstrip("/")
-    return discovery_document(base_url=normalized)
+    gateway = get_settings().gateway
+    issuer = (gateway.oidc_issuer or "").rstrip("/") if gateway.oidc_enabled else ""
+    return discovery_document(
+        base_url=normalized,
+        oidc_issuer=issuer or None,
+        oidc_audience=gateway.oidc_client_id if issuer else None,
+    )

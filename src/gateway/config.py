@@ -618,7 +618,7 @@ class GatewaySettings(BaseSettings):
         ),
     )
     worker_metrics_file: str | None = Field(
-        default=None,
+        default="/data/storage/metrics/worker.prom",
         validation_alias=AliasChoices(
             "WORKER_METRICS_FILE",
             "worker_metrics_file",
@@ -744,6 +744,46 @@ class GatewaySettings(BaseSettings):
             "knowledge_system_prompt_custom",
         ),
         description="Custom override for knowledge system prompt directive",
+    )
+    chat_context_max_sources: int = Field(
+        default=5,
+        gt=0,
+        le=20,
+        validation_alias=AliasChoices(
+            "CHAT_CONTEXT_MAX_SOURCES",
+            "chat_context_max_sources",
+        ),
+        description="Maximum sources assembled into internal chat-proxy search results",
+    )
+    chat_context_max_snippet_chars: int = Field(
+        default=600,
+        gt=0,
+        le=4000,
+        validation_alias=AliasChoices(
+            "CHAT_CONTEXT_MAX_SNIPPET_CHARS",
+            "chat_context_max_snippet_chars",
+        ),
+        description="Maximum characters per snippet in internal chat-proxy search results",
+    )
+    chat_context_max_total_chars: int = Field(
+        default=8000,
+        gt=0,
+        le=60000,
+        validation_alias=AliasChoices(
+            "CHAT_CONTEXT_MAX_TOTAL_CHARS",
+            "chat_context_max_total_chars",
+        ),
+        description="Maximum total characters across internal chat-proxy search results",
+    )
+    chat_context_max_total_tokens: int = Field(
+        default=2000,
+        gt=0,
+        le=15000,
+        validation_alias=AliasChoices(
+            "CHAT_CONTEXT_MAX_TOTAL_TOKENS",
+            "chat_context_max_total_tokens",
+        ),
+        description="Maximum estimated tokens across internal chat-proxy search results",
     )
 
     @field_validator("api_keys", mode="before")

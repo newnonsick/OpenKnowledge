@@ -476,6 +476,7 @@ class KnowledgeRepository(IKnowledgeRepository):
                     "knowledge_revision_id": str(revision.id),
                     "version": revision.version,
                     "tags": list(revision.tags or []),
+                    "updated_at": (getattr(revision, "created_at", None) or now).isoformat(),
                 },
                 embedding=revision.embedding,
                 active=True,

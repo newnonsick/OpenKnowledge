@@ -41,8 +41,11 @@ def job_payload(job: IngestionJobModel) -> dict:
     return {
         "id": str(job.id),
         "space_id": job.space_id,
-        "document_id": str(job.document_id),
-        "document_revision_id": str(job.document_revision_id),
+        "job_type": job.job_type,
+        "document_id": str(job.document_id) if job.document_id is not None else None,
+        "document_revision_id": str(job.document_revision_id) if job.document_revision_id is not None else None,
+        "knowledge_item_id": str(job.knowledge_item_id) if job.knowledge_item_id is not None else None,
+        "knowledge_revision_id": str(job.knowledge_revision_id) if job.knowledge_revision_id is not None else None,
         "state": job.state,
         "progress": job.progress,
         "attempt_count": job.attempt_count,

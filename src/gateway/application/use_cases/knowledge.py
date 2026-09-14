@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.gateway.application.services.audit_service import AuditService
 from src.gateway.application.services.authorization_service import AuthorizationService
 from src.gateway.application.services.idempotency_service import IdempotencyService, ReservationStatus
 from src.gateway.application.services.knowledge_management_service import KnowledgeManagementService
@@ -13,6 +14,8 @@ from src.gateway.application.use_cases.context import UseCaseContext, UseCaseOut
 from src.gateway.domain.authorization import Action
 from src.gateway.domain.entities import KnowledgeItem as DomainKnowledgeItem
 from src.gateway.domain.exceptions import AuthorizationException, ResourceConflictException, ValidationException
+from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
+from src.gateway.infrastructure.persistence.models import KnowledgeItem as KnowledgeItemModel
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +233,37 @@ class KnowledgeCommands:
                 reservation.record_id, response_status=204, resource_ids=[str(command.item_id)]
             )
         return UseCaseOutcome(None, reservation.status is ReservationStatus.REPLAY)
+
+    async def mark_reviewed(
+        self,
+        ctx: UseCaseContext,
+        item_id: UUID,
+        *,
+        operation: str = "knowledge.reviewed",
+    ) -> UseCaseOutcome[UUID]:
+        require_mutation_tools(ctx.policy)
+        key = self._write_key(ctx)
+        item = await self._session.get(KnowledgeItemModel, item_id)
+        if item is None or item.is_deleted:
+            raise AuthorizationException()
+        await AuthorizationService(self._session).authorize_space(
+            ctx.principal, item.workspace_id, Action.CONTENT_WRITE
+        )
+        reservation = await self._idempotency(ctx, operation, key, {"item_id": str(item_id)})
+        if reservation.status is not ReservationStatus.REPLAY:
+            AuditService(AuditRepository(self._session)).record(
+                actor_member_id=actor_id(ctx.principal),
+                actor_kind=ctx.principal.kind.value,
+                request_id=ctx.request_id,
+                action="knowledge.reviewed",
+                resource_type="knowledge_item",
+                resource_id=str(item_id),
+                details={"space_id": item.workspace_id, "version": item.revision},
+            )
+            await self._complete(
+                reservation.record_id, response_status=200, resource_ids=[str(item_id)]
+            )
+        return UseCaseOutcome(item_id, reservation.status is ReservationStatus.REPLAY)
 
     async def _idempotency(self, ctx: UseCaseContext, operation: str, key: str, payload: dict):
         reservation = await self._idempotency_factory(self._session).reserve(
