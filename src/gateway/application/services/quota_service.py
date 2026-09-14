@@ -13,7 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.gateway.domain.exceptions import QuotaExceededException
 from src.gateway.domain.identity import Principal, PrincipalKind
-from src.gateway.infrastructure.persistence.identity_models import APIKeyBudgetUsageModel
+from src.gateway.infrastructure.persistence.identity_models import (
+    APIKeyBudgetUsageModel,
+    APIKeyQuotaPolicyModel,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,11 +52,24 @@ class QuotaUsage:
 
 
 def quota_scope(principal: Principal, space_id: str | None) -> tuple[str, str]:
-    if principal.kind is PrincipalKind.API_KEY and principal.credential_id:
+    if principal.kind in (PrincipalKind.API_KEY, PrincipalKind.SERVICE) and principal.credential_id:
         credential = f"api_key:{principal.credential_id}"
     else:
         credential = f"member:{principal.subject_id}"
     return credential, space_id or "*"
+
+
+def _key_uuid(principal: Principal):
+    from uuid import UUID
+
+    if principal.kind not in (PrincipalKind.API_KEY, PrincipalKind.SERVICE):
+        return None
+    if principal.credential_id is None:
+        return None
+    try:
+        return UUID(principal.credential_id)
+    except ValueError:
+        return None
 
 
 class QuotaService:
@@ -129,13 +145,8 @@ class QuotaService:
         storage_bytes: int = 0,
         now: datetime | None = None,
     ) -> None:
-        if principal.kind is not PrincipalKind.API_KEY or principal.credential_id is None:
-            return
-        try:
-            from uuid import UUID
-
-            key_id = UUID(principal.credential_id)
-        except ValueError:
+        key_id = _key_uuid(principal)
+        if key_id is None:
             return
         current_time = now or datetime.now(timezone.utc)
         window_start = current_time.replace(second=0, microsecond=0)
@@ -176,13 +187,8 @@ class QuotaService:
         space_id: str,
         now: datetime | None = None,
     ) -> QuotaUsage | None:
-        if principal.kind is not PrincipalKind.API_KEY or principal.credential_id is None:
-            return None
-        try:
-            from uuid import UUID
-
-            key_id = UUID(principal.credential_id)
-        except ValueError:
+        key_id = _key_uuid(principal)
+        if key_id is None:
             return None
         current_time = now or datetime.now(timezone.utc)
         window_start = current_time.replace(second=0, microsecond=0)
@@ -196,6 +202,7 @@ class QuotaService:
             )
         except (OperationalError, ProgrammingError):
             return None
+        policy = await self.effective_policy(session, principal, space_id=space_id)
         inflight = await self.in_flight(principal, space_id=space_id)
         return QuotaUsage(
             credential_id=principal.credential_id,
@@ -204,10 +211,10 @@ class QuotaService:
             request_count=row.request_count if row is not None else 0,
             token_count=row.token_count if row is not None else 0,
             storage_bytes=row.storage_bytes if row is not None else 0,
-            requests_limit=self._policy.requests_per_minute,
-            tokens_limit=self._policy.tokens_per_minute,
-            storage_limit=self._policy.storage_bytes,
-            concurrent_limit=self._policy.concurrent_requests,
+            requests_limit=policy.requests_per_minute,
+            tokens_limit=policy.tokens_per_minute,
+            storage_limit=policy.storage_bytes,
+            concurrent_limit=policy.concurrent_requests,
             concurrent_in_flight=inflight,
         )
 
@@ -222,6 +229,149 @@ class QuotaService:
         except (OperationalError, ProgrammingError):
             await session.rollback()
             return 0
+
+    async def effective_policy(
+        self,
+        session: AsyncSession,
+        principal: Principal,
+        *,
+        space_id: str | None = None,
+    ) -> QuotaPolicy:
+        key_id = _key_uuid(principal)
+        if key_id is None:
+            return self._policy
+        scope_space = space_id or "*"
+        try:
+            row = await session.scalar(
+                select(APIKeyQuotaPolicyModel).where(
+                    APIKeyQuotaPolicyModel.api_key_id == key_id,
+                    APIKeyQuotaPolicyModel.space_id == scope_space,
+                )
+            )
+            if row is None and scope_space != "*":
+                row = await session.scalar(
+                    select(APIKeyQuotaPolicyModel).where(
+                        APIKeyQuotaPolicyModel.api_key_id == key_id,
+                        APIKeyQuotaPolicyModel.space_id == "*",
+                    )
+                )
+        except (OperationalError, ProgrammingError):
+            return self._policy
+        if row is None:
+            return self._policy
+        window = (
+            timedelta(seconds=row.window_seconds)
+            if row.window_seconds is not None
+            else self._policy.window
+        )
+        return QuotaPolicy(
+            requests_per_minute=row.requests_per_minute or self._policy.requests_per_minute,
+            concurrent_requests=row.concurrent_requests or self._policy.concurrent_requests,
+            tokens_per_minute=row.tokens_per_minute or self._policy.tokens_per_minute,
+            storage_bytes=row.storage_bytes or self._policy.storage_bytes,
+            burst_requests=row.burst_requests if row.burst_requests is not None else self._policy.burst_requests,
+            window=window,
+        )
+
+    async def set_policy_override(
+        self,
+        session: AsyncSession,
+        principal: Principal,
+        *,
+        space_id: str | None = None,
+        requests_per_minute: int | None = None,
+        tokens_per_minute: int | None = None,
+        storage_bytes: int | None = None,
+        concurrent_requests: int | None = None,
+        burst_requests: int | None = None,
+        window_seconds: int | None = None,
+    ) -> APIKeyQuotaPolicyModel:
+        key_id = _key_uuid(principal)
+        if key_id is None:
+            raise ValueError("Quota overrides require an API key or service credential")
+        for label, value in (
+            ("requests_per_minute", requests_per_minute),
+            ("tokens_per_minute", tokens_per_minute),
+            ("storage_bytes", storage_bytes),
+            ("concurrent_requests", concurrent_requests),
+            ("window_seconds", window_seconds),
+        ):
+            if value is not None and value <= 0:
+                raise ValueError(f"Quota override {label} must be positive")
+        if burst_requests is not None and burst_requests < 0:
+            raise ValueError("Quota override burst_requests must not be negative")
+        scope_space = space_id or "*"
+        row = await session.scalar(
+            select(APIKeyQuotaPolicyModel).where(
+                APIKeyQuotaPolicyModel.api_key_id == key_id,
+                APIKeyQuotaPolicyModel.space_id == scope_space,
+            )
+        )
+        if row is None:
+            row = APIKeyQuotaPolicyModel(api_key_id=key_id, space_id=scope_space)
+            session.add(row)
+        row.requests_per_minute = requests_per_minute
+        row.tokens_per_minute = tokens_per_minute
+        row.storage_bytes = storage_bytes
+        row.concurrent_requests = concurrent_requests
+        row.burst_requests = burst_requests
+        row.window_seconds = window_seconds
+        row.updated_at = datetime.now(timezone.utc)
+        await session.flush()
+        return row
+
+    async def clear_policy_override(
+        self,
+        session: AsyncSession,
+        principal: Principal,
+        *,
+        space_id: str | None = None,
+    ) -> bool:
+        key_id = _key_uuid(principal)
+        if key_id is None:
+            return False
+        row = await session.scalar(
+            select(APIKeyQuotaPolicyModel).where(
+                APIKeyQuotaPolicyModel.api_key_id == key_id,
+                APIKeyQuotaPolicyModel.space_id == (space_id or "*"),
+            )
+        )
+        if row is None:
+            return False
+        await session.delete(row)
+        await session.flush()
+        return True
+
+    async def check_persistent_window(
+        self,
+        session: AsyncSession,
+        principal: Principal,
+        *,
+        space_id: str,
+        now: datetime | None = None,
+    ) -> None:
+        key_id = _key_uuid(principal)
+        if key_id is None:
+            return
+        policy = await self.effective_policy(session, principal, space_id=space_id)
+        current_time = now or datetime.now(timezone.utc)
+        window_start = current_time.replace(second=0, microsecond=0)
+        try:
+            row = await session.scalar(
+                select(APIKeyBudgetUsageModel).where(
+                    APIKeyBudgetUsageModel.api_key_id == key_id,
+                    APIKeyBudgetUsageModel.space_id == space_id,
+                    APIKeyBudgetUsageModel.window_started_at == window_start,
+                )
+            )
+        except (OperationalError, ProgrammingError):
+            return
+        if row is not None and row.request_count >= policy.requests_per_minute:
+            raise QuotaExceededException(60, quota="requests", limit=policy.requests_per_minute)
+        if row is not None and row.token_count >= policy.tokens_per_minute:
+            raise QuotaExceededException(60, quota="tokens", limit=policy.tokens_per_minute)
+        if row is not None and row.storage_bytes >= policy.storage_bytes:
+            raise QuotaExceededException(60, quota="storage", limit=policy.storage_bytes)
 
 
 @dataclass(slots=True)

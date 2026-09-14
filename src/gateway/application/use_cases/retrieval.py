@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from src.gateway.application.services import authorized_retrieval_service
 from src.gateway.application.services.authorized_retrieval_service import AuthorizedRetrievalService
 from src.gateway.application.services.runtime_settings_service import EffectiveRuntimePolicy
 from src.gateway.application.use_cases.context import UseCaseContext, require_knowledge_tools
 from src.gateway.config import get_settings
 from src.gateway.domain.authorization import narrow_requested_spaces, resolve_request_space_scope
 from src.gateway.domain.retrieval import RetrievalResponse
-from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.database import get_session_factory
 from src.gateway.infrastructure.persistence.retrieval_unit_repository import PostgresRetrievalUnitRepository
 from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings
@@ -85,7 +85,7 @@ class RetrievalQueries:
         self._service_factory = service_factory or (
             lambda: AuthorizedRetrievalService(
                 PostgresRetrievalUnitRepository(get_session_factory()),
-                HTTPEmbeddingClient(),
+                authorized_retrieval_service.default_retrieval_embedding_client(),
                 runtime_settings_provider=load_active_retrieval_settings,
             )
         )

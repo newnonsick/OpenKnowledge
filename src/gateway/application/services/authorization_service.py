@@ -42,7 +42,7 @@ class AuthorizationService:
             SpaceMembershipModel.space_id,
         )
         member_spaces = set(await self._session.scalars(query))
-        if principal is not None and principal.kind is PrincipalKind.API_KEY:
+        if principal is not None and principal.kind in (PrincipalKind.API_KEY, PrincipalKind.SERVICE):
             member_spaces = intersect_key_grants(member_spaces, principal.space_grants)
             if requested is not None:
                 member_spaces &= set(requested)
@@ -61,7 +61,7 @@ class AuthorizationService:
             member_id = UUID(principal.subject_id)
         except ValueError as exc:
             raise AuthorizationException() from exc
-        if principal.kind is PrincipalKind.API_KEY and principal.space_grants is not None:
+        if principal.kind in (PrincipalKind.API_KEY, PrincipalKind.SERVICE) and principal.space_grants is not None:
             if space_id not in principal.space_grants:
                 raise AuthorizationException()
         row = await self._session.execute(

@@ -11,6 +11,7 @@ from uuid import UUID
 from src.gateway.application.ports.clients import IEmbeddingClient
 from src.gateway.application.ports.retrieval import RetrievalUnitRepository
 from src.gateway.application.services.authorization_service import AuthorizationService
+from src.gateway.application.services.reranker import rerank_hits
 from src.gateway.application.services.runtime_settings_service import RetrievalRuntimeSettings
 from src.gateway.domain.exceptions import AuthorizationException, EmbeddingException
 from src.gateway.domain.identity import Principal
@@ -22,6 +23,12 @@ from src.gateway.observability import increment_metric, observe_metric
 
 ScopeResolver = Callable[[Principal, set[str] | None], Awaitable[tuple[str, ...]]]
 RuntimeSettingsProvider = Callable[[Principal], Awaitable[RetrievalRuntimeSettings]]
+
+
+def default_retrieval_embedding_client():
+    from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
+
+    return HTTPEmbeddingClient()
 
 
 class AuthorizedRetrievalService:
@@ -58,6 +65,10 @@ class AuthorizedRetrievalService:
         exact_vector: bool = False,
         hnsw_ef_search: int | None = None,
         tags: Sequence[str] | None = None,
+        rerank_enabled: bool | None = None,
+        rerank_overlap_weight: float | None = None,
+        rerank_tag_boost: float | None = None,
+        rerank_recency_boost: float | None = None,
     ) -> RetrievalResponse:
         normalized_query = query.strip()
         normalized_tags = self._normalize_tags(tags)
@@ -78,6 +89,10 @@ class AuthorizedRetrievalService:
         max_hits_per_source = defaults.max_hits_per_source if max_hits_per_source is None else max_hits_per_source
         active_space_boost = defaults.active_space_boost if active_space_boost is None else active_space_boost
         hnsw_ef_search = defaults.hnsw_ef_search if hnsw_ef_search is None else hnsw_ef_search
+        rerank_enabled = defaults.rerank_enabled if rerank_enabled is None else rerank_enabled
+        rerank_overlap_weight = defaults.rerank_overlap_weight if rerank_overlap_weight is None else rerank_overlap_weight
+        rerank_tag_boost = defaults.rerank_tag_boost if rerank_tag_boost is None else rerank_tag_boost
+        rerank_recency_boost = defaults.rerank_recency_boost if rerank_recency_boost is None else rerank_recency_boost
         self._validate(
             principal,
             normalized_query,
@@ -92,6 +107,9 @@ class AuthorizedRetrievalService:
             max_hits_per_source,
             active_space_boost,
             hnsw_ef_search,
+            rerank_overlap_weight,
+            rerank_tag_boost,
+            rerank_recency_boost,
         )
         total_started = perf_counter()
         outcome = "error"
@@ -201,6 +219,16 @@ class AuthorizedRetrievalService:
                 active_space_boost=active_space_boost,
             )
             observe_metric("gateway_retrieval_duration_seconds", perf_counter() - fusion_started, phase="fusion", outcome="success")
+            if rerank_enabled:
+                rerank_started = perf_counter()
+                hits = rerank_hits(
+                    hits,
+                    normalized_query,
+                    overlap_weight=rerank_overlap_weight,
+                    tag_boost=rerank_tag_boost,
+                    recency_boost=rerank_recency_boost,
+                )
+                observe_metric("gateway_retrieval_duration_seconds", perf_counter() - rerank_started, phase="rerank", outcome="success")
             if semantic_policy == "disabled" or vector_weight == 0.0:
                 semantic_status = "disabled"
             elif degraded_reasons:
@@ -421,6 +449,9 @@ class AuthorizedRetrievalService:
         max_hits_per_source: int,
         active_space_boost: float,
         hnsw_ef_search: int,
+        rerank_overlap_weight: float,
+        rerank_tag_boost: float,
+        rerank_recency_boost: float,
     ) -> None:
         if (
             not principal.active
@@ -435,6 +466,9 @@ class AuthorizedRetrievalService:
         values = (lexical_weight, vector_weight, minimum_lexical_score, minimum_vector_similarity, active_space_boost)
         if any(not math.isfinite(value) or value < 0.0 for value in values):
             raise ValueError("Retrieval weights and thresholds must be finite and non-negative")
+        rerank_values = (rerank_overlap_weight, rerank_tag_boost, rerank_recency_boost)
+        if any(not math.isfinite(value) or value < 0.0 or value > 1.0 for value in rerank_values):
+            raise ValueError("Reranker weights and boosts must be finite and within zero and one")
         if lexical_weight == 0.0 and vector_weight == 0.0:
             raise ValueError("At least one retrieval branch must be enabled")
         if lexical_weight > 100.0 or vector_weight > 100.0 or active_space_boost > 1.0:

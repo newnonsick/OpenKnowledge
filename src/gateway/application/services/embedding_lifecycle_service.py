@@ -8,7 +8,13 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.gateway.application.services.embedding_reembed_service import REEMBED_TARGETS
+from src.gateway.application.services.shadow_evaluation_service import (
+    ShadowEvalReport,
+    ShadowEvalThresholds,
+    ShadowEvaluationService,
+)
 from src.gateway.domain.exceptions import AuthorizationException, ResourceConflictException
+from src.gateway.domain.identity import Principal
 from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGenerationModel
 
 
@@ -74,8 +80,9 @@ def _summarize(generation: EmbeddingGenerationModel) -> GenerationSummary:
 
 
 class EmbeddingGenerationLifecycleService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, *, shadow_evaluator: ShadowEvaluationService | None = None) -> None:
         self._session = session
+        self._shadow_evaluator = shadow_evaluator
 
     async def list_generations(self) -> list[GenerationSummary]:
         rows = list(
@@ -168,12 +175,56 @@ class EmbeddingGenerationLifecycleService:
             "pending_targets": list(pending),
         }
 
+    async def begin_shadow_generation(
+        self,
+        *,
+        model_id: str,
+        dimensions: int,
+    ) -> GenerationSummary:
+        current = await self._session.scalar(
+            select(EmbeddingGenerationModel).where(
+                EmbeddingGenerationModel.purpose == "retrieval",
+                EmbeddingGenerationModel.status == "active",
+            )
+        )
+        if current is not None and current.model_id == model_id and current.dimensions == dimensions:
+            raise ResourceConflictException(
+                "Active generation already uses this embedding configuration.",
+                details={"generation_id": str(current.id)},
+            )
+        shadow = EmbeddingGenerationModel(
+            purpose="retrieval",
+            model_id=model_id,
+            dimensions=dimensions,
+            status="building",
+        )
+        self._session.add(shadow)
+        await self._session.flush()
+        await self._session.refresh(shadow)
+        return _summarize(shadow)
+
+    async def evaluate_shadow(
+        self,
+        principal: Principal,
+        generation_id: UUID,
+        *,
+        thresholds: ShadowEvalThresholds | None = None,
+    ) -> ShadowEvalReport:
+        target = await self._session.get(EmbeddingGenerationModel, generation_id)
+        if target is None or target.purpose != "retrieval" or target.status != "building":
+            raise AuthorizationException()
+        evaluator = self._shadow_evaluator or ShadowEvaluationService(self._session)
+        return await evaluator.evaluate(principal, generation_id, thresholds=thresholds)
+
     async def promote(
         self,
         generation_id: UUID,
         *,
         force: bool,
         now: datetime | None = None,
+        principal: Principal | None = None,
+        shadow_report: ShadowEvalReport | None = None,
+        thresholds: ShadowEvalThresholds | None = None,
     ) -> PromoteOutcome:
         target = await self._session.get(EmbeddingGenerationModel, generation_id)
         if target is None or target.purpose != "retrieval" or target.status != "building":
@@ -192,6 +243,32 @@ class EmbeddingGenerationLifecycleService:
         )
         if current is not None and current.id == target.id:
             return PromoteOutcome(promoted=_summarize(target), retired_id=None, replayed=True)
+        if not force:
+            if current is not None:
+                report = shadow_report
+                if (
+                    report is None
+                    or report.shadow_generation_id != target.id
+                    or report.current_generation_id != current.id
+                ):
+                    if principal is None:
+                        raise ResourceConflictException(
+                            "Promote requires a passing shadow evaluation.",
+                            details={"generation_id": str(generation_id)},
+                        )
+                    evaluator = self._shadow_evaluator or ShadowEvaluationService(self._session)
+                    report = await evaluator.evaluate(principal, target.id, thresholds=thresholds)
+                if not report.allowed:
+                    raise ResourceConflictException(
+                        "Shadow evaluation regressed; promote blocked.",
+                        details={
+                            "generation_id": str(generation_id),
+                            "block_reasons": list(report.block_reasons),
+                            "recall_regression": report.recall_regression,
+                            "shadow_recall": report.shadow.lexical_recall,
+                            "current_recall": report.current.lexical_recall,
+                        },
+                    )
         observed = now or datetime.now(timezone.utc)
         retired_id: UUID | None = None
         if current is not None:

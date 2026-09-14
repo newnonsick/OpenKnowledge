@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 import unicodedata
 
@@ -8,6 +9,7 @@ import unicodedata
 class PrincipalKind(StrEnum):
     SESSION = "session"
     API_KEY = "api_key"
+    SERVICE = "service"
     COMPATIBILITY = "compatibility"
     SYSTEM = "system"
 
@@ -54,6 +56,31 @@ def normalize_username(value: str) -> str:
     if not normalized:
         raise ValueError("Username is required")
     return normalized
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceCredentialSpec:
+    space_grants: frozenset[str]
+    permission_profile: PermissionProfile
+    expires_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not self.space_grants:
+            raise ValueError("Service credentials require at least one space grant")
+        if len(self.space_grants) > 100:
+            raise ValueError("Too many space grants")
+        for space_id in self.space_grants:
+            cleaned = str(space_id).strip()
+            if not cleaned or len(cleaned) > 64:
+                raise ValueError("Invalid space grant")
+        if self.permission_profile is PermissionProfile.HUMAN_ADMIN:
+            raise ValueError("Service credentials must not use the human admin profile")
+        if self.expires_at is not None and self.expires_at.tzinfo is None:
+            raise ValueError("Service credential expiry must be timezone aware")
+
+
+def is_service_principal(principal: Principal) -> bool:
+    return principal.kind is PrincipalKind.SERVICE
 
 
 @dataclass(frozen=True, slots=True)

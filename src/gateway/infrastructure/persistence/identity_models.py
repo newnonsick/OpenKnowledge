@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, func, text
@@ -128,10 +129,14 @@ class PersonalAPIKeyModel(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    is_service: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    service_profile: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     __table_args__ = (
         CheckConstraint("status IN ('active','revoked','expired')", name="ck_personal_api_keys_status"),
         CheckConstraint("pepper_version > 0", name="ck_personal_api_keys_pepper_version"),
+        CheckConstraint("service_profile IS NULL OR service_profile IN ('reader','project_contributor','trusted_maintainer','import_worker')", name="ck_personal_api_keys_service_profile"),
+        CheckConstraint("(is_service = false AND service_profile IS NULL) OR (is_service = true)", name="ck_personal_api_keys_service_kind"),
         Index("ix_personal_api_keys_member_status_page", "member_id", "status", "created_at", "id"),
     )
 
@@ -169,6 +174,29 @@ class APIKeyBudgetUsageModel(Base):
         CheckConstraint("request_count >= 0", name="ck_api_key_budget_usage_requests"),
         CheckConstraint("token_count >= 0", name="ck_api_key_budget_usage_tokens"),
         CheckConstraint("storage_bytes >= 0", name="ck_api_key_budget_usage_storage"),
+    )
+
+
+class APIKeyQuotaPolicyModel(Base):
+    __tablename__ = "api_key_quota_policies"
+
+    api_key_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("personal_api_keys.id", ondelete="CASCADE"), primary_key=True)
+    space_id: Mapped[str] = mapped_column(String(64), primary_key=True, default="*")
+    requests_per_minute: Mapped[int | None] = mapped_column(Integer)
+    tokens_per_minute: Mapped[int | None] = mapped_column(Integer)
+    storage_bytes: Mapped[int | None] = mapped_column(Integer)
+    concurrent_requests: Mapped[int | None] = mapped_column(Integer)
+    burst_requests: Mapped[int | None] = mapped_column(Integer)
+    window_seconds: Mapped[int | None] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("requests_per_minute IS NULL OR requests_per_minute > 0", name="ck_api_key_quota_policies_requests"),
+        CheckConstraint("tokens_per_minute IS NULL OR tokens_per_minute > 0", name="ck_api_key_quota_policies_tokens"),
+        CheckConstraint("storage_bytes IS NULL OR storage_bytes > 0", name="ck_api_key_quota_policies_storage"),
+        CheckConstraint("concurrent_requests IS NULL OR concurrent_requests > 0", name="ck_api_key_quota_policies_concurrency"),
+        CheckConstraint("burst_requests IS NULL OR burst_requests >= 0", name="ck_api_key_quota_policies_burst"),
+        CheckConstraint("window_seconds IS NULL OR window_seconds > 0", name="ck_api_key_quota_policies_window"),
     )
 
 

@@ -592,6 +592,29 @@ class CreatedAPIKey(ContractModel):
     permission_profile: str | None = None
 
 
+class CreatedServiceKey(ContractModel):
+    id: str
+    public_id: str
+    secret: str
+    application_id: str
+    credential_name: str
+    scopes: list[str]
+    expires_at: datetime | None
+    space_grants: list[str]
+    permission_profile: str
+
+
+class QuotaPolicy(ContractModel):
+    api_key_id: str
+    space_id: str
+    requests_per_minute: int | None
+    tokens_per_minute: int | None
+    storage_bytes: int | None
+    concurrent_requests: int | None
+    burst_requests: int | None
+    window_seconds: int | None
+
+
 class CredentialQuotaUsage(ContractModel):
     credential_id: str | None
     space_id: str | None

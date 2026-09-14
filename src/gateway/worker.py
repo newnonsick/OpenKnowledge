@@ -17,6 +17,7 @@ from src.gateway.application.services.operational_metrics_collector import Opera
 from src.gateway.application.services.retention_service import RetentionMaintenanceRunner, RetentionService
 from src.gateway.application.services.storage_consistency_service import StorageConsistencyService
 from src.gateway.application.services.storage_maintenance_runner import StorageMaintenanceRunner
+from src.gateway.application.services.webhook_delivery_service import WebhookDeliveryRunner
 from src.gateway.config import get_settings
 from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.database import close_db_engine, get_worker_session_factory, normalize_database_url, validate_worker_database_role
@@ -118,6 +119,10 @@ async def _run_worker_services(factory, worker_id: str, settings, storage, parse
         batch_size=settings.gateway.retention_batch_size,
         max_batches_per_cycle=settings.gateway.retention_max_batches_per_cycle,
     )
+    webhooks = WebhookDeliveryRunner(
+        factory,
+        worker_id=f"{worker_id}:webhooks",
+    )
     stopping = stop_event or asyncio.Event()
     async with asyncio.TaskGroup() as tasks:
         tasks.create_task(
@@ -134,6 +139,12 @@ async def _run_worker_services(factory, worker_id: str, settings, storage, parse
         )
         tasks.create_task(maintenance.run_until_stopped(stopping))
         tasks.create_task(operational_metrics.run_until_stopped(stopping))
+        tasks.create_task(
+            webhooks.run_until_stopped(
+                stopping,
+                idle_delay_seconds=settings.gateway.worker_idle_delay_seconds,
+            )
+        )
         if settings.gateway.retention_purge_enabled:
             tasks.create_task(retention.run_until_stopped(stopping))
 

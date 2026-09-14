@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 from uuid import UUID
@@ -18,7 +19,6 @@ from src.gateway.application.services.api_key_service import APIKeyService
 from src.gateway.application.services.action_review_service import review_pending_action
 from src.gateway.application.services.ai_management_service import AIManagementService
 from src.gateway.application.services.audit_service import AuditService
-from src.gateway.application.services.authorized_retrieval_service import AuthorizedRetrievalService
 from src.gateway.application.services.authorization_service import AuthorizationService
 from src.gateway.application.services.chunk_policy_service import (
     chunk_policy_payload,
@@ -43,7 +43,6 @@ from src.gateway.application.services.git_connector_service import (
     sync_result_payload,
 )
 from src.gateway.application.services.idempotency_service import IdempotencyService, ReservationStatus
-from src.gateway.application.services.ingestion_job_service import IngestionJobService
 from src.gateway.application.services.knowledge_management_service import KnowledgeManagementService
 from src.gateway.application.services.member_administration_service import MemberAdministrationService
 from src.gateway.application.services.runtime_settings_service import EffectiveRuntimePolicy, RuntimeSettingsService, RuntimeSettingsRevision, RuntimeSettingsValues
@@ -52,32 +51,33 @@ from src.gateway.application.services.space_service import SpaceService
 from src.gateway.application.use_cases import (
     CreateKnowledgeCommand,
     DeleteKnowledgeCommand,
+    GetIngestionJobQuery,
+    IngestionUseCases,
     KnowledgeCommands,
+    ListIngestionJobsQuery,
+    MutateIngestionJobCommand,
     RetrievalQueries,
     SearchKnowledgeQuery,
     TransitionKnowledgeCommand,
     UpdateKnowledgeCommand,
     UseCaseContext,
     redact_retrieval_payload,
-    retrieval_payload,
 )
 from src.gateway.application.services.permission_service import require_profile_route, require_profile_tool
 from src.gateway.config import get_settings
 from src.gateway.domain.exceptions import AuthenticationException, AuthorizationException, ResourceConflictException, ValidationException
-from src.gateway.domain.authorization import Action, narrow_requested_spaces, resolve_request_space_scope
-from src.gateway.domain.identity import MemberStatus, PermissionProfile, Principal, PrincipalKind, SpaceRole, SystemRole
+from src.gateway.domain.authorization import Action
+from src.gateway.domain.identity import MemberStatus, PermissionProfile, Principal, PrincipalKind, ServiceCredentialSpec, SpaceRole, SystemRole
 from src.gateway.domain.entities import KnowledgeItem as DomainKnowledgeItem
 from src.gateway.infrastructure.database import get_db_session, get_session_factory
 from src.gateway.presentation.api_keys import configured_api_key_codec
-from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.persistence.ingestion_models import DocumentModel, DocumentRevisionChunkModel, DocumentRevisionModel, EmbeddingGenerationModel, IngestionJobModel, RetrievalUnitModel
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
 from src.gateway.infrastructure.persistence.models import KnowledgeItem as KnowledgeItemModel, KnowledgeRevision as KnowledgeRevisionModel
-from src.gateway.infrastructure.persistence.retrieval_unit_repository import PostgresRetrievalUnitRepository
 from src.gateway.infrastructure.persistence.identity_models import APIKeyScopeModel, APIKeySpaceGrantModel, AuditEventModel, MemberModel, MFAFactorModel, PendingAIActionModel, PersonalAPIKeyModel, SessionCredentialModel, SessionFamilyModel, SpaceMembershipModel
 from src.gateway.infrastructure.persistence.models import Workspace
 from src.gateway.infrastructure.persistence.runtime_settings_models import RuntimeSettingRevisionModel
-from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings, load_active_runtime_policy
+from src.gateway.infrastructure.runtime_settings_provider import load_active_runtime_policy
 from src.gateway.infrastructure.storage.factory import build_versioned_object_storage
 from src.gateway.presentation.authorization import require_principal, require_scope
 from src.gateway.presentation.request_context import get_request_id
@@ -94,6 +94,7 @@ from src.gateway.presentation.schemas.management_responses import (
     ContextPackageDetail,
     CreatedAPIKey,
     CreatedMember,
+    CreatedServiceKey,
     CreatedSpace,
     CredentialQuotaUsage,
     CurrentMember,
@@ -113,6 +114,7 @@ from src.gateway.presentation.schemas.management_responses import (
     Page,
     PendingAIAction,
     PendingAIActionDetail,
+    QuotaPolicy,
     ReindexEnqueueResult,
     ReindexStatus,
     ReindexTargetStatus,
@@ -136,16 +138,15 @@ from src.gateway.presentation.schemas.management_responses import (
 from src.gateway.observability import increment_metric
 
 
+logger = logging.getLogger(__name__)
+
+
 def default_retrieval_embedding_client():
-    return HTTPEmbeddingClient()
-
-
-def _retrieval_service() -> AuthorizedRetrievalService:
-    return AuthorizedRetrievalService(
-        PostgresRetrievalUnitRepository(get_session_factory()),
-        default_retrieval_embedding_client(),
-        runtime_settings_provider=load_active_retrieval_settings,
+    from src.gateway.application.services.authorized_retrieval_service import (
+        default_retrieval_embedding_client as application_default_retrieval_embedding_client,
     )
+
+    return application_default_retrieval_embedding_client()
 
 
 router = APIRouter(prefix="/api/v1", tags=["Management"], responses=MANAGEMENT_ERROR_RESPONSES)
@@ -253,6 +254,28 @@ class APIKeyCreateRequest(BaseModel):
     expires_at: datetime | None = None
     space_grants: list[str] | None = Field(default=None, max_length=100)
     permission_profile: Literal["reader", "project_contributor", "trusted_maintainer", "import_worker", "human_admin"] | None = None
+
+
+class ServiceKeyCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    application_id: str = Field(min_length=1, max_length=120)
+    credential_name: str = Field(min_length=1, max_length=120)
+    space_grants: list[str] = Field(min_length=1, max_length=100)
+    permission_profile: Literal["reader", "project_contributor", "trusted_maintainer", "import_worker"]
+    expires_at: datetime | None = None
+
+
+class QuotaPolicyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    space_id: str | None = Field(default=None, min_length=1, max_length=64)
+    requests_per_minute: int | None = Field(default=None, gt=0)
+    tokens_per_minute: int | None = Field(default=None, gt=0)
+    storage_bytes: int | None = Field(default=None, gt=0)
+    concurrent_requests: int | None = Field(default=None, gt=0)
+    burst_requests: int | None = Field(default=None, ge=0)
+    window_seconds: int | None = Field(default=None, gt=0)
 
 
 class MemberCreateRequest(BaseModel):
@@ -626,6 +649,51 @@ def _orm_knowledge_payload(item: KnowledgeItemModel, revision: KnowledgeRevision
     return payload
 
 
+async def _knowledge_space_id(
+    session: AsyncSession, principal: Principal, item_id: UUID
+) -> str | None:
+    try:
+        item = await KnowledgeCommands(session).get(UseCaseContext(principal=principal), item_id)
+    except Exception:
+        return None
+    return item.workspace_id
+
+
+def _quota_policy_payload(row) -> dict:
+    return {
+        "api_key_id": str(row.api_key_id),
+        "space_id": row.space_id,
+        "requests_per_minute": row.requests_per_minute,
+        "tokens_per_minute": row.tokens_per_minute,
+        "storage_bytes": row.storage_bytes,
+        "concurrent_requests": row.concurrent_requests,
+        "burst_requests": row.burst_requests,
+        "window_seconds": row.window_seconds,
+    }
+
+
+async def _fan_out_knowledge_event(
+    session: AsyncSession,
+    *,
+    space_id: str,
+    event_type: str,
+    deduplication_key: str,
+    payload: dict,
+) -> None:
+    try:
+        from src.gateway.presentation.routers.webhooks import enqueue_subscription_event
+
+        await enqueue_subscription_event(
+            session,
+            space_id=space_id,
+            event_type=event_type,
+            deduplication_key=deduplication_key,
+            payload=payload,
+        )
+    except Exception:
+        logger.debug("Webhook fan-out unavailable for knowledge event", extra={"event_type": event_type})
+
+
 async def _upload_chunks(file: UploadFile):
     while True:
         chunk = await file.read(1024 * 1024)
@@ -663,18 +731,7 @@ def _require_mutation_tools(policy: EffectiveRuntimePolicy) -> None:
 
 
 def _redact_explanation(result: dict) -> dict:
-    result["health"] = {
-        "semantic_status": result["health"]["semantic_status"],
-        "degraded_reasons": [],
-        "embedding_generation_id": None,
-        "embedding_coverage": None,
-    }
-    result["explanation"] = {
-        "effective_space_ids": [],
-        "abstained": result["explanation"]["abstained"],
-        "active_space_id": None,
-    }
-    return result
+    return redact_retrieval_payload(result)
 
 
 async def _ai_retrieval_result(
@@ -682,54 +739,17 @@ async def _ai_retrieval_result(
     arguments: AIKnowledgeSearchArguments,
     policy: EffectiveRuntimePolicy,
 ) -> dict:
-    default_ws = get_settings().gateway.default_workspace_id
-    request_scope = resolve_request_space_scope(arguments.active_space_id, default_ws)
-    result = await _retrieval_service().search(
-        principal,
-        arguments.query,
-        requested_space_ids=narrow_requested_spaces(
-            request_scope,
-            set(arguments.space_ids) if arguments.space_ids is not None else None,
+    return await RetrievalQueries().search(
+        UseCaseContext(principal=principal, policy=policy),
+        SearchKnowledgeQuery(
+            query=arguments.query,
+            space_ids=tuple(arguments.space_ids) if arguments.space_ids is not None else None,
+            active_space_id=arguments.active_space_id,
+            semantic_policy=arguments.semantic_policy,
+            limit=arguments.limit,
+            tags=tuple(arguments.tags) if arguments.tags is not None else None,
         ),
-        active_space_id=arguments.active_space_id,
-        semantic_policy=policy.effective_semantic_policy(arguments.semantic_policy),
-        limit=arguments.limit,
-        tags=list(arguments.tags) if arguments.tags is not None else None,
     )
-    payload = {
-        "query": result.query,
-        "hits": [
-            {
-                "rank": hit.rank,
-                "rank_score": hit.rank_score,
-                "source_type": hit.candidate.source_type,
-                "space_id": hit.candidate.space_id,
-                "canonical_id": str(hit.candidate.canonical_id),
-                "revision_id": str(hit.candidate.revision_id),
-                "title": hit.candidate.title,
-                "content_excerpt": hit.candidate.content[:600],
-                "citation_uri": hit.candidate.citation_uri,
-                "language": hit.candidate.language,
-                "source_filename": hit.candidate.source_filename,
-                "version": hit.candidate.version,
-            }
-            for hit in result.hits
-        ],
-        "health": {
-            "semantic_status": result.health.semantic_status,
-            "degraded_reasons": list(result.health.degraded_reasons),
-            "embedding_generation_id": str(result.health.embedding_generation_id) if result.health.embedding_generation_id else None,
-            "embedding_coverage": result.health.embedding_coverage,
-        },
-        "explanation": {
-            "effective_space_ids": list(result.explanation.effective_space_ids),
-            "abstained": result.explanation.abstained,
-            "active_space_id": result.explanation.active_space_id,
-        },
-    }
-    if not policy.retrieval_explanations_enabled:
-        return _redact_explanation(payload)
-    return payload
 
 
 async def _ai_resource_space_ids(
@@ -1040,53 +1060,51 @@ async def execute_ai_tool(
         result = await _ai_retrieval_result(principal, arguments, policy)
         resource_ids = [hit["canonical_id"] for hit in result["hits"]]
     elif tool_name == "knowledge.read.v1":
-        item = await KnowledgeManagementService(session).get(arguments.item_id)
-        if item is None:
-            raise AuthorizationException()
-        await AuthorizationService(session).authorize_space(principal, item.workspace_id, Action.CONTENT_READ)
+        item = await KnowledgeCommands(session).get(
+            UseCaseContext(principal=principal),
+            arguments.item_id,
+        )
         result = _knowledge_payload(item)
         resource_ids = [str(item.id)]
     elif tool_name == "knowledge.create.v1":
-        knowledge = KnowledgeManagementService(session)
-        if reservation.status is ReservationStatus.REPLAY:
-            if not reservation.resource_ids:
-                raise ResourceConflictException()
-            item = await knowledge.get(UUID(reservation.resource_ids[0]))
-            if item is None:
-                raise ResourceConflictException("The created knowledge item is unavailable.")
-        else:
-            item = await knowledge.create(
-                principal,
-                space_id=arguments.space_id,
-                title=arguments.title.strip(),
-                content=arguments.content,
-                tags=[tag.strip() for tag in arguments.tags if tag.strip()],
+        outcome = await KnowledgeCommands(session).create(
+            UseCaseContext(
+                principal=principal,
+                policy=policy,
                 request_id=get_request_id(request),
-            )
-        result = _knowledge_payload(item)
-        resource_ids = [str(item.id)]
+                idempotency_key=idempotency_key,
+            ),
+            CreateKnowledgeCommand(
+                space_id=arguments.space_id,
+                title=arguments.title,
+                content=arguments.content,
+                tags=tuple(arguments.tags),
+            ),
+        )
+        assert outcome.value is not None
+        result = _knowledge_payload(outcome.value)
+        resource_ids = [str(outcome.value.id)]
         response_status = 201
     elif tool_name == "knowledge.update.v1":
-        knowledge = KnowledgeManagementService(session)
-        if reservation.status is ReservationStatus.REPLAY:
-            if not reservation.resource_ids:
-                raise ResourceConflictException()
-            item = await knowledge.get(UUID(reservation.resource_ids[0]))
-            if item is None:
-                raise ResourceConflictException("The updated knowledge item is unavailable.")
-        else:
-            item = await knowledge.update(
-                principal,
-                arguments.item_id,
-                expected_version=arguments.expected_version,
-                title=arguments.title.strip(),
-                content=arguments.content,
-                tags=[tag.strip() for tag in arguments.tags if tag.strip()],
-                change_summary=arguments.change_summary,
+        outcome = await KnowledgeCommands(session).update(
+            UseCaseContext(
+                principal=principal,
+                policy=policy,
                 request_id=get_request_id(request),
-            )
-        result = _knowledge_payload(item)
-        resource_ids = [str(item.id)]
+                idempotency_key=idempotency_key,
+            ),
+            UpdateKnowledgeCommand(
+                item_id=arguments.item_id,
+                expected_version=arguments.expected_version,
+                title=arguments.title,
+                content=arguments.content,
+                tags=tuple(arguments.tags),
+                change_summary=arguments.change_summary,
+            ),
+        )
+        assert outcome.value is not None
+        result = _knowledge_payload(outcome.value)
+        resource_ids = [str(outcome.value.id)]
     elif tool_name == "sources.list.v1":
         result = await _ai_source_page(session, principal, arguments)
         resource_ids = [item["id"] for item in result["items"]]
@@ -1730,6 +1748,7 @@ async def emergency_transfer_space_ownership(
     principal: Principal = Depends(require_scope("members:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "member.admin")
     reservation = await _reserve(
         session,
         principal,
@@ -1773,6 +1792,7 @@ async def remove_space_membership(
     principal: Principal = Depends(require_scope("spaces:members")),
     session: AsyncSession = Depends(get_db_session),
 ) -> Response:
+    require_profile_route(principal, "space.members.set")
     reservation = await _reserve(
         session,
         principal,
@@ -2003,7 +2023,15 @@ async def create_knowledge(
         if revision is not None:
             enrichment = await KnowledgeManagementService(session).enrichment_state(revision.id)
         return _knowledge_payload(outcome.value, enrichment=enrichment)
-    return _knowledge_payload(outcome.value, enrichment=None)
+    item = outcome.value
+    await _fan_out_knowledge_event(
+        session,
+        space_id=item.workspace_id,
+        event_type="knowledge.created",
+        deduplication_key=f"knowledge.created:{item.id}:{item.version}",
+        payload={"knowledge_item_id": str(item.id), "version": item.version},
+    )
+    return _knowledge_payload(item, enrichment=None)
 
 
 def _stale_threshold_days(older_than_days: int | None) -> int:
@@ -2128,6 +2156,15 @@ async def update_knowledge(
     enrichment = None
     if revision is not None:
         enrichment = await KnowledgeManagementService(session).enrichment_state(revision.id)
+    if not outcome.replayed:
+        item = outcome.value
+        await _fan_out_knowledge_event(
+            session,
+            space_id=item.workspace_id,
+            event_type="knowledge.updated",
+            deduplication_key=f"knowledge.updated:{item.id}:{item.version}",
+            payload={"knowledge_item_id": str(item.id), "version": item.version},
+        )
     return _knowledge_payload(outcome.value, enrichment=enrichment)
 
 
@@ -2176,7 +2213,8 @@ async def delete_knowledge(
     session: AsyncSession = Depends(get_db_session),
 ) -> Response:
     require_profile_route(principal, "knowledge.delete")
-    await KnowledgeCommands(session).delete(
+    space_id = await _knowledge_space_id(session, principal, item_id)
+    outcome = await KnowledgeCommands(session).delete(
         UseCaseContext(
             principal=principal,
             policy=await _active_policy(principal),
@@ -2185,6 +2223,14 @@ async def delete_knowledge(
         ),
         DeleteKnowledgeCommand(item_id=item_id, expected_version=expected_version),
     )
+    if not outcome.replayed and space_id is not None:
+        await _fan_out_knowledge_event(
+            session,
+            space_id=space_id,
+            event_type="knowledge.deleted",
+            deduplication_key=f"knowledge.deleted:{item_id}:{expected_version}",
+            payload={"knowledge_item_id": str(item_id), "version": expected_version},
+        )
     return Response(status_code=204)
 
 
@@ -2197,32 +2243,15 @@ async def mark_knowledge_reviewed(
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     require_profile_route(principal, "knowledge.reviewed")
-    item = await session.get(KnowledgeItemModel, item_id)
-    if item is None or item.is_deleted:
-        raise AuthorizationException()
-    await AuthorizationService(session).authorize_space(principal, item.workspace_id, Action.CONTENT_WRITE)
-    reservation = await _reserve(
-        session,
-        principal,
-        "knowledge.reviewed",
-        idempotency_key,
-        {"item_id": str(item_id)},
-    )
-    if reservation.status is not ReservationStatus.REPLAY:
-        AuditService(AuditRepository(session)).record(
-            actor_member_id=_actor_id(principal),
-            actor_kind=principal.kind.value,
+    await KnowledgeCommands(session).mark_reviewed(
+        UseCaseContext(
+            principal=principal,
+            policy=await _active_policy(principal),
             request_id=get_request_id(request),
-            action="knowledge.reviewed",
-            resource_type="knowledge_item",
-            resource_id=str(item_id),
-            details={"space_id": item.workspace_id, "version": item.revision},
-        )
-        await IdempotencyService(session).complete(
-            reservation.record_id,
-            response_status=200,
-            resource_ids=[str(item_id)],
-        )
+            idempotency_key=idempotency_key,
+        ),
+        item_id,
+    )
     return {"id": str(item_id), "status": "reviewed"}
 
 
@@ -2367,7 +2396,7 @@ async def promote_generation(
             raise ResourceConflictException()
         previous = reservation.resource_ids[1] if len(reservation.resource_ids) > 1 else None
         return {"id": str(promoted.id), "status": "active", "previous_active_id": previous, "forced": payload.force}
-    outcome = await service.promote(generation_id, force=payload.force)
+    outcome = await service.promote(generation_id, force=payload.force, principal=principal)
     AuditService(AuditRepository(session)).record(
         actor_member_id=_actor_id(principal),
         actor_kind=principal.kind.value,
@@ -2964,53 +2993,16 @@ async def list_ingestion_jobs(
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     require_profile_route(principal, "ingestion_job.list")
-    effective_space_ids = await AuthorizationService(session).effective_space_ids(_actor_id(principal), principal=principal)
-    if space_id is not None:
-        if space_id not in effective_space_ids:
-            return {"items": [], **_page_metadata(page=page, page_size=page_size, total_items=0)}
-        scoped_spaces: tuple[str, ...] = (space_id,)
-    else:
-        scoped_spaces = effective_space_ids
-        if not scoped_spaces:
-            return {"items": [], **_page_metadata(page=page, page_size=page_size, total_items=0)}
-    query = (
-        select(IngestionJobModel)
-        .where(IngestionJobModel.space_id.in_(scoped_spaces))
-        .order_by(IngestionJobModel.created_at.desc(), IngestionJobModel.id.desc())
+    jobs, metadata = await IngestionUseCases(session).list_jobs(
+        UseCaseContext(principal=principal),
+        ListIngestionJobsQuery(
+            space_id=space_id,
+            state=state,
+            page=page,
+            page_size=page_size,
+        ),
     )
-    if state is not None:
-        query = query.where(IngestionJobModel.state == state)
-    jobs, metadata = await _paginate(
-        session,
-        query,
-        page=page,
-        page_size=page_size,
-        scalars=True,
-    )
-    return {
-        "items": [
-            {
-                "id": str(job.id),
-                "space_id": job.space_id,
-                "job_type": job.job_type,
-                "document_id": str(job.document_id) if job.document_id is not None else None,
-                "document_revision_id": str(job.document_revision_id) if job.document_revision_id is not None else None,
-                "knowledge_item_id": str(job.knowledge_item_id) if job.knowledge_item_id is not None else None,
-                "knowledge_revision_id": str(job.knowledge_revision_id) if job.knowledge_revision_id is not None else None,
-                "state": job.state,
-                "progress": job.progress,
-                "attempt_count": job.attempt_count,
-                "max_attempts": job.max_attempts,
-                "last_error_code": job.last_error_code,
-                "created_at": job.created_at.isoformat(),
-                "updated_at": job.updated_at.isoformat(),
-                "started_at": job.started_at.isoformat() if job.started_at else None,
-                "finished_at": job.finished_at.isoformat() if job.finished_at else None,
-            }
-            for job in jobs
-        ],
-        **metadata,
-    }
+    return {"items": jobs, **metadata}
 
 
 async def _mutate_ingestion_job(
@@ -3021,45 +3013,17 @@ async def _mutate_ingestion_job(
     principal: Principal,
     session: AsyncSession,
 ) -> dict:
-    _require_mutation_tools(await _active_policy(principal))
-    job = await session.get(IngestionJobModel, job_id)
-    if job is None:
-        raise AuthorizationException()
-    await AuthorizationService(session).authorize_space(principal, job.space_id, Action.CONTENT_WRITE)
-    reservation = await _reserve(
-        session,
-        principal,
-        f"ingestion_job.{operation}",
-        idempotency_key,
-        {"job_id": str(job_id)},
-    )
-    if reservation.status is ReservationStatus.REPLAY:
-        if operation == "cancel" and job.cancellation_requested and job.state not in {"failed", "cancelled", "succeeded"}:
-            state = "cancellation_requested"
-        elif operation == "retry" and job.retry_requested:
-            state = "retry_requested"
-        else:
-            state = job.state
-    elif operation == "cancel":
-        state = await IngestionJobService(session).request_cancellation(job_id)
-    else:
-        state = await IngestionJobService(session).request_retry(job_id)
-    if reservation.status is not ReservationStatus.REPLAY:
-        AuditService(AuditRepository(session)).record(
-            actor_member_id=_actor_id(principal),
-            actor_kind=principal.kind.value,
+    outcome = await IngestionUseCases(session).mutate_job(
+        UseCaseContext(
+            principal=principal,
+            policy=await _active_policy(principal),
             request_id=get_request_id(request),
-            action=f"ingestion_job.{operation}_requested",
-            resource_type="ingestion_job",
-            resource_id=str(job_id),
-            details={"space_id": job.space_id, "state": state},
-        )
-        await IdempotencyService(session).complete(
-            reservation.record_id,
-            response_status=200,
-            resource_ids=[str(job_id)],
-        )
-    return {"id": str(job_id), "state": state}
+            idempotency_key=idempotency_key,
+        ),
+        MutateIngestionJobCommand(job_id=job_id, operation=operation),  # type: ignore[arg-type]
+    )
+    assert outcome.value is not None
+    return outcome.value
 
 
 @router.post("/ingestion-jobs/{job_id}/cancel", response_model=IngestionMutation)
@@ -3276,6 +3240,150 @@ async def revoke_api_key(
             principal,
             key_id,
             request_id=get_request_id(request),
+        )
+        await IdempotencyService(session).complete(
+            reservation.record_id,
+            response_status=204,
+            resource_ids=[str(key_id)],
+        )
+    return Response(status_code=204)
+
+
+@router.post("/api-keys/service", status_code=status.HTTP_201_CREATED, response_model=CreatedServiceKey)
+async def create_service_key(
+    payload: ServiceKeyCreateRequest,
+    request: Request,
+    response: Response,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("api_keys:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> CreatedServiceKey:
+    require_profile_route(principal, "api_key.manage")
+    reservation = await _reserve(
+        session,
+        principal,
+        "api_key.service.create",
+        idempotency_key,
+        payload.model_dump(mode="json"),
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        raise ResourceConflictException("The service key secret was already revealed and cannot be replayed.")
+    try:
+        created = await APIKeyService(session, configured_api_key_codec()).create_service_key(
+            principal,
+            application_id=payload.application_id,
+            credential_name=payload.credential_name,
+            spec=ServiceCredentialSpec(
+                space_grants=frozenset(payload.space_grants),
+                permission_profile=PermissionProfile(payload.permission_profile),
+                expires_at=payload.expires_at,
+            ),
+            request_id=get_request_id(request),
+        )
+    except ValueError as exc:
+        raise ValidationException(str(exc)) from exc
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=201,
+        resource_ids=[str(created.key_id)],
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return CreatedServiceKey(
+        id=str(created.key_id),
+        public_id=created.public_id,
+        secret=created.secret.reveal(),
+        application_id=payload.application_id.strip(),
+        credential_name=payload.credential_name.strip(),
+        scopes=sorted(created.scopes),
+        expires_at=created.expires_at,
+        space_grants=sorted(created.space_grants) if created.space_grants is not None else [],
+        permission_profile=created.permission_profile.value if created.permission_profile else payload.permission_profile,
+    )
+
+
+@router.put("/api-keys/{key_id}/quota-policy", response_model=QuotaPolicy)
+async def set_key_quota_policy(
+    key_id: UUID,
+    payload: QuotaPolicyRequest,
+    request: Request,
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("api_keys:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    require_profile_route(principal, "api_key.manage")
+    service = APIKeyService(session, configured_api_key_codec())
+    target = await service.owned_key(principal, key_id)
+    target_member_id, target_kind = await service.key_identity(target)
+    reservation = await _reserve(
+        session,
+        principal,
+        "api_key.quota_policy.set",
+        idempotency_key,
+        {"key_id": str(key_id), **payload.model_dump(mode="json")},
+    )
+    if reservation.status is ReservationStatus.REPLAY:
+        raise ResourceConflictException("The quota policy update was already applied and cannot be replayed.")
+    quota_principal = Principal(
+        subject_id=str(target_member_id),
+        kind=target_kind,
+        system_role=principal.system_role,
+        scopes=frozenset(),
+        credential_id=str(key_id),
+    )
+    try:
+        row = await quota_service_from_settings(get_settings().gateway).set_policy_override(
+            session,
+            quota_principal,
+            space_id=payload.space_id,
+            requests_per_minute=payload.requests_per_minute,
+            tokens_per_minute=payload.tokens_per_minute,
+            storage_bytes=payload.storage_bytes,
+            concurrent_requests=payload.concurrent_requests,
+            burst_requests=payload.burst_requests,
+            window_seconds=payload.window_seconds,
+        )
+    except ValueError as exc:
+        raise ValidationException(str(exc)) from exc
+    await IdempotencyService(session).complete(
+        reservation.record_id,
+        response_status=200,
+        resource_ids=[str(key_id)],
+    )
+    return _quota_policy_payload(row)
+
+
+@router.delete("/api-keys/{key_id}/quota-policy", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_key_quota_policy(
+    key_id: UUID,
+    request: Request,
+    space_id: str | None = Query(default=None, min_length=1, max_length=64),
+    idempotency_key: str = Header(min_length=1, max_length=128, alias="Idempotency-Key"),
+    principal: Principal = Depends(require_scope("api_keys:write")),
+    session: AsyncSession = Depends(get_db_session),
+) -> Response:
+    require_profile_route(principal, "api_key.manage")
+    service = APIKeyService(session, configured_api_key_codec())
+    target = await service.owned_key(principal, key_id)
+    target_member_id, target_kind = await service.key_identity(target)
+    reservation = await _reserve(
+        session,
+        principal,
+        "api_key.quota_policy.clear",
+        idempotency_key,
+        {"key_id": str(key_id), "space_id": space_id},
+    )
+    if reservation.status is not ReservationStatus.REPLAY:
+        quota_principal = Principal(
+            subject_id=str(target_member_id),
+            kind=target_kind,
+            system_role=principal.system_role,
+            scopes=frozenset(),
+            credential_id=str(key_id),
+        )
+        await quota_service_from_settings(get_settings().gateway).clear_policy_override(
+            session,
+            quota_principal,
+            space_id=space_id,
         )
         await IdempotencyService(session).complete(
             reservation.record_id,
@@ -3737,6 +3845,7 @@ async def active_runtime_settings(
     principal: Principal = Depends(require_scope("settings:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "settings.inspect")
     return _settings_payload(await RuntimeSettingsService(session).active())
 
 
@@ -3748,6 +3857,7 @@ async def runtime_settings_history(
     principal: Principal = Depends(require_scope("settings:read")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "settings.inspect")
     query = (
         select(RuntimeSettingRevisionModel)
         .where(RuntimeSettingRevisionModel.state.in_(("active", "superseded")))
@@ -3776,6 +3886,7 @@ async def create_runtime_settings_draft(
     principal: Principal = Depends(require_scope("settings:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "settings.mutate")
     reservation = await _reserve(
         session,
         principal,
@@ -3818,6 +3929,7 @@ async def activate_runtime_settings_draft(
     principal: Principal = Depends(require_scope("settings:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "settings.mutate")
     reservation = await _reserve(
         session,
         principal,
@@ -3863,6 +3975,7 @@ async def rollback_runtime_settings(
     principal: Principal = Depends(require_scope("settings:write")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    require_profile_route(principal, "settings.mutate")
     if target_revision < 1:
         raise ValidationException("A persisted runtime settings revision is required.")
     reservation = await _reserve(

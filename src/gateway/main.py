@@ -30,7 +30,7 @@ from src.gateway.presentation.errors import register_exception_handlers
 from src.gateway.presentation.quotas import QuotaMiddleware
 from src.gateway.presentation.request_context import RequestContextMiddleware
 from src.gateway.presentation.request_limits import RequestBodyLimitMiddleware
-from src.gateway.presentation.metrics import MetricsMiddleware, MetricsRegistry
+from src.gateway.presentation.metrics import MetricsMiddleware, MetricsRegistry, render_with_worker_file
 from src.gateway.presentation.security_headers import SecurityHeadersMiddleware
 from src.gateway.presentation.session_cookies import CANONICAL_ACCESS_COOKIE
 from src.gateway.presentation.settings_context import SettingsContextMiddleware
@@ -43,6 +43,7 @@ from src.gateway.presentation.routers import (
     messages_router,
     models_router,
     responses_router,
+    webhooks_router,
 )
 from src.gateway.mcp.router import build_mcp_components, router as mcp_router
 
@@ -179,6 +180,7 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
         if isinstance(current_settings.gateway.cors_origins, list)
         else [current_settings.gateway.cors_origins]
     )
+    app.add_middleware(QuotaMiddleware)
     app.add_middleware(
         APIKeyAuthMiddleware,
         allowed_keys=current_settings.gateway.gateway_api_keys,
@@ -204,7 +206,6 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
     )
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestContextMiddleware)
-    app.add_middleware(QuotaMiddleware)
     app.add_middleware(SettingsContextMiddleware)
     app.add_middleware(
         RequestBodyLimitMiddleware,
@@ -215,12 +216,13 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
     @app.get("/metrics", include_in_schema=False)
     async def metrics() -> PlainTextResponse:
         return PlainTextResponse(
-            app.state.metrics.render(),
+            render_with_worker_file(app.state.metrics, current_settings.gateway.worker_metrics_file),
             media_type="text/plain; version=0.0.4",
         )
 
     app.include_router(health_router)
     app.include_router(management_auth_router)
+    app.include_router(webhooks_router)
     app.include_router(management_router)
     app.include_router(models_router)
     app.include_router(chat_completions_router)

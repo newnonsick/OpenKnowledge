@@ -621,6 +621,8 @@ async def _validate_worker_database_connection(connection) -> None:
         "operational_alerts": ("SELECT", "INSERT"),
         "retrieval_units": ("SELECT", "INSERT"),
         "space_memberships": ("SELECT",),
+        "webhook_deliveries": ("SELECT",),
+        "webhook_subscriptions": ("SELECT",),
         "workspaces": ("SELECT",),
     }
     update_columns = {
@@ -661,6 +663,18 @@ async def _validate_worker_database_connection(connection) -> None:
             "updated_at",
         ),
         "retrieval_units": ("active", "deactivated_at"),
+        "webhook_deliveries": (
+            "state",
+            "attempt_count",
+            "last_error_code",
+            "last_status_code",
+            "lease_owner",
+            "lease_expires_at",
+            "claim_token",
+            "available_at",
+            "delivered_at",
+            "updated_at",
+        ),
     }
     role = (
         await connection.execute(

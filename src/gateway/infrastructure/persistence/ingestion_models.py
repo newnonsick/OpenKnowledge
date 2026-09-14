@@ -455,3 +455,66 @@ class OperationalAlertModel(Base):
         ),
         Index("ix_operational_alerts_unacknowledged", "created_at", postgresql_where=text("acknowledged_at IS NULL")),
     )
+
+
+class WebhookSubscriptionModel(Base):
+    __tablename__ = "webhook_subscriptions"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    space_id: Mapped[str] = mapped_column(String(64), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    secret: Mapped[str] = mapped_column(Text, nullable=False)
+    event_filter: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="active", server_default=text("'active'"), nullable=False)
+    created_by_member_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("members.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint("status IN ('active','revoked')", name="ck_webhook_subscriptions_status"),
+        CheckConstraint(
+            "(status = 'revoked' AND revoked_at IS NOT NULL) OR "
+            "(status <> 'revoked' AND revoked_at IS NULL)",
+            name="ck_webhook_subscriptions_revocation",
+        ),
+        UniqueConstraint("id", "space_id", name="uq_webhook_subscriptions_id_space"),
+        Index("ix_webhook_subscriptions_space", "space_id"),
+        Index("ix_webhook_subscriptions_status", "status"),
+    )
+
+
+class WebhookDeliveryModel(Base):
+    __tablename__ = "webhook_deliveries"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    subscription_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("webhook_subscriptions.id", ondelete="CASCADE"), nullable=False)
+    event_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    deduplication_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), default="pending", server_default=text("'pending'"), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), nullable=False)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=8, server_default=text("8"), nullable=False)
+    last_error_code: Mapped[str | None] = mapped_column(String(64))
+    last_status_code: Mapped[int | None] = mapped_column(Integer)
+    lease_owner: Mapped[str | None] = mapped_column(String(255))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claim_token: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("state IN ('pending','delivering','delivered','failed')", name="ck_webhook_deliveries_state"),
+        CheckConstraint("attempt_count >= 0 AND max_attempts > 0", name="ck_webhook_deliveries_attempts"),
+        CheckConstraint(
+            "(state = 'delivering' AND lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL AND claim_token IS NOT NULL) OR "
+            "(state <> 'delivering' AND lease_owner IS NULL AND lease_expires_at IS NULL AND claim_token IS NULL)",
+            name="ck_webhook_deliveries_claim",
+        ),
+        UniqueConstraint("subscription_id", "deduplication_key", name="uq_webhook_deliveries_subscription_key"),
+        Index("ix_webhook_deliveries_claimable", "state", "available_at"),
+        Index("ix_webhook_deliveries_subscription", "subscription_id"),
+    )

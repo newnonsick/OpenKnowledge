@@ -18,6 +18,21 @@ _BODY_SPACE_KEYS = ("space_id", "workspace_id", "active_space_id")
 _BODY_SNIFF_LIMIT = 65536
 
 
+async def _check_persistent_window(service, principal, space_id: str | None) -> None:
+    if space_id is None:
+        return
+    try:
+        from src.gateway.infrastructure.database import get_session_factory
+
+        factory = get_session_factory()
+        async with factory() as session:
+            await service.check_persistent_window(session, principal, space_id=space_id)
+    except QuotaExceededException:
+        raise
+    except Exception:
+        logger.debug("Persistent quota check unavailable; burst guard still applies")
+
+
 def extract_quota_space(query: dict, body: dict) -> str | None:
     for key in ("space_id", "active_space_id", "workspace_id"):
         value = query.get(key)
@@ -61,6 +76,7 @@ class QuotaMiddleware:
             return
         try:
             await service.acquire(principal, space_id=space_id)
+            await _check_persistent_window(service, principal, space_id)
         except QuotaExceededException as exc:
             retry_after = int(exc.details.get("retry_after_seconds", 1))
             try:
