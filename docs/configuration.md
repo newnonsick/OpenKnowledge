@@ -175,7 +175,7 @@ Retention executes only when `RETENTION_PURGE_ENABLED` is true, and the database
 | `RETENTION_BATCH_SIZE` | `100` | 1 to 1000 | Rows per database batch. |
 | `RETENTION_MAX_BATCHES_PER_CYCLE` | `100` | 1 to 1000 | Batches per cycle; remaining work continues in the next cycle. |
 | `WORKER_METRICS_INTERVAL_SECONDS` | `60` | at least 5 | Interval between worker operational-metrics collections. |
-| `WORKER_METRICS_FILE` | _(empty)_ | absolute path or empty | Prometheus textfile the worker publishes its registry to; empty disables file publishing. |
+| `WORKER_METRICS_FILE` | `/data/storage/metrics/worker.prom` | absolute path or empty | Prometheus textfile the worker publishes its registry to; the gateway merges this file into `/metrics`. Empty disables file publishing and merging. |
 | `EMBEDDING_REEMBED_BATCH_SIZE` | `64` | 1 to 512 | Rows re-embedded per batch after an embedding dimension change. |
 | `STALE_AFTER_DAYS` | `90` | at least 1 | Age in days after which untouched knowledge is reported as stale by `GET /api/v1/knowledge/stale` and counted in `GET /api/v1/operations/summary`. Detection only; no purging. |
 
@@ -198,7 +198,8 @@ These variables are consumed by `compose.yaml` and the deployment scripts rather
 
 Retrieval, chunking, tool, and feature settings can be changed through the management API (`/api/v1/settings` drafts and activation) without editing the environment or restarting. They are versioned with history and rollback. The adjustable groups and their defaults:
 
-- Retrieval: result `limit` 10, `branch_limit` 40, lexical and vector weights 1.0, `rrf_k` 60, minimum lexical score 0.01, minimum vector similarity 0.55, `max_hits_per_source` 2, `active_space_boost` 0.08, `semantic_policy` `prefer`, `hnsw_ef_search` 100.
+- Retrieval: result `limit` 10, `branch_limit` 40, lexical and vector weights 1.0, `rrf_k` 60, minimum lexical score 0.01, minimum vector similarity 0.55, `max_hits_per_source` 2, `active_space_boost` 0.08, `semantic_policy` `prefer`, `hnsw_ef_search` 100, reranker disabled by default (`rerank_enabled` false, overlap weight 0.25, exact-tag boost 0.15, recency boost 0.10).
+- Chat-proxy context: internal `knowledge_search` results are assembled through the budgeted context assembler capped at 5 sources, 600 chars per snippet, 8000 total chars, and 2000 estimated tokens (char-based `max(1, len//4)` estimate; per-model tokenizers differ). Tune with `CHAT_CONTEXT_MAX_SOURCES`, `CHAT_CONTEXT_MAX_SNIPPET_CHARS`, `CHAT_CONTEXT_MAX_TOTAL_CHARS`, and `CHAT_CONTEXT_MAX_TOTAL_TOKENS`.
 - Chunking: chunk size 2000 (200 to 10000), overlap 200 (0 to 2000, strictly smaller than the size), max chunks 10000.
 - Tools: knowledge tools enabled, mutation tools enabled, destructive tools require confirmation.
 - Features: semantic retrieval enabled, retrieval explanations enabled.

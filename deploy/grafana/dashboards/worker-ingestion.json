@@ -1,0 +1,272 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Ingestion queue depth by state, published by the worker collector into the shared metrics file. Alert GatewayIngestionQueueGrowing fires above 25 queued.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "expr": "gateway_ingestion_queue_depth",
+          "legendFormat": "{{state}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Ingestion queue depth by state",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Database availability as reported by the worker collector. Alert GatewayWorkerMetricsMissing fires when this series is absent for 15 minutes.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "expr": "gateway_dependency_available{dependency=\"database\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Database available",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Database availability across all reported dependencies.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "expr": "gateway_dependency_available",
+          "legendFormat": "{{dependency}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Dependency availability",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Ingestion lifecycle events including terminal failures. Alert GatewayIngestionTerminalFailures fires on any terminal failure within 15 minutes.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "expr": "sum by (event, outcome) (increase(gateway_ingestion_events_total[15m]))",
+          "legendFormat": "{{event}}/{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Ingestion events (15m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Approximate mean claim latency and processing duration for ingestion jobs.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "expr": "rate(gateway_ingestion_claim_latency_seconds_sum[15m]) / clamp_min(rate(gateway_ingestion_claim_latency_seconds_count[15m]), 0.000001)",
+          "legendFormat": "claim_latency_mean",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(gateway_ingestion_processing_duration_seconds_sum[15m]) / clamp_min(rate(gateway_ingestion_processing_duration_seconds_count[15m]), 0.000001)",
+          "legendFormat": "processing_duration_mean",
+          "refId": "B"
+        }
+      ],
+      "title": "Ingestion latency means (15m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "LLM and embedding request outcomes plus provider latency, useful when triaging a growing ingestion queue.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "expr": "sum by (event, outcome) (increase(gateway_llm_events_total[15m]))",
+          "legendFormat": "llm/{{event}}/{{outcome}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (event, outcome) (increase(gateway_embedding_events_total[15m]))",
+          "legendFormat": "embedding/{{event}}/{{outcome}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (operation, outcome) (increase(gateway_database_transactions_total[15m]))",
+          "legendFormat": "db/{{outcome}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Provider and database outcomes (15m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Approximate mean provider call duration per dependency and operation.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "expr": "sum by (dependency, operation, outcome) (rate(gateway_dependency_duration_seconds_sum[15m])) / clamp_min(sum by (dependency, operation, outcome) (rate(gateway_dependency_duration_seconds_count[15m])), 0.000001)",
+          "legendFormat": "{{dependency}}/{{operation}}/{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Provider duration means (15m)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["openknowledge", "worker"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "OpenKnowledge Worker and Ingestion",
+  "uid": "openknowledge-worker",
+  "version": 1
+}

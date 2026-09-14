@@ -72,6 +72,7 @@ services:
     cpus: "2.0"
     mem_limit: 1g
     pids_limit: 256
+    extra_hosts: ["host.docker.internal:host-gateway"]
     environment:
       ENVIRONMENT: production
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?PUBLIC_DOMAIN is required}
@@ -136,7 +137,7 @@ services:
     tmpfs: ["/tmp"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-    networks: [app, data]
+    networks: [app, data, egress]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/healthz/ready', headers={'Host': '${PUBLIC_DOMAIN:?PUBLIC_DOMAIN is required}'}), timeout=3)"]
       interval: 15s
@@ -197,7 +198,7 @@ services:
       RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-100}
       RETENTION_MAX_BATCHES_PER_CYCLE: ${RETENTION_MAX_BATCHES_PER_CYCLE:-100}
       WORKER_METRICS_INTERVAL_SECONDS: ${WORKER_METRICS_INTERVAL_SECONDS:-60}
-      WORKER_METRICS_FILE: ${WORKER_METRICS_FILE:-}
+      WORKER_METRICS_FILE: ${WORKER_METRICS_FILE:-/data/storage/metrics/worker.prom}
     depends_on:
       gateway:
         condition: service_healthy
@@ -207,7 +208,7 @@ services:
     tmpfs: ["/tmp"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-    networks: [data]
+    networks: [data, egress]
 
   web:
     build: ./web
@@ -256,6 +257,10 @@ networks:
     ipam:
       config:
         - subnet: 172.31.0.0/24
+  egress:
+    ipam:
+      config:
+        - subnet: 172.32.0.0/24
 
 volumes:
   caddy-config:

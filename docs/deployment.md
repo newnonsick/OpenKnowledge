@@ -11,12 +11,12 @@ This document describes the production deployment defined by the repository, the
 | `postgres` | `pgvector/pgvector:pg17`, digest-pinned | Init script creates the runtime, worker, and maintenance roles; health-checked; internal `data` network only |
 | `migrate` | Built from the root `Dockerfile` | One-shot programmatic Alembic migration; runs as uid 10001, read-only rootfs |
 | `permissions` | pgvector image | One-shot `psql` applying `deploy/grant-runtime.sql` least-privilege grants after migration |
-| `gateway` | Built from the root `Dockerfile` | uvicorn on port 8000; waits for permissions; health check polls `/healthz/ready`; shared storage volume; `app` and `data` networks |
-| `worker` | Same image as gateway | Runs `python -m src.gateway.worker`; waits for gateway health; internal network only |
+| `gateway` | Built from the root `Dockerfile` | uvicorn on port 8000; waits for permissions; health check polls `/healthz/ready`; shared storage volume; `app`, `data`, and `egress` networks; `host.docker.internal` maps to host-gateway for host-routed LLM and embedding providers |
+| `worker` | Same image as gateway | Runs `python -m src.gateway.worker`; waits for gateway health; `data` and `egress` networks only; reaches external embedding and LLM endpoints through `egress`, plus host-routed providers through `host.docker.internal` |
 | `web` | Built from `web/Dockerfile` | Next.js standalone server on port 3000; `GATEWAY_INTERNAL_URL` points at the gateway |
 | `edge` | `caddy:2.10-alpine`, digest-pinned | Publishes host ports 80, 443 (TCP and UDP for HTTP/3); serves `{$PUBLIC_DOMAIN}` with automatic TLS |
 
-Hardening applied to the application containers: read-only root filesystem with tmpfs on `/tmp`, all Linux capabilities dropped, `no-new-privileges`, CPU, memory, and PID limits; the built images run as non-root users (uid 10001 for the gateway image, the `node` user for the web image). The `data` network is marked internal, so the database and worker are unreachable from outside the host.
+Hardening applied to the application containers: read-only root filesystem with tmpfs on `/tmp`, all Linux capabilities dropped, `no-new-privileges`, CPU, memory, and PID limits; the built images run as non-root users (uid 10001 for the gateway image, the `node` user for the web image). The `data` network is marked internal, so the database is unreachable from outside the host and from the `egress` network. `postgres` attaches only to `data`; the worker and gateway attach to the non-internal `egress` network for controlled upstream HTTP egress. `host.docker.internal` resolves through `host-gateway` for host-routed LLM and embedding providers.
 
 The `edge` routes by path:
 
@@ -90,9 +90,30 @@ The operational cadence (hourly backups, monthly verified restores, one-hour RPO
 
 ## Monitoring and alerting
 
-- The gateway exposes Prometheus metrics at `/metrics`: request counters and latency by route and status, active request gauge, and authentication events. Logs are structured JSON with request ids and W3C trace headers.
+- The gateway exposes Prometheus metrics at `/metrics`: request counters and latency by route and status, active request gauge, and authentication events. The worker publishes its registry to `WORKER_METRICS_FILE` (default `/data/storage/metrics/worker.prom` on the shared storage volume), and the gateway merges that file into its `/metrics` response so the existing gateway scrape target carries worker queue-depth, dependency, and ingestion failure counters without a separate exporter. Logs are structured JSON with request ids and W3C trace headers.
 - `deploy/prometheus/alerts.yml` ships the alert catalog: gateway unavailability, upstream circuit and bulkhead events, SLO error-budget burn, repeated authentication throttling, refresh-token reuse, ingestion queue growth, terminal ingestion failures, dependency failure, stale backup age, stale restore drills, and certificate expiry.
 - The intended collection setup, described in [operations.md](operations.md), scrapes backup and restore timestamps through a host-only node-exporter textfile collector and TLS expiry through a blackbox probe.
+- `deploy/prometheus/prometheus.yml` scrapes the gateway `/metrics` endpoint as `openknowledge-gateway` every 30s and loads `deploy/prometheus/alerts.yml`. `deploy/grafana/provisioning` wires a Prometheus datasource plus the `gateway-overview.json` and `worker-ingestion.json` dashboards; run Grafana with those paths mounted and keep it off the public edge per [operations.md](operations.md).
+
+## S3-backed storage profile
+
+`compose.s3.yaml` is a Compose override that switches both `gateway` and `worker` to `STORAGE_BACKEND=s3` against one bucket, region, endpoint, and credential set (`STORAGE_S3_ENDPOINT`, `STORAGE_S3_BUCKET`, `STORAGE_S3_REGION`, `STORAGE_S3_ACCESS_KEY`, `STORAGE_S3_SECRET_KEY`, optional `STORAGE_S3_SESSION_TOKEN` and `STORAGE_S3_PREFIX`). Start it with:
+
+```bash
+docker compose --env-file .env.production -f compose.yaml -f compose.s3.yaml up --build -d
+```
+
+Consistency check on the S3 backend before and after cutover:
+
+```bash
+PYTHONPATH=. python scripts/storage_drill.py
+PYTHONPATH=. python scripts/storage_manifest.py create --database-url "$DATABASE_URL" --storage-dir "$STORAGE_DIR" --manifest /tmp/storage-manifest.json
+PYTHONPATH=. python scripts/storage_manifest.py verify --database-url "$DATABASE_URL" --storage-dir "$STORAGE_DIR" --manifest /tmp/storage-manifest.json
+```
+
+Both scripts select the S3 adapter automatically when `STORAGE_BACKEND=s3`. The drill round-trips stage, download, finalize, inventory, and delete; the manifest binds the database reference set to object sizes and SHA-256 checksums and fails on any mismatch.
+
+Local-to-S3 migration path: stop writers, take a fresh encrypted backup with `scripts/backup.sh`, bring up the S3 profile against an empty bucket and prefix, restore the object tree into the bucket preserving the `staging/` and `objects/` key layout, run the drill and a manifest create plus verify cycle, then re-enable the gateway and worker. Keep the pre-migration backup until the first post-migration backup and restore rehearsal succeed.
 
 ## Migration procedure in production
 
