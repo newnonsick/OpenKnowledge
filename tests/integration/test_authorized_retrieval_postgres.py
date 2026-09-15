@@ -286,6 +286,8 @@ async def test_deleted_items_and_archived_documents_are_excluded_from_search() -
     live_revision_id = uuid4()
     deleted_item_id = uuid4()
     deleted_revision_id = uuid4()
+    archived_item_id = uuid4()
+    archived_item_revision_id = uuid4()
     archived_document_id = uuid4()
     archived_revision_id = uuid4()
     archived_chunk_id = uuid4()
@@ -322,9 +324,10 @@ async def test_deleted_items_and_archived_documents_are_excluded_from_search() -
                     activated_at=now,
                 )
             )
-            for item_id, revision_id, deleted in (
-                (live_item_id, live_revision_id, False),
-                (deleted_item_id, deleted_revision_id, True),
+            for item_id, revision_id, deleted, archived in (
+                (live_item_id, live_revision_id, False, None),
+                (deleted_item_id, deleted_revision_id, True, None),
+                (archived_item_id, archived_item_revision_id, False, now),
             ):
                 session.add(
                     KnowledgeItem(
@@ -336,6 +339,7 @@ async def test_deleted_items_and_archived_documents_are_excluded_from_search() -
                         tags=[],
                         is_global=False,
                         is_deleted=deleted,
+                        archived_at=archived,
                     )
                 )
                 await session.flush()
@@ -495,10 +499,14 @@ async def test_deleted_items_and_archived_documents_are_excluded_from_search() -
         vector = await repository.vector_search(
             principal, ["exclusion"], query_vector, generation_id, 20, 0.9, True, 100
         )
+        approximate = await repository.vector_search(
+            principal, ["exclusion"], query_vector, generation_id, 20, 0.9, False, 100
+        )
         coverage = await repository.generation_coverage(
             principal, ["exclusion"], generation_id
         )
 
         assert {item.canonical_id for item in lexical} == {live_item_id}
         assert {item.canonical_id for item in vector} == {live_item_id}
-        assert coverage == 2.0 / 4.0
+        assert {item.canonical_id for item in approximate} == {live_item_id}
+        assert coverage == 1.0 / 2.0

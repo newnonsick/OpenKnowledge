@@ -35,7 +35,7 @@ LEFT JOIN document_revisions dr
 _LIVE_SOURCE = """
 AND NOT EXISTS (
   SELECT 1 FROM knowledge_items ki
-  WHERE ki.id = kr.item_id AND ki.is_deleted
+  WHERE ki.id = kr.item_id AND (ki.is_deleted OR ki.archived_at IS NOT NULL)
 )
 AND NOT EXISTS (
   SELECT 1 FROM documents d
@@ -47,7 +47,7 @@ _LIVE_INNER = """
 AND NOT EXISTS (
   SELECT 1 FROM knowledge_revisions kr_live
   JOIN knowledge_items ki ON ki.id = kr_live.item_id
-  WHERE kr_live.id = ru.knowledge_revision_id AND ki.is_deleted
+  WHERE kr_live.id = ru.knowledge_revision_id AND (ki.is_deleted OR ki.archived_at IS NOT NULL)
 )
 AND NOT EXISTS (
   SELECT 1 FROM document_revision_chunks drc_live
