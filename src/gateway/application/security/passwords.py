@@ -23,6 +23,9 @@ def normalize_password(password: str) -> str:
 _SYMBOLS = frozenset(string.punctuation)
 
 
+_DUMMY_HASHES: dict[tuple[int, int, int], str] = {}
+
+
 @dataclass(frozen=True, slots=True)
 class PasswordPolicy:
     min_length: int = 15
@@ -72,7 +75,7 @@ class PasswordService:
             type=Type.ID,
         )
         self._policy = policy or PasswordPolicy()
-        self._dummy_hash: str | None = None
+        self._params = (memory_cost, time_cost, parallelism)
 
     def hash(self, password: str, *, username: str | None = None) -> str:
         normalized = normalize_password(password)
@@ -108,9 +111,11 @@ class PasswordService:
             return False
 
     def dummy_hash(self) -> str:
-        if self._dummy_hash is None:
-            self._dummy_hash = self._hasher.hash("dummy-login-" + "0" * 32)
-        return self._dummy_hash
+        cached = _DUMMY_HASHES.get(self._params)
+        if cached is None:
+            cached = self._hasher.hash("dummy-login-" + "0" * 32)
+            _DUMMY_HASHES[self._params] = cached
+        return cached
 
     def needs_rehash(self, encoded: str) -> bool:
         try:

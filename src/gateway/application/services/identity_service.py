@@ -64,8 +64,16 @@ class IdentityService:
             raise AuthenticationException("Invalid username or password.")
         credential = await self._identity.current_password(member.id)
         if credential is None:
+            try:
+                self._passwords.verify(self._passwords.dummy_hash(), password)
+            except ValueError:
+                pass
             raise AuthenticationException("Invalid username or password.")
         if credential.expires_at is not None and credential.expires_at <= current_time:
+            try:
+                self._passwords.verify(self._passwords.dummy_hash(), password)
+            except ValueError:
+                pass
             raise AuthenticationException("Invalid username or password.")
         if not self._passwords.verify(credential.password_hash, password):
             raise AuthenticationException("Invalid username or password.")
