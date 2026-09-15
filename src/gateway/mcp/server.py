@@ -8,7 +8,7 @@ import logging
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.exceptions import ToolError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from src.gateway.domain.exceptions import GatewayException, QuotaExceededException
 from src.gateway.mcp.auth import quota_error_details
@@ -124,6 +124,12 @@ def _raise_mcp_error(exc: Exception) -> None:
         raise ToolError(f"quota_exceeded: retry after {details['retry_after_seconds']}s") from exc
     if isinstance(exc, GatewayException):
         raise ToolError(f"{exc.code}: {exc.message}") from exc
+    if isinstance(exc, ValidationError):
+        fields = ", ".join(
+            ".".join(str(part) for part in error.get("loc", ())) or "arguments"
+            for error in exc.errors()
+        )
+        raise ToolError(f"invalid_arguments: {fields or 'arguments'}") from exc
     logger = logging.getLogger(__name__)
     logger.error("Unhandled MCP tool error", extra={"exception_class": type(exc).__name__})
     raise ToolError("internal_error: An internal server error occurred.") from exc

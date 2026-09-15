@@ -187,4 +187,46 @@ describe("apiRequest", () => {
     expect(await firstSearch.json()).toEqual(searchBody);
     expect(await retrySearch.json()).toEqual(searchBody);
   });
+
+  it("retries a throttled idempotent read once after the server delay", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: "quota_exceeded", details: { retry_after_seconds: 1 } } }), { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await apiRequest<{ items: unknown[] }>("/api/v1/spaces");
+
+    expect(response.items).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not replay a throttled non-idempotent mutation", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: "quota_exceeded", details: { retry_after_seconds: 1 } } }), { status: 429 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiRequest("/api/v1/knowledge", { body: { content: "family" }, method: "POST" }))
+      .rejects.toMatchObject({ code: "quota_exceeded", status: 429 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("replays a throttled generated idempotent search once", async () => {
+    const searchBody = { query: "family", limit: 5, semantic_policy: "prefer" as const };
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: "quota_exceeded", details: { retry_after_seconds: 1 } } }), { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ hits: [], query: "family" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await contractData(contractClient.POST("/api/v1/retrieval/search", {
+      body: searchBody,
+      params: { header: { "Idempotency-Key": "search-quota-key" } },
+    }));
+
+    expect(result).toEqual({ hits: [], query: "family" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

@@ -5,6 +5,9 @@ import type { paths } from "@/lib/generated/openapi";
 export type ApiErrorPayload = {
   error?: {
     code?: string;
+    details?: {
+      retry_after_seconds?: number;
+    };
     message?: string;
     type?: string;
   };
@@ -15,6 +18,7 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly requestId?: string;
+  readonly retryAfterSeconds?: number;
 
   constructor(status: number, payload: ApiErrorPayload) {
     super(payload.error?.message || "The request could not be completed.");
@@ -22,10 +26,30 @@ export class ApiError extends Error {
     this.status = status;
     this.code = payload.error?.code || "request_failed";
     this.requestId = payload.request_id;
+    const retryAfter = payload.error?.details?.retry_after_seconds;
+    if (typeof retryAfter === "number" && Number.isFinite(retryAfter) && retryAfter > 0) {
+      this.retryAfterSeconds = retryAfter;
+    }
     if (this.code === "recent_authentication_required" && typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("openknowledge-step-up-required"));
     }
   }
+}
+
+const quotaRetryMaxDelayMs = 5_000;
+
+function quotaRetryDelayMs(error: ApiError): number | null {
+  if (error.status !== 429) {
+    return null;
+  }
+  const seconds = error.retryAfterSeconds ?? 1;
+  return Math.min(Math.max(seconds, 0), quotaRetryMaxDelayMs / 1000) * 1000;
+}
+
+function delayMs(duration: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, duration);
+  });
 }
 
 function timeoutError(): ApiError {
@@ -223,6 +247,16 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       await refreshSession();
       return rawRequest<T>(path, { ...tracedOptions, retryAuthentication: false });
     }
+    if (
+      error instanceof ApiError &&
+      (tracedOptions.method === undefined || tracedOptions.method === "GET" || tracedOptions.idempotent === true)
+    ) {
+      const retryDelay = quotaRetryDelayMs(error);
+      if (retryDelay !== null) {
+        await delayMs(retryDelay);
+        return rawRequest<T>(path, tracedOptions);
+      }
+    }
     throw error;
   }
 }
@@ -268,6 +302,13 @@ export async function apiMultipart<T>(
       await refreshSession();
       return execute();
     }
+    if (error instanceof ApiError && options.idempotent === true) {
+      const retryDelay = quotaRetryDelayMs(error);
+      if (retryDelay !== null) {
+        await delayMs(retryDelay);
+        return execute();
+      }
+    }
     throw error;
   }
 }
@@ -305,15 +346,32 @@ const contractFetch: typeof fetch = async (input, init) => {
   }
   const pathname = new URL(initial.url).pathname;
   const retryable = initial.method === "GET" || initial.method === "HEAD" || initial.headers.has("Idempotency-Key");
+  let retried = false;
   if (response.status === 401 && retryable && !pathname.startsWith("/api/v1/auth/")) {
     await refreshSession();
     try {
       response = await fetch(prepareContractRequest(retry));
+      retried = true;
     } catch (requestError: unknown) {
       if (isTimeout(requestError)) {
         throw timeoutError();
       }
       throw requestError;
+    }
+  }
+  if (response.status === 429 && retryable && !retried) {
+    const payload = await response.json().catch(() => ({}));
+    const retryDelay = quotaRetryDelayMs(new ApiError(response.status, payload as ApiErrorPayload));
+    if (retryDelay !== null) {
+      await delayMs(retryDelay);
+      try {
+        response = await fetch(prepareContractRequest(retry));
+      } catch (requestError: unknown) {
+        if (isTimeout(requestError)) {
+          throw timeoutError();
+        }
+        throw requestError;
+      }
     }
   }
   return response;

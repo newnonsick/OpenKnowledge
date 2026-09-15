@@ -56,7 +56,7 @@ const sidebarGeom = await page.evaluate(() => {
 check("sidebar fits viewport at 900px height", sidebarGeom.footerBottom <= sidebarGeom.viewportH && sidebarGeom.accountMenuVisible, JSON.stringify(sidebarGeom));
 await page.screenshot({ path: `${shots}/02-dashboard.png` });
 
-await page.getByRole("link", { name: "Explore" }).click();
+await page.getByRole("link", { name: "Explore", exact: true }).click();
 await page.waitForURL("**/explore");
 await page.waitForTimeout(900);
 await page.getByRole("searchbox", { name: "Search query" }).fill("family recipes wifi");
@@ -67,7 +67,7 @@ const matchesHeading = await page.locator(".results-toolbar h2").textContent();
 check("explore pluralizes matches", matchesHeading === null || !matchesHeading.includes("1 matches"), matchesHeading ?? "no heading");
 await page.screenshot({ path: `${shots}/03-explore-results.png` });
 
-await page.getByRole("link", { name: "Spaces" }).click();
+await page.getByRole("link", { name: "Spaces", exact: true }).click();
 await page.waitForURL("**/spaces");
 await page.waitForTimeout(1600);
 const idLineCount = await page.locator(".space-card > div > p").evaluateAll((els) => els.filter((el) => /^space-[0-9a-f]{20,}/.test(el.textContent.trim())).length);
@@ -89,18 +89,21 @@ if (await manageBtn.count()) {
 await page.screenshot({ path: `${shots}/04-spaces-access.png` });
 
 const spaceSearch = page.getByRole("searchbox", { name: "Search spaces" });
+const sidebarCountBefore = await page.locator(".family-card, .sidebar").first().textContent().catch(() => "");
 await spaceSearch.fill("Family Shared");
 await page.locator("form").filter({ has: spaceSearch }).getByRole("button", { name: "Apply" }).click();
 await page.waitForTimeout(1200);
-const familyCardCount = await page.getByText("1 accessible space").count();
-check("sidebar keeps global space count under search filter", familyCardCount === 0, "filtered sidebar text found: " + familyCardCount);
+const sidebarCountText = await page.locator(".family-card, .sidebar").first().textContent().catch(() => "");
+const beforeCount = (sidebarCountBefore ?? "").match(/(\d+) accessible spaces?/);
+const afterCount = (sidebarCountText ?? "").match(/(\d+) accessible spaces?/);
+check("sidebar keeps global space count under search filter", Boolean(beforeCount && afterCount && beforeCount[1] === afterCount[1]), `${beforeCount?.[0]} -> ${afterCount?.[0]}`);
 const filteredPagination = await page.locator(".pagination-summary").allTextContents();
 check("filtered single result hides pagination", filteredPagination.filter((t) => t.includes("1–1 of 1")).length === 0, JSON.stringify(filteredPagination));
 await page.screenshot({ path: `${shots}/05-spaces-filtered.png` });
 await page.getByRole("button", { name: "Clear" }).click();
 await page.waitForTimeout(800);
 
-await page.getByRole("link", { name: "Knowledge" }).click();
+await page.getByRole("link", { name: "Knowledge", exact: true }).click();
 await page.waitForURL("**/knowledge");
 await page.waitForTimeout(1600);
 await page.getByLabel("Title").fill("Verify probe note");
@@ -136,10 +139,10 @@ await page.waitForTimeout(400);
 await page.getByRole("alertdialog", { name: "Archive Verify probe note" }).getByRole("button", { name: "Confirm archive" }).click();
 await page.waitForTimeout(1500);
 
-await page.getByRole("link", { name: "Sources" }).click();
+await page.getByRole("link", { name: "Sources", exact: true }).click();
 await page.waitForURL("**/sources");
 await page.waitForTimeout(1600);
-const firstArchive = page.getByRole("button", { name: /^Archive .* source/ }).first();
+const firstArchive = page.getByRole("button", { name: /^Archive .+/ }).first();
 if (await firstArchive.count()) {
   const rowTitle = await firstArchive.evaluate((el) => el.getAttribute("aria-label").replace("Archive ", ""));
   await firstArchive.click();
@@ -158,14 +161,15 @@ if (await firstArchive.count()) {
   check("sources empty state is clear", await page.locator(".console-empty").filter({ hasText: /No source/i }).count() === 1);
 }
 
-await page.getByRole("link", { name: "Activity" }).click();
+await page.getByRole("link", { name: "Activity", exact: true }).click();
 await page.waitForURL("**/activity");
 await page.waitForTimeout(1800);
 await page.getByLabel("Filter audit outcome").selectOption("denied");
+await page.locator("form").filter({ has: page.getByLabel("Filter audit outcome") }).getByRole("button", { name: "Apply" }).click();
 await page.waitForTimeout(1400);
 const deniedRows = await page.locator(".audit-row").count();
 const deniedPills = await page.locator(".audit-row .status-pill").allTextContents();
-check("outcome filter applies without Apply click", deniedRows === 0 || deniedPills.every((t) => t === "denied"), `${deniedRows} rows`);
+check("outcome filter applies with Apply click", deniedRows === 0 || deniedPills.every((t) => t === "denied"), `${deniedRows} rows`);
 await page.getByRole("button", { name: "Clear" }).click();
 await page.waitForTimeout(1200);
 const jumpInput = page.getByRole("textbox", { name: /Jump to page/ });
@@ -189,7 +193,7 @@ if (await jumpInput.count()) {
 }
 await page.screenshot({ path: `${shots}/09-activity-pagination.png` });
 
-await page.getByRole("link", { name: "Settings" }).click();
+await page.getByRole("link", { name: "Settings", exact: true }).click();
 await page.waitForURL("**/settings");
 await page.waitForTimeout(1800);
 const keyName = `Verify Probe ${Date.now().toString(36)}`;
@@ -199,7 +203,7 @@ await page.waitForTimeout(1600);
 const secretBanner = await page.getByText("Copy this key now").count();
 check("API key secret banner shows once", secretBanner === 1);
 const revokeRow = page.getByRole("article").filter({ hasText: keyName });
-await revokeRow.getByRole("button", { name: `Revoke ${keyName}` }).click();
+await revokeRow.getByRole("button", { name: "Revoke", exact: true }).click();
 await page.waitForTimeout(400);
 await page.getByRole("alertdialog", { name: `Revoke ${keyName}` }).getByRole("button", { name: "Confirm revoke API key" }).click();
 await revokeRow.waitFor({ state: "hidden", timeout: 15000 });

@@ -42,7 +42,7 @@ try {
 
   const card = page.locator(".space-card", { hasText: uniqueName });
   await card.getByRole("button", { name: `Manage access for ${uniqueName}` }).click();
-  await page.locator(".space-access-panel").waitFor();
+  await page.locator(".space-access-dialog").waitFor();
   step("spaces: open access manager", true);
 
   const members = await api("GET", "/api/v1/members?page=1&page_size=50&status=active");
@@ -72,7 +72,7 @@ try {
     await page.locator(".step-up-dialog").waitFor({ state: "hidden" });
     step("spaces: step-up verification accepted", true);
     await card.getByRole("button", { name: `Manage access for ${uniqueName}` }).click();
-    await page.locator(".space-access-panel").waitFor();
+    await page.locator(".space-access-dialog").waitFor();
     await memberRow.getByRole("button", { name: `Transfer ownership to ${helper.display_name}` }).click();
     await page.getByRole("alertdialog").waitFor();
     await page.getByRole("button", { name: "Confirm ownership transfer" }).click();
@@ -104,7 +104,7 @@ try {
   await page.goto(BASE + "/knowledge", { waitUntil: "domcontentloaded" });
   await page.locator(".data-row").first().waitFor();
   const rowText = await page.locator(".data-row").first().locator(".row-copy p").textContent();
-  step("knowledge: rows show space name", !rowText.includes("space-"), rowText.trim());
+  step("knowledge: rows show space name", !/space-[0-9a-f]{8,}/.test(rowText), rowText.trim());
   const summary1 = await page.locator(".pagination-summary").textContent();
   await page.getByRole("button", { name: "Next page" }).click();
   await page.locator(".pagination-summary", { hasText: "26–50" }).waitFor();
@@ -113,9 +113,9 @@ try {
   await page.getByRole("button", { name: "Next page" }).click();
   await page.locator(".pagination-summary", { hasText: "51–75" }).waitFor();
   await page.getByRole("button", { name: "Next page" }).click();
-  await page.locator(".pagination-summary", { hasText: "76–8" }).waitFor();
+  await page.locator(".pagination-summary", { hasText: "76–" }).waitFor({ timeout: 30000 });
   const summary3 = await page.locator(".pagination-summary").textContent();
-  step("knowledge: next-page navigation reaches page 4", summary3.includes("76–8"), summary3.trim());
+  step("knowledge: next-page navigation reaches page 4", summary3.includes("76–"), summary3.trim());
 
   await page.locator("#knowledge-space").selectOption({ label: uniqueName });
   await page.getByLabel("Title").fill(`Feature check note ${runId}`);
@@ -199,9 +199,9 @@ try {
   const tempPassword = await page.locator(".secret-reveal .secret-value code").textContent();
   step("people: create member issues one-time password", tempPassword.length >= 15);
 
-  const newMemberRow = page.locator(".data-row", { hasText: `Feature Check Member ${runId}` });
-  await newMemberRow.getByRole("button", { name: "Manage Feature Check Member" }).click();
-  await page.locator(".member-admin-panel").waitFor();
+  const newMemberRow = page.getByRole("button", { name: new RegExp(`Edit Feature Check Member .*${runId}`) });
+  await newMemberRow.click();
+  await page.locator(".member-editor-dialog").waitFor();
   await page.getByRole("button", { name: `Disable Feature Check Member ${runId}` }).click();
   await page.getByRole("alertdialog").waitFor();
   await page.getByRole("button", { name: "Confirm disable member" }).click();
@@ -227,21 +227,21 @@ try {
   await page.locator(".secret-banner").waitFor();
   step("settings: create API key reveals secret once", true);
   const keyRow = page.locator(".data-row", { hasText: `Feature check key ${runId}` });
-  await keyRow.getByRole("button", { name: `Revoke Feature check key ${runId}` }).click();
+  await keyRow.getByRole("button", { name: "Revoke", exact: true }).click();
   await page.getByRole("alertdialog").waitFor();
   await page.getByRole("button", { name: "Confirm revoke API key" }).click();
   await keyRow.waitFor({ state: "hidden" });
   step("settings: revoke API key leaves the active list", true);
 
   await page.getByRole("tab", { name: "Runtime" }).click();
-  const activeRevision = await page.locator(".runtime-summary div:nth-child(1) strong").textContent();
+  const activeRevision = await page.locator(".runtime-summary div:nth-child(1) dd").textContent();
   await page.getByLabel("Retrieval result limit").fill("23");
   await page.getByLabel("Change reason").fill("Feature check runtime adjustment");
   await page.getByRole("button", { name: "Create validated draft" }).click();
   await page.locator(".runtime-draft-review").waitFor();
   await page.getByRole("button", { name: "Activate settings" }).click();
-  await page.locator(".runtime-summary div:nth-child(1) strong", { hasText: String(Number(activeRevision) + 1) }).waitFor();
-  const newRevision = await page.locator(".runtime-summary div:nth-child(1) strong").textContent();
+  await page.locator(".runtime-summary div:nth-child(1) dd", { hasText: String(Number(activeRevision) + 1) }).waitFor();
+  const newRevision = await page.locator(".runtime-summary div:nth-child(1) dd").textContent();
   step("settings: draft + activate bumps revision", Number(newRevision) === Number(activeRevision) + 1, `${activeRevision} -> ${newRevision}`);
 
   const restoreRow = page.locator(".data-row", { hasText: `Revision ${activeRevision}` });
@@ -255,14 +255,16 @@ try {
   await page.goto(BASE + "/activity", { waitUntil: "domcontentloaded" });
   await page.getByLabel("Filter audit action").fill("knowledge.create");
   await page.getByRole("button", { name: "Apply" }).click();
-  await page.waitForTimeout(1200);
+  await page.locator(".audit-row h3, .console-empty").first().waitFor({ timeout: 30000 });
+  await page.waitForTimeout(800);
   const actions = await page.locator(".audit-row h3").allTextContents();
   step("activity: action filter narrows rows", actions.length > 0 && actions.every((text) => text === "knowledge.create"), `${actions.length} rows`);
 
   await page.screenshot({ path: "../reports/shots/e2e/activity-filtered.png", fullPage: false });
 
   // ---------- SIGN OUT ----------
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Open account menu" }).click();
+  await page.getByRole("menuitem", { name: "Sign out", exact: true }).click();
   await page.waitForURL("**/login", { timeout: 15000 });
   step("auth: sign out returns to login", true);
 

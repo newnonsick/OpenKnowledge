@@ -778,3 +778,35 @@ async def test_document_legacy_global_flag_does_not_expand_requested_space():
             limit=5,
         )
         assert results == []
+
+
+# ==============================================================================
+
+
+def test_mcp_validation_errors_report_fields_not_internal_error():
+    from mcp.server.mcpserver.exceptions import ToolError
+    from pydantic import ValidationError
+
+    from src.gateway.mcp.contracts import MCPCreateArguments
+    from src.gateway.mcp.server import _raise_mcp_error
+
+    try:
+        MCPCreateArguments(space_id="s", title="t", content="c", tags=[], idempotency_key="")
+        raise AssertionError("expected ValidationError")
+    except ValidationError as exc:
+        with __import__("pytest").raises(ToolError) as captured:
+            _raise_mcp_error(exc)
+    assert "invalid_arguments" in str(captured.value)
+    assert "idempotency_key" in str(captured.value)
+    assert "internal_error" not in str(captured.value)
+
+
+def test_mcp_unexpected_errors_stay_sanitized():
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from src.gateway.mcp.server import _raise_mcp_error
+
+    with __import__("pytest").raises(ToolError) as captured:
+        _raise_mcp_error(RuntimeError("conn postgresql://secret:hunter2 exploded"))
+    assert "internal_error" in str(captured.value)
+    assert "hunter2" not in str(captured.value)
