@@ -755,8 +755,14 @@ async def test_mcp_quota_not_bypassed_by_rotating_space(mcp_provisioned) -> None
                         {"query": "x", "active_space_id": f"rotated-{index}"},
                         api_key=raw_key,
                     )
-                    results.append(result["isError"])
-                assert any(results) is True
+                    results.append(result)
+                throttled = [result for result in results if result["isError"] is True]
+                assert throttled, "rotating active_space_id must not bypass the burst guard"
+                assert any(
+                    "quota_exceeded" in content.get("text", "")
+                    for result in throttled
+                    for content in result["content"]
+                )
     finally:
         mcp_auth_module.quota_service_from_settings = real_factory
 
