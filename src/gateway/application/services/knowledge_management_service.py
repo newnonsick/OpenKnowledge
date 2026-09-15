@@ -331,6 +331,18 @@ class KnowledgeManagementService:
         item.archived_at = now
         item.updated_at = now
         item.revision += 1
+        from src.gateway.application.services.knowledge_enrichment_service import ENRICHMENT_JOB_TYPE
+
+        await self._session.execute(
+            update(IngestionJobModel)
+            .where(
+                IngestionJobModel.job_type == ENRICHMENT_JOB_TYPE,
+                IngestionJobModel.knowledge_item_id == item.id,
+                IngestionJobModel.state.in_(("queued", "running", "retry_wait")),
+                IngestionJobModel.cancellation_requested.is_(False),
+            )
+            .values(cancellation_requested=True, updated_at=now)
+        )
         await self._session.execute(
             update(RetrievalUnitModel)
             .where(

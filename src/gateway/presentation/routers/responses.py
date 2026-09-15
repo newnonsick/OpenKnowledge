@@ -28,15 +28,18 @@ from src.gateway.domain.canonical import (
     CanonicalToolUseBlock,
 )
 from src.gateway.domain.exceptions import (
+    AuthorizationException,
     GatewayException,
     ToolExecutionException,
 )
+from src.gateway.domain.identity import Principal
 from src.gateway.domain.tools import FunctionDefinition, ToolDefinition
 from src.gateway.infrastructure.adapters.http_embedding_client import HTTPEmbeddingClient
 from src.gateway.infrastructure.adapters.http_llm_client import HttpLLMClient
 from src.gateway.infrastructure.persistence.retrieval_unit_repository import PostgresRetrievalUnitRepository
 from src.gateway.infrastructure.runtime_settings_provider import load_active_retrieval_settings, load_active_runtime_policy
 from src.gateway.presentation.authorization import require_scope
+from src.gateway.application.services.permission_service import require_profile_route
 from src.gateway.presentation.quota_usage import record_token_usage
 from src.gateway.presentation.schemas.openai_schemas import (
     OpenAIErrorResponse,
@@ -61,6 +64,13 @@ UNSUPPORTED_RESPONSES_FIELDS = (
     "previous_response_id",
     "parallel_tool_calls",
 )
+
+
+def _request_principal(http_request: Request) -> Principal:
+    principal = getattr(http_request.state, "principal", None)
+    if principal is None:
+        raise AuthorizationException()
+    return principal
 
 
 def reject_unsupported_field(field: str) -> JSONResponse:
@@ -248,6 +258,7 @@ async def create_response(
     orchestrator: IChatOrchestrator = Depends(get_chat_orchestrator),
     model_registry: ModelRegistryService = Depends(get_model_registry),
 ) -> Union[ResponsesResponse, StreamingResponse, JSONResponse]:
+    require_profile_route(_request_principal(http_request), "chat.execute")
     try:
         for field in UNSUPPORTED_RESPONSES_FIELDS:
             if getattr(request, field) is not None:

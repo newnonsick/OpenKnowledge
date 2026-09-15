@@ -114,12 +114,24 @@ async def enrich_claim(session: AsyncSession, claim: JobClaim, embedding_client)
         embedding = embeddings[0] if embeddings else None
     if embedding is not None and len(embedding) != generation.dimensions:
         embedding = None
-    locked = await session.scalar(
+    await session.flush()
+    refreshed = await session.scalar(
+        select(IngestionJobModel)
+        .where(IngestionJobModel.id == job.id)
+        .execution_options(populate_existing=True)
+    )
+    current = await session.scalar(
         select(KnowledgeItem)
         .where(KnowledgeItem.id == item.id)
-        .with_for_update()
+        .execution_options(populate_existing=True)
     )
-    if locked is None or locked.is_deleted or locked.archived_at is not None:
+    if (
+        refreshed is None
+        or refreshed.cancellation_requested
+        or current is None
+        or current.is_deleted
+        or current.archived_at is not None
+    ):
         raise ItemNotFoundException()
     revision.embedding = embedding
     await session.execute(
