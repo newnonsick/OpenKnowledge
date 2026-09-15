@@ -2079,6 +2079,8 @@ export interface components {
             abstained: boolean;
             /** Budget Chars */
             budget_chars: number;
+            /** Budget Tokens */
+            budget_tokens: number | null;
             /** Degraded */
             degraded: boolean;
             /** Estimation Method */
@@ -2096,8 +2098,12 @@ export interface components {
             query: string;
             /** Snippets */
             snippets: components["schemas"]["ContextSnippetDetail"][];
+            /** Status */
+            status: string;
             /** Total Chars */
             total_chars: number;
+            /** Total Tokens */
+            total_tokens: number;
         };
         /** ContextSnippetDetail */
         ContextSnippetDetail: {
@@ -2111,6 +2117,8 @@ export interface components {
             revision_id: string;
             /** Snippet */
             snippet: string;
+            /** Source Type */
+            source_type: string;
             /** Space Id */
             space_id: string;
             /** Superseded */

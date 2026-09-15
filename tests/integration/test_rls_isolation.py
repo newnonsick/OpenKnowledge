@@ -63,7 +63,7 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                 await connection.execute(text(f'GRANT USAGE ON SCHEMA public TO "{runtime_role}"'))
                 await connection.execute(
                     text(
-                        "GRANT SELECT ON alembic_version, api_key_scopes, api_key_space_grants, "
+                        "GRANT SELECT ON alembic_version, api_key_quota_policies, api_key_scopes, api_key_space_grants, "
                         "api_key_budget_usage, audit_events, "
                         "compatibility_principals, document_chunks, document_files, "
                         "document_revision_chunks, document_revisions, documents, "
@@ -72,34 +72,40 @@ async def test_forced_rls_fails_closed_and_transaction_context_does_not_leak() -
                         "login_throttle_buckets, members, mfa_factors, mfa_recovery_codes, "
                         "password_credentials, pending_ai_actions, personal_api_keys, session_credentials, "
                         "provenance_links, retrieval_units, session_families, "
+                        "source_connector_files, source_connectors, "
+                        "webhook_deliveries, webhook_subscriptions, "
                         f'runtime_setting_revisions, space_memberships, workspaces TO "{runtime_role}"'
                     )
                 )
                 await connection.execute(
                     text(
-                        "GRANT INSERT ON api_key_scopes, api_key_space_grants, api_key_budget_usage, audit_events, "
+                        "GRANT INSERT ON api_key_quota_policies, api_key_scopes, api_key_space_grants, api_key_budget_usage, audit_events, "
                         "document_chunks, document_files, document_revisions, documents, "
                         "idempotency_records, ingestion_jobs, job_outbox, knowledge_items, "
                         "knowledge_revisions, login_throttle_buckets, members, mfa_factors, "
                         "mfa_recovery_codes, password_credentials, pending_ai_actions, personal_api_keys, "
                         "provenance_links, retrieval_units, session_credentials, session_families, "
+                        "source_connector_files, source_connectors, "
+                        "webhook_deliveries, webhook_subscriptions, "
                         "runtime_setting_revisions, space_memberships, workspaces "
                         f'TO "{runtime_role}"'
                     )
                 )
                 await connection.execute(
                     text(
-                        "GRANT UPDATE ON api_key_budget_usage, document_chunks, document_files, "
+                        "GRANT UPDATE ON api_key_budget_usage, api_key_quota_policies, document_chunks, document_files, "
                         "idempotency_records, knowledge_items, "
                         "login_throttle_buckets, members, mfa_factors, mfa_recovery_codes, "
-                        "password_credentials, personal_api_keys, session_credentials, session_families "
+                        "password_credentials, personal_api_keys, session_credentials, session_families, "
+                        "source_connector_files, source_connectors, "
+                        "webhook_deliveries, webhook_subscriptions "
                         f'TO "{runtime_role}"'
                     )
                 )
                 await connection.execute(
                     text(
-                        "GRANT DELETE ON api_key_scopes, api_key_space_grants, document_chunks, document_files, "
-                        f'knowledge_items, space_memberships TO "{runtime_role}"'
+                        "GRANT DELETE ON api_key_quota_policies, api_key_scopes, api_key_space_grants, document_chunks, document_files, "
+                        f'knowledge_items, source_connector_files, source_connectors, space_memberships TO "{runtime_role}"'
                     )
                 )
                 await connection.execute(

@@ -4,21 +4,21 @@ The system uses one PostgreSQL database with the pgvector extension as its only 
 
 ## Schema areas
 
-The schema is versioned through Alembic migrations `001` through `022` under `alembic/versions/`. The tables, as enumerated by the privilege grants in `deploy/grant-runtime.sql`, group into these areas:
+The schema is versioned through Alembic migrations `001` through `032` under `alembic/versions/`. The tables, as enumerated by the privilege grants in `deploy/grant-runtime.sql`, group into these areas:
 
 | Area | Tables | Purpose |
 |---|---|---|
 | Knowledge | `knowledge_items`, `knowledge_revisions` | Items with immutable, hash-chained revisions |
 | Documents and ingestion | `documents`, `document_revisions`, `document_revision_chunks`, `document_chunks`, `document_files`, `retrieval_units`, `embedding_generations`, `ingestion_jobs`, `job_outbox` | Durable source ingestion pipeline, from upload through activation |
-| Identity | `members`, `password_credentials`, `mfa_factors`, `mfa_recovery_codes`, `session_families`, `session_credentials`, `personal_api_keys`, `api_key_scopes`, `api_key_space_grants`, `api_key_budget_usage`, `compatibility_principals` | Accounts, MFA, session families, personal API keys with space grants and budget usage, legacy principals |
-| Authorization | `workspaces` (spaces), `space_memberships` | Spaces and per-member roles |
-| Operations | `audit_events`, `runtime_setting_revisions`, `idempotency_records`, `login_throttle_buckets`, `pending_ai_actions`, `operational_alerts` | Audit trail, runtime settings, idempotency, throttling, confirmed AI actions |
+| Identity | `members`, `password_credentials`, `mfa_factors`, `mfa_recovery_codes`, `session_families`, `session_credentials`, `personal_api_keys`, `api_key_scopes`, `api_key_space_grants`, `api_key_budget_usage`, `api_key_quota_policies`, `compatibility_principals` | Accounts, MFA, session families, personal and service API keys with space grants, budget usage, and quota overrides, legacy principals |
+| Authorization | `workspaces` (spaces), `space_memberships` | Spaces with chunk-policy overrides and per-member roles |
+| Operations | `audit_events`, `runtime_setting_revisions`, `idempotency_records`, `login_throttle_buckets`, `pending_ai_actions`, `operational_alerts`, `webhook_subscriptions`, `webhook_deliveries`, `source_connectors`, `source_connector_files` | Audit trail, runtime settings, idempotency, throttling, confirmed AI actions, webhook fan-out, git source connectors |
 | Migration bookkeeping | `alembic_version` | Current schema revision |
 
 Search structures:
 
 - Lexical search uses generated `tsvector` columns with GIN indexes, ranked by `ts_rank_cd`. Migration 015 maintains multilingual index variants.
-- Vector search uses a pgvector column with cosine distance over HNSW indexes. The dimension is fixed by the current schema at 1024 until it is changed with `set-embedding-dimension`, and readiness fails closed when `EMBEDDING_DIMENSION` disagrees.
+- Vector search uses a pgvector column with cosine distance over HNSW indexes. The dimension is fixed by the current schema at the configured `EMBEDDING_DIMENSION` until it is changed with `set-embedding-dimension`, and readiness fails closed when `EMBEDDING_DIMENSION` disagrees.
 
 ## Database roles
 
@@ -27,7 +27,7 @@ The deployment separates database privileges by function. `deploy/postgres-init.
 | Role | Attributes | Used by | Privileges |
 |---|---|---|---|
 | `gateway_runtime` | `NOBYPASSRLS`, no superuser | Gateway API | Row-level selects and the specific inserts, updates, and deletes the runtime performs; column-restricted updates on operational tables |
-| `gateway_worker` | `BYPASSRLS`, no superuser | Background worker | Lease-scoped updates on `ingestion_jobs` and `job_outbox`, revision and retrieval-unit writes, retention function execution |
+| `gateway_worker` | `BYPASSRLS`, no superuser | Background worker | Lease-scoped updates on `ingestion_jobs` and `job_outbox`, revision and retrieval-unit writes, knowledge enrichment embedding writes, webhook delivery leases, retention function execution |
 | `gateway_maintenance` | `NOLOGIN` | Owner of the retention functions | Holds `gateway_run_retention` and `gateway_reject_archived_document_provenance` so their privileges cannot be changed by the runtime roles |
 | `postgres` | Cluster admin | Migrations, permissions service, backup | Full access; used only by the one-shot migrate and permissions services and the backup tooling |
 

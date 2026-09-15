@@ -439,6 +439,7 @@ class ContextSnippetDetail(ContractModel):
     revision_id: str
     citation_uri: str
     version: int | None
+    source_type: str
     superseded: bool
 
 
@@ -447,6 +448,9 @@ class ContextPackageDetail(ContractModel):
     snippets: list[ContextSnippetDetail]
     total_chars: int
     budget_chars: int
+    total_tokens: int
+    budget_tokens: int | None
+    status: str
     omitted_count: int
     omitted_reason: str | None
     abstained: bool

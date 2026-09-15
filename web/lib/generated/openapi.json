@@ -1587,6 +1587,17 @@
             "title": "Budget Chars",
             "type": "integer"
           },
+          "budget_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Tokens"
+          },
           "degraded": {
             "title": "Degraded",
             "type": "boolean"
@@ -1626,8 +1637,16 @@
             "title": "Snippets",
             "type": "array"
           },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
           "total_chars": {
             "title": "Total Chars",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
             "type": "integer"
           }
         },
@@ -1636,6 +1655,9 @@
           "snippets",
           "total_chars",
           "budget_chars",
+          "total_tokens",
+          "budget_tokens",
+          "status",
           "omitted_count",
           "omitted_reason",
           "abstained",
@@ -1667,6 +1689,10 @@
           },
           "snippet": {
             "title": "Snippet",
+            "type": "string"
+          },
+          "source_type": {
+            "title": "Source Type",
             "type": "string"
           },
           "space_id": {
@@ -1707,6 +1733,7 @@
           "revision_id",
           "citation_uri",
           "version",
+          "source_type",
           "superseded"
         ],
         "title": "ContextSnippetDetail",

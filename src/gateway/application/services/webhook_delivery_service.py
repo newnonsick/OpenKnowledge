@@ -230,7 +230,7 @@ class WebhookDeliveryService:
                 WebhookSubscriptionModel.status == "active",
             )
             .order_by(WebhookDeliveryModel.available_at.asc(), WebhookDeliveryModel.id.asc())
-            .with_for_update(skip_locked=True)
+            .with_for_update(of=WebhookDeliveryModel, skip_locked=True)
             .limit(1)
         )
         if candidate is None:

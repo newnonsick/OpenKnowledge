@@ -55,14 +55,14 @@ async def mcp_versions() -> dict[str, Any]:
 @router.get("/mcp/discovery")
 async def mcp_discovery(request: Request) -> dict[str, Any]:
     settings = get_settings()
-    base_url = str(settings.gateway.public_base_url).rstrip("/")
-    return discovery_payload(base_url or str(request.base_url).rstrip("/"))
+    base_url = (settings.gateway.public_base_url or "").rstrip("/") or str(request.base_url).rstrip("/")
+    return discovery_payload(base_url)
 
 
 @router.get("/.well-known/oauth-protected-resource/mcp")
 async def mcp_protected_resource(request: Request) -> JSONResponse:
     settings = get_settings()
-    base_url = str(settings.gateway.public_base_url).rstrip("/") or str(request.base_url).rstrip("/")
+    base_url = (settings.gateway.public_base_url or "").rstrip("/") or str(request.base_url).rstrip("/")
     gateway = settings.gateway
     issuer = (gateway.oidc_issuer or "").rstrip("/") if gateway.oidc_enabled else ""
     metadata = {

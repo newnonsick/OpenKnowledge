@@ -3546,6 +3546,8 @@ async def update_member(
         "system_role": member.system_role,
         "requires_password_change": member.force_password_change,
         "mfa_enabled": mfa_enabled,
+        "created_at": member.created_at.isoformat(),
+        "updated_at": member.updated_at.isoformat(),
     }
 
 

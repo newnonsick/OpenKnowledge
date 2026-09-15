@@ -243,6 +243,7 @@ async def principal_session(
 async def _validate_runtime_database_connection(connection) -> None:
     runtime_tables = (
         "alembic_version",
+        "api_key_quota_policies",
         "api_key_scopes",
         "api_key_space_grants",
         "api_key_budget_usage",
@@ -271,7 +272,11 @@ async def _validate_runtime_database_connection(connection) -> None:
         "runtime_setting_revisions",
         "session_credentials",
         "session_families",
+        "source_connector_files",
+        "source_connectors",
         "space_memberships",
+        "webhook_deliveries",
+        "webhook_subscriptions",
         "workspaces",
     )
     role = (
@@ -379,6 +384,7 @@ async def _validate_runtime_database_connection(connection) -> None:
         "api_key_scopes": ("SELECT", "INSERT", "DELETE"),
         "api_key_space_grants": ("SELECT", "INSERT", "DELETE"),
         "api_key_budget_usage": ("SELECT", "INSERT", "UPDATE"),
+        "api_key_quota_policies": ("SELECT", "INSERT", "UPDATE", "DELETE"),
         "audit_events": ("SELECT", "INSERT"),
         "compatibility_principals": ("SELECT",),
         "document_chunks": ("SELECT", "INSERT", "UPDATE", "DELETE"),
@@ -404,7 +410,11 @@ async def _validate_runtime_database_connection(connection) -> None:
         "runtime_setting_revisions": ("SELECT", "INSERT"),
         "session_credentials": ("SELECT", "INSERT", "UPDATE"),
         "session_families": ("SELECT", "INSERT", "UPDATE"),
+        "source_connector_files": ("SELECT", "INSERT", "UPDATE", "DELETE"),
+        "source_connectors": ("SELECT", "INSERT", "UPDATE", "DELETE"),
         "space_memberships": ("SELECT", "INSERT", "DELETE"),
+        "webhook_deliveries": ("SELECT", "INSERT", "UPDATE"),
+        "webhook_subscriptions": ("SELECT", "INSERT", "UPDATE"),
         "workspaces": ("SELECT", "INSERT"),
     }
     missing_privileges = []
@@ -617,6 +627,8 @@ async def _validate_worker_database_connection(connection) -> None:
         "embedding_generations": ("SELECT",),
         "ingestion_jobs": ("SELECT",),
         "job_outbox": ("SELECT", "INSERT"),
+        "knowledge_items": ("SELECT",),
+        "knowledge_revisions": ("SELECT",),
         "members": ("SELECT",),
         "operational_alerts": ("SELECT", "INSERT"),
         "retrieval_units": ("SELECT", "INSERT"),
@@ -662,6 +674,7 @@ async def _validate_worker_database_connection(connection) -> None:
             "published_at",
             "updated_at",
         ),
+        "knowledge_revisions": ("embedding",),
         "retrieval_units": ("active", "deactivated_at"),
         "webhook_deliveries": (
             "state",

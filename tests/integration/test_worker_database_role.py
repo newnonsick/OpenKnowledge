@@ -40,7 +40,8 @@ async def test_worker_role_is_privileged_only_for_fenced_background_work() -> No
             await connection.execute(
                 text(
                     "GRANT SELECT ON document_revision_chunks, document_revisions, documents, "
-                    "embedding_generations, ingestion_jobs, job_outbox, members, retrieval_units, "
+                    "embedding_generations, ingestion_jobs, job_outbox, knowledge_items, knowledge_revisions, "
+                    "members, retrieval_units, "
                     f'operational_alerts, space_memberships, webhook_deliveries, webhook_subscriptions, workspaces TO "{worker_role}"'
                 )
             )
@@ -81,6 +82,12 @@ async def test_worker_role_is_privileged_only_for_fenced_background_work() -> No
                 text(
                     "GRANT UPDATE (active, deactivated_at) "
                     f'ON retrieval_units TO "{worker_role}"'
+                )
+            )
+            await connection.execute(
+                text(
+                    "GRANT UPDATE (embedding) "
+                    f'ON knowledge_revisions TO "{worker_role}"'
                 )
             )
             await connection.execute(

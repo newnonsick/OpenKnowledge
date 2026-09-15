@@ -5,8 +5,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 
-revision: str = "029"
-down_revision: Union[str, None] = "028"
+revision: str = "032"
+down_revision: Union[str, None] = "031"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -49,11 +49,13 @@ def upgrade() -> None:
             "window_seconds IS NULL OR window_seconds > 0",
             name="ck_api_key_quota_policies_window",
         ),
+        if_not_exists=True,
     )
     op.create_index(
         "ix_api_key_quota_policies_key",
         "api_key_quota_policies",
         ["api_key_id"],
+        if_not_exists=True,
     )
     op.execute("REVOKE ALL ON api_key_quota_policies FROM PUBLIC")
 
