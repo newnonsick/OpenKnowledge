@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import event, select
+from sqlalchemy import event, select, text
 
 from src.gateway.domain.entities import KnowledgeItem as DomainKnowledgeItem, KnowledgeRevision as DomainKnowledgeRevision
 from src.gateway.domain.identity import Principal, PrincipalKind, SystemRole
@@ -484,6 +484,46 @@ async def test_deleted_items_and_archived_documents_are_excluded_from_search() -
                     embedding=None,
                     active=True,
                 )
+            )
+            await session.flush()
+            orphan_revision_id = uuid4()
+            missing_item_id = uuid4()
+            await session.execute(
+                text("SET LOCAL session_replication_role = 'replica'")
+            )
+            await session.execute(
+                text(
+                    "INSERT INTO knowledge_revisions "
+                    "(id, item_id, space_id, version, title, content_hash, content, tags, "
+                    "embedding, author, author_member_id) "
+                    "VALUES (:id, :item_id, 'exclusion', 1, "
+                    f"'orphan unit {marker}', :hash, "
+                    f"'orphan projection carrying {marker} token', '[]', "
+                    "NULL, 'test', :member_id)"
+                ),
+                {
+                    "id": orphan_revision_id,
+                    "item_id": missing_item_id,
+                    "hash": orphan_revision_id.hex.ljust(64, "0")[:64],
+                    "member_id": member_id,
+                },
+            )
+            await session.execute(
+                text(
+                    "INSERT INTO retrieval_units "
+                    "(id, space_id, source_type, knowledge_revision_id, "
+                    "embedding_generation_id, title, content, language, source_metadata, "
+                    "embedding, active) "
+                    "VALUES (:id, 'exclusion', 'knowledge_revision', :revision_id, "
+                    ":generation_id, "
+                    f"'orphan unit {marker}', "
+                    f"'orphan projection carrying {marker} token', 'en', '{{}}', "
+                    f"'[{','.join(['1.0'] + ['0.0'] * (EMBED_DIM - 1))}]', true)"
+                ),
+                {"id": uuid4(), "revision_id": orphan_revision_id, "generation_id": generation_id},
+            )
+            await session.execute(
+                text("SET LOCAL session_replication_role = 'origin'")
             )
 
         principal = Principal(
