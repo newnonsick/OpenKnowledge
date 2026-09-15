@@ -888,3 +888,49 @@ async def test_enrichment_retry_activation_marks_deleted_item_precondition_faile
     await IngestionJobService(session)._activate_retry_requests(datetime.now(timezone.utc))
     assert job.retry_requested is False
     assert job.last_error_code == "retry_precondition_failed"
+
+
+def test_ai_knowledge_tag_bounds_match_rest_contract():
+    from pydantic import ValidationError
+
+    from src.gateway.presentation.routers.management import (
+        AIKnowledgeCreateArguments,
+        AIKnowledgeUpdateArguments,
+    )
+
+    with __import__("pytest").raises(ValidationError):
+        AIKnowledgeCreateArguments(
+            space_id="s", title="t", content="c", tags=[f"t{i}" for i in range(33)]
+        )
+    with __import__("pytest").raises(ValidationError):
+        AIKnowledgeCreateArguments(space_id="s", title="t", content="c", tags=["x" * 81])
+    with __import__("pytest").raises(ValidationError):
+        AIKnowledgeUpdateArguments(
+            item_id="00000000-0000-0000-0000-000000000000",
+            expected_version=1,
+            title="t",
+            content="c",
+            tags=["x" * 81],
+        )
+    ok = AIKnowledgeCreateArguments(space_id="s", title="t", content="c", tags=["a", "b"])
+    assert ok.tags == ["a", "b"]
+
+
+def test_mcp_knowledge_tag_items_bounded_to_80_chars():
+    from pydantic import ValidationError
+
+    from src.gateway.mcp.contracts import MCPCreateArguments, MCPUpdateArguments
+
+    with __import__("pytest").raises(ValidationError):
+        MCPCreateArguments(
+            space_id="s", title="t", content="c", tags=["x" * 81], idempotency_key="k"
+        )
+    with __import__("pytest").raises(ValidationError):
+        MCPUpdateArguments(
+            item_id="i",
+            expected_version=1,
+            title="t",
+            content="c",
+            tags=[f"t{i}" for i in range(33)],
+            idempotency_key="k",
+        )
