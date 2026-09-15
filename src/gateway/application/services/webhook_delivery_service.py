@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
+import socket
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -67,6 +68,32 @@ def _validate_webhook_url(url: str) -> str:
     return normalized_url
 
 
+async def _resolve_webhook_host(hostname: str) -> None:
+    try:
+        resolved = await asyncio.get_running_loop().getaddrinfo(
+            hostname, 443, type=socket.SOCK_STREAM
+        )
+    except (OSError, UnicodeError) as exc:
+        raise ValidationException("Webhook URL host could not be resolved.") from exc
+    for family, _, _, _, sockaddr in resolved:
+        address = sockaddr[0]
+        if family == socket.AF_INET6:
+            address = address.strip("[]")
+        try:
+            parsed = ipaddress.ip_address(address)
+        except ValueError:
+            raise ValidationException("Webhook URL must not target internal addresses.")
+        if (
+            parsed.is_loopback
+            or parsed.is_unspecified
+            or parsed.is_link_local
+            or parsed.is_private
+            or parsed.is_reserved
+            or parsed.is_multicast
+        ):
+            raise ValidationException("Webhook URL must not target internal addresses.")
+
+
 @dataclass(frozen=True, slots=True)
 class DeliveryClaim:
     delivery_id: UUID
@@ -92,6 +119,7 @@ class WebhookSubscriptionService:
         from src.gateway.application.services.authorization_service import AuthorizationService
 
         normalized_url = _validate_webhook_url(url)
+        await _resolve_webhook_host(urlparse(normalized_url).hostname or "")
         if not secret or len(secret) > 512:
             raise ValidationException("Webhook secret must contain between 1 and 512 characters.")
         try:

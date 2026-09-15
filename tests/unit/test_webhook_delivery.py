@@ -238,3 +238,31 @@ async def test_revoked_subscriber_delivery_fails_closed(factory) -> None:
     await subscriptions.revoke(_principal(member_id), subscription_id=subscription.id)
     assert await deliveries.claim_next("worker-1") is None
     await session.close()
+
+
+def test_webhook_dns_names_resolving_internal_are_rejected():
+    import socket
+
+    from src.gateway.application.services.webhook_delivery_service import _resolve_webhook_host
+    from src.gateway.domain.exceptions import ValidationException
+
+    real_getaddrinfo = socket.getaddrinfo
+
+    class _FakeLoop:
+        async def getaddrinfo(self, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))]
+
+    import asyncio
+
+    async def run() -> None:
+        loop = _FakeLoop()
+        real = asyncio.get_running_loop
+        asyncio.get_running_loop = lambda: loop  # type: ignore[assignment]
+        try:
+            await _resolve_webhook_host("internal.example")
+        finally:
+            asyncio.get_running_loop = real  # type: ignore[assignment]
+
+    with __import__("pytest").raises(ValidationException):
+        asyncio.run(run())
+    assert real_getaddrinfo is socket.getaddrinfo
