@@ -178,3 +178,27 @@ def test_secret_values_and_principals_are_redacted_and_non_serializable() -> Non
     assert principal.subject_id == "member-1"
     with pytest.raises(Exception):
         principal.subject_id = "member-2"
+
+
+def test_totp_counter_match_accepts_current_code_once() -> None:
+    import time
+
+    import pyotp
+
+    service = MFASecretService.generate()
+    secret = service.new_totp_secret()
+    encrypted = service.encrypt_secret(secret)
+    current = pyotp.TOTP(secret.reveal()).now()
+    first = service.match_totp_counter(encrypted, current)
+    assert isinstance(first, int)
+    assert first == int(time.time()) // 30
+    assert service.match_totp_counter(encrypted, "000000") is None
+
+
+def test_password_dummy_hash_is_stable_and_never_matches() -> None:
+    from src.gateway.application.security.passwords import PasswordService
+
+    service = PasswordService()
+    first = service.dummy_hash()
+    assert first == service.dummy_hash()
+    assert service.verify(first, "wrong-password-1") is False

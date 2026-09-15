@@ -521,6 +521,19 @@ async def _family_id(session: AsyncSession, principal: Principal) -> UUID:
     return credential.family_id
 
 
+async def _optional_family_id(session: AsyncSession, principal: Principal) -> UUID | None:
+    if principal.kind is not PrincipalKind.SESSION or principal.credential_id is None:
+        return None
+    try:
+        credential_id = UUID(principal.credential_id)
+    except ValueError:
+        return None
+    credential = await session.get(SessionCredentialModel, credential_id)
+    if credential is None or credential.revoked_at is not None:
+        return None
+    return credential.family_id
+
+
 def _contains_pattern(value: str) -> str:
     escaped = value.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
@@ -3279,6 +3292,7 @@ async def create_service_key(
                 expires_at=payload.expires_at,
             ),
             request_id=get_request_id(request),
+            family_id=await _optional_family_id(session, principal),
         )
     except ValueError as exc:
         raise ValidationException(str(exc)) from exc

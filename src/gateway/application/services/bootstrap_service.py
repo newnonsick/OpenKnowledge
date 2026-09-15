@@ -12,7 +12,7 @@ from src.gateway.application.security.tokens import SecretValue
 from src.gateway.application.services.audit_service import AuditService
 from src.gateway.domain.identity import MemberStatus, SpaceRole, SystemRole, normalize_username
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
-from src.gateway.infrastructure.persistence.identity_models import MFAFactorModel, MemberModel, PasswordCredentialModel, SessionFamilyModel, SpaceMembershipModel
+from src.gateway.infrastructure.persistence.identity_models import MFAFactorModel, MemberModel, PasswordCredentialModel, PersonalAPIKeyModel, SessionFamilyModel, SpaceMembershipModel
 from src.gateway.infrastructure.persistence.identity_repository import IdentityRepository
 from src.gateway.infrastructure.persistence.models import Workspace
 
@@ -159,6 +159,14 @@ class BootstrapService:
             update(MFAFactorModel)
             .where(MFAFactorModel.member_id == member.id, MFAFactorModel.retired_at.is_(None))
             .values(retired_at=current_time)
+        )
+        await self._session.execute(
+            update(PersonalAPIKeyModel)
+            .where(
+                PersonalAPIKeyModel.member_id == member.id,
+                PersonalAPIKeyModel.status == "active",
+            )
+            .values(status="revoked", revoked_at=current_time)
         )
         self._audit.record(
             actor_member_id=member.id,

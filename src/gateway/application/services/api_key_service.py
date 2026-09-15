@@ -201,6 +201,7 @@ class APIKeyService:
         credential_name: str,
         spec: ServiceCredentialSpec,
         request_id: str,
+        family_id: UUID | None = None,
         now: datetime | None = None,
     ) -> CreatedAPIKey:
         normalized_application = application_id.strip()
@@ -218,6 +219,8 @@ class APIKeyService:
         if actor.kind is PrincipalKind.SERVICE:
             raise AuthorizationException()
         current_time = now or datetime.now(timezone.utc)
+        if actor.kind is PrincipalKind.SESSION:
+            await self._require_session_step_up(actor, family_id, current_time)
         if spec.expires_at is not None and spec.expires_at <= current_time:
             raise ValueError("API key expiration must be in the future")
         owner_id = UUID(actor.subject_id)
@@ -280,6 +283,34 @@ class APIKeyService:
             normalized_grants,
             spec.permission_profile,
         )
+
+    async def _require_session_step_up(
+        self,
+        actor: Principal,
+        family_id: UUID | None,
+        current_time: datetime,
+    ) -> None:
+        if family_id is None:
+            raise RecentAuthenticationRequiredException()
+        try:
+            actor_id = UUID(actor.subject_id)
+        except ValueError as exc:
+            raise AuthorizationException() from exc
+        family = await self._session.scalar(
+            select(SessionFamilyModel)
+            .where(SessionFamilyModel.id == family_id)
+            .with_for_update()
+        )
+        if (
+            family is None
+            or family.member_id != actor_id
+            or family.revoked_at is not None
+            or current_time >= family.idle_expires_at
+            or current_time >= family.absolute_expires_at
+            or family.last_step_up_at is None
+            or current_time - family.last_step_up_at > self._step_up_window
+        ):
+            raise RecentAuthenticationRequiredException()
 
     async def _validate_service_grants(
         self,

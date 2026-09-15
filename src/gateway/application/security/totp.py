@@ -59,6 +59,27 @@ class MFASecretService:
         secret = self.decrypt_secret(encrypted, key_version=key_version).reveal()
         return bool(pyotp.TOTP(secret).verify(code, valid_window=valid_window))
 
+    def match_totp_counter(
+        self,
+        encrypted: bytes,
+        code: str,
+        valid_window: int = 1,
+        *,
+        key_version: int = 1,
+        for_time: float | None = None,
+    ) -> int | None:
+        import time
+
+        secret = self.decrypt_secret(encrypted, key_version=key_version).reveal()
+        totp = pyotp.TOTP(secret)
+        reference = int(for_time if for_time is not None else time.time())
+        candidate = (code or "").strip()
+        for offset in range(-abs(valid_window), abs(valid_window) + 1):
+            moment = reference + offset * totp.interval
+            if hmac.compare_digest(totp.at(moment), candidate):
+                return int(moment // totp.interval)
+        return None
+
     def new_recovery_code(self) -> SecretValue:
         return SecretValue("-".join((secrets.token_hex(4), secrets.token_hex(4))))
 

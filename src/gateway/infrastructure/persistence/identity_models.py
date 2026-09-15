@@ -62,6 +62,7 @@ class MFAFactorModel(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_verified_counter: Mapped[int | None] = mapped_column(BigInteger)
 
     __table_args__ = (CheckConstraint("factor_type IN ('totp')", name="ck_mfa_factors_type"),)
 

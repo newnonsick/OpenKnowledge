@@ -140,8 +140,12 @@ class LoginThrottleService:
         )
 
     def _keys(self, username: str, client_ip: str) -> tuple[tuple[str, str, ThrottleRule], ...]:
+        try:
+            account_key = normalize_username(username)
+        except ValueError:
+            account_key = username.strip().casefold() or "invalid"
         return (
-            ("account", self._digest(normalize_username(username)), self._policy.account),
+            ("account", self._digest(account_key), self._policy.account),
             ("ip", self._digest(client_ip), self._policy.ip),
             ("global", self._digest("global"), self._policy.global_),
         )

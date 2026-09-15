@@ -14,7 +14,7 @@ from src.gateway.application.services.audit_service import AuditService
 from src.gateway.domain.exceptions import AuthenticationException, ValidationException
 from src.gateway.domain.identity import MemberStatus, Principal, PrincipalKind, SystemRole
 from src.gateway.infrastructure.persistence.audit_repository import AuditRepository
-from src.gateway.infrastructure.persistence.identity_models import MFAFactorModel, MFARecoveryCodeModel, MemberModel, PasswordCredentialModel, SessionFamilyModel
+from src.gateway.infrastructure.persistence.identity_models import MFAFactorModel, MFARecoveryCodeModel, MemberModel, PasswordCredentialModel, PersonalAPIKeyModel, SessionFamilyModel
 from src.gateway.infrastructure.persistence.identity_repository import IdentityRepository
 
 
@@ -52,8 +52,15 @@ class IdentityService:
         now: datetime | None = None,
     ) -> PasswordAuthentication:
         current_time = now or datetime.now(timezone.utc)
-        member = await self._identity.get_member_by_username(username, for_update=True)
+        try:
+            member = await self._identity.get_member_by_username(username, for_update=True)
+        except ValueError:
+            raise AuthenticationException("Invalid username or password.") from None
         if member is None or member.status == MemberStatus.DISABLED.value:
+            try:
+                self._passwords.verify(self._passwords.dummy_hash(), password)
+            except ValueError:
+                pass
             raise AuthenticationException("Invalid username or password.")
         credential = await self._identity.current_password(member.id)
         if credential is None:
@@ -91,19 +98,28 @@ class IdentityService:
         if not code:
             return False
         factor = await self._session.scalar(
-            select(MFAFactorModel).where(
+            select(MFAFactorModel)
+            .where(
                 MFAFactorModel.member_id == member_id,
                 MFAFactorModel.confirmed_at.is_not(None),
                 MFAFactorModel.retired_at.is_(None),
             )
+            .with_for_update()
         )
         if factor is None:
             return False
-        return self._mfa.verify_totp(
+        counter = self._mfa.match_totp_counter(
             factor.secret_ciphertext,
             code,
             key_version=factor.encryption_key_version,
         )
+        if counter is None:
+            return False
+        if factor.last_verified_counter is not None and counter <= factor.last_verified_counter:
+            return False
+        factor.last_verified_counter = counter
+        await self._session.flush()
+        return True
 
     async def change_password(
         self,
@@ -140,6 +156,14 @@ class IdentityService:
             update(SessionFamilyModel)
             .where(SessionFamilyModel.member_id == member.id, SessionFamilyModel.revoked_at.is_(None))
             .values(revoked_at=current_time, revoke_reason="password_changed")
+        )
+        await self._session.execute(
+            update(PersonalAPIKeyModel)
+            .where(
+                PersonalAPIKeyModel.member_id == member.id,
+                PersonalAPIKeyModel.status == "active",
+            )
+            .values(status="revoked", revoked_at=current_time)
         )
         self._audit.record(
             actor_member_id=member.id,
@@ -218,16 +242,20 @@ class IdentityService:
             )
             .with_for_update()
         )
-        if factor is None or not self._mfa.verify_totp(
+        if factor is None:
+            raise AuthenticationException("Invalid authentication code.")
+        counter = self._mfa.match_totp_counter(
             factor.secret_ciphertext,
             code,
             key_version=factor.encryption_key_version,
-        ):
+        )
+        if counter is None:
             raise AuthenticationException("Invalid authentication code.")
         member = await self._identity.get_member(member_id, for_update=True)
         if member is None or member.force_password_change:
             raise AuthenticationException("Authentication state does not allow MFA enrollment.")
         factor.confirmed_at = current_time
+        factor.last_verified_counter = counter
         await self._session.execute(
             update(MFAFactorModel)
             .where(

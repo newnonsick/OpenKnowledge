@@ -180,11 +180,30 @@ async def _verify_current_credentials(
     totp_code: str | None,
     recovery_code: str | None,
     request_id: str,
+    request: Request | None = None,
 ) -> None:
+    throttle_factory = get_session_factory() if request is not None else None
+    client_ip = ""
+    if request is not None:
+        client_ip = request_client_ip(request, get_settings().gateway.trusted_proxy_cidrs)
+        async with throttle_factory.begin() as throttle_session:
+            await LoginThrottleService(throttle_session).assert_allowed(member.username, client_ip)
     if not password:
+        if throttle_factory is not None:
+            async with throttle_factory.begin() as throttle_session:
+                await LoginThrottleService(throttle_session).record_failure(member.username, client_ip)
         raise AuthenticationException("Invalid current credentials.")
-    authenticated = await identity.authenticate_password(member.username, password)
+    try:
+        authenticated = await identity.authenticate_password(member.username, password)
+    except AuthenticationException:
+        if throttle_factory is not None:
+            async with throttle_factory.begin() as throttle_session:
+                await LoginThrottleService(throttle_session).record_failure(member.username, client_ip)
+        raise
     if authenticated.principal.subject_id != str(member.id) or authenticated.principal.restricted:
+        if throttle_factory is not None:
+            async with throttle_factory.begin() as throttle_session:
+                await LoginThrottleService(throttle_session).record_failure(member.username, client_ip)
         raise AuthenticationException("Invalid current credentials.")
     if member.system_role != SystemRole.SUPER_ADMIN.value:
         return
@@ -199,6 +218,9 @@ async def _verify_current_credentials(
     else:
         verified = False
     if not verified:
+        if throttle_factory is not None:
+            async with throttle_factory.begin() as throttle_session:
+                await LoginThrottleService(throttle_session).record_failure(member.username, client_ip)
         raise AuthenticationException("Invalid current credentials.")
 
 
@@ -357,6 +379,9 @@ async def refresh(
     if rotation.status is RefreshStatus.REUSE_DETECTED:
         await session.commit()
         raise AuthenticationException("Invalid session.")
+    if rotation.status is RefreshStatus.EXPIRED:
+        await session.commit()
+        raise AuthenticationException("Invalid session.")
     if rotation.status is RefreshStatus.ALREADY_ROTATED:
         await session.commit()
         if rotation.access_expires_at is None:
@@ -392,6 +417,7 @@ async def step_up(
         totp_code=payload.totp_code,
         recovery_code=payload.recovery_code,
         request_id=get_request_id(request),
+        request=request,
     )
     credential = await session.get(SessionCredentialModel, _credential_id(principal))
     if credential is None:
@@ -425,6 +451,7 @@ async def change_password(
             totp_code=payload.current_totp_code,
             recovery_code=payload.recovery_code,
             request_id=get_request_id(request),
+            request=request,
         )
     await identity.change_password(
         member_id,
@@ -494,6 +521,7 @@ async def enroll_totp(
             totp_code=payload.current_totp_code,
             recovery_code=payload.recovery_code,
             request_id=get_request_id(request),
+            request=request,
         )
     enrollment = await identity.begin_totp_enrollment(
         member_id,
@@ -529,6 +557,7 @@ async def confirm_totp(
             totp_code=payload.current_totp_code,
             recovery_code=payload.recovery_code,
             request_id=get_request_id(request),
+            request=request,
         )
     recovery_codes = await identity.confirm_totp_enrollment(
         member_id,
