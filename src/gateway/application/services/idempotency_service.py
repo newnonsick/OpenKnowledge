@@ -27,6 +27,7 @@ class IdempotencyReservation:
     status: ReservationStatus
     response_status: int | None = None
     resource_ids: tuple[str, ...] = ()
+    response_body: dict | None = None
 
 
 class IdempotencyService:
@@ -87,6 +88,7 @@ class IdempotencyService:
                 existing.request_hash = request_hash
                 existing.response_status = None
                 existing.resource_ids = []
+                existing.response_body = None
                 existing.created_at = current_time
                 existing.expires_at = current_time + self._retention
                 await self._session.flush()
@@ -102,6 +104,7 @@ class IdempotencyService:
                 ReservationStatus.REPLAY,
                 existing.response_status,
                 tuple(str(value) for value in existing.resource_ids),
+                dict(existing.response_body) if existing.response_body is not None else None,
             )
 
     async def complete(
@@ -110,6 +113,7 @@ class IdempotencyService:
         *,
         response_status: int,
         resource_ids: list[str] | tuple[str, ...],
+        response_body: dict | None = None,
     ) -> None:
         if response_status < 100 or response_status > 599:
             raise ValueError("Invalid response status")
@@ -121,10 +125,12 @@ class IdempotencyService:
         if record is None:
             raise ResourceConflictException("Idempotency reservation is unavailable.")
         normalized_resource_ids = [str(value) for value in resource_ids]
+        normalized_body = dict(response_body) if response_body is not None else None
         if record.response_status is not None:
             if (
                 record.response_status == response_status
                 and record.resource_ids == normalized_resource_ids
+                and record.response_body == normalized_body
             ):
                 return
             raise ResourceConflictException(
@@ -132,6 +138,7 @@ class IdempotencyService:
             )
         record.response_status = response_status
         record.resource_ids = normalized_resource_ids
+        record.response_body = normalized_body
         await self._session.flush()
 
     @staticmethod

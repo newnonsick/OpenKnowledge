@@ -59,6 +59,39 @@ async def test_idempotency_replays_completed_result_and_rejects_changed_request(
                 )
 
 
+async def test_idempotency_replay_returns_stored_response_body() -> None:
+    now = datetime(2026, 8, 20, 15, 0, tzinfo=timezone.utc)
+
+    async with isolated_postgres_database() as (_, factory):
+        async with factory.begin() as session:
+            service = IdempotencyService(session)
+            reservation = await service.reserve(
+                actor_id="member-3",
+                operation="knowledge.import",
+                idempotency_key="import-key",
+                payload={"space_id": "space-a"},
+                now=now,
+            )
+            assert reservation.status is ReservationStatus.RESERVED
+            await service.complete(
+                reservation.record_id,
+                response_status=200,
+                resource_ids=["space-a"],
+                response_body={"space_id": "space-a", "created": 2, "skipped": 0},
+            )
+
+        async with factory.begin() as session:
+            replay = await IdempotencyService(session).reserve(
+                actor_id="member-3",
+                operation="knowledge.import",
+                idempotency_key="import-key",
+                payload={"space_id": "space-a"},
+                now=now,
+            )
+            assert replay.status is ReservationStatus.REPLAY
+            assert replay.response_body == {"space_id": "space-a", "created": 2, "skipped": 0}
+
+
 async def test_concurrent_idempotency_reservations_have_one_owner() -> None:
     now = datetime(2026, 8, 20, 14, 0, tzinfo=timezone.utc)
 

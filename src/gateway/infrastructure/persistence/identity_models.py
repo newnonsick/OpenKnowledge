@@ -248,6 +248,7 @@ class IdempotencyRecordModel(Base):
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     response_status: Mapped[int | None] = mapped_column(Integer)
     resource_ids: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False)
+    response_body: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

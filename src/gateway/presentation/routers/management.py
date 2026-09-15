@@ -420,7 +420,7 @@ class AIKnowledgeCreateArguments(BaseModel):
     space_id: str = Field(min_length=1, max_length=64)
     title: str = Field(min_length=1, max_length=500)
     content: str = Field(min_length=1, max_length=1_000_000)
-    tags: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(default_factory=list, max_length=50)
+    tags: list[KnowledgeTag] = Field(default_factory=list, max_length=32)
 
 
 class AIKnowledgeUpdateArguments(BaseModel):
@@ -430,7 +430,7 @@ class AIKnowledgeUpdateArguments(BaseModel):
     expected_version: int = Field(ge=1)
     title: str = Field(min_length=1, max_length=500)
     content: str = Field(min_length=1, max_length=1_000_000)
-    tags: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(default_factory=list, max_length=50)
+    tags: list[KnowledgeTag] = Field(default_factory=list, max_length=32)
     change_summary: str | None = Field(default=None, max_length=500)
 
 
@@ -1908,6 +1908,8 @@ async def import_knowledge(
     if reservation.status is ReservationStatus.REPLAY:
         if not reservation.resource_ids:
             raise ResourceConflictException()
+        if reservation.response_body is not None:
+            return import_summary_payload(reservation.response_body)
         replayed = await KnowledgeExportService(session).import_space(
             UseCaseContext(
                 principal=principal,
@@ -1929,12 +1931,14 @@ async def import_knowledge(
         space_id,
         payload.model_dump(),
     )
+    summary = import_summary_payload(result)
     await IdempotencyService(session).complete(
         reservation.record_id,
         response_status=200,
         resource_ids=[space_id],
+        response_body=summary,
     )
-    return import_summary_payload(result)
+    return summary
 
 
 @router.get("/knowledge", response_model=Page[KnowledgeSummary])

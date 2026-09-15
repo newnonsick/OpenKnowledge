@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+MCPTag = Annotated[str, Field(min_length=1, max_length=80)]
 
 
 MCP_PATH = "/mcp"
@@ -62,7 +64,7 @@ class MCPCreateArguments(BaseModel):
     space_id: str = Field(min_length=1, max_length=64)
     title: str = Field(min_length=1, max_length=500)
     content: str = Field(min_length=1, max_length=1_000_000)
-    tags: list[str] = Field(default_factory=list, max_length=32)
+    tags: list[MCPTag] = Field(default_factory=list, max_length=32)
     idempotency_key: str = Field(min_length=1, max_length=128)
 
 
@@ -71,7 +73,7 @@ class MCPUpdateArguments(BaseModel):
     expected_version: int = Field(ge=1)
     title: str = Field(min_length=1, max_length=500)
     content: str = Field(min_length=1, max_length=1_000_000)
-    tags: list[str] = Field(default_factory=list, max_length=32)
+    tags: list[MCPTag] = Field(default_factory=list, max_length=32)
     change_summary: str | None = Field(default=None, max_length=500)
     idempotency_key: str = Field(min_length=1, max_length=128)
 
