@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.gateway.domain.exceptions import ConcurrencyConflictException, ItemNotFoundException, JobLeaseLostException
 from src.gateway.infrastructure.persistence.ingestion_models import DocumentRevisionModel, IngestionJobModel
-from src.gateway.infrastructure.persistence.models import KnowledgeRevision
+from src.gateway.infrastructure.persistence.models import KnowledgeItem, KnowledgeRevision
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,6 +349,11 @@ class IngestionJobService:
         )
         if revision is None:
             raise ItemNotFoundException()
+        item = await self._session.scalar(
+            select(KnowledgeItem).where(KnowledgeItem.id == revision.item_id)
+        )
+        if item is None or item.is_deleted or item.archived_at is not None:
+            raise ItemNotFoundException()
         now = await self._database_now()
         job.retry_requested = True
         job.cancellation_requested = False
@@ -378,6 +383,14 @@ class IngestionJobService:
                     .with_for_update()
                 )
                 if revision is None:
+                    job.retry_requested = False
+                    job.last_error_code = "retry_precondition_failed"
+                    job.updated_at = now
+                    continue
+                item = await self._session.scalar(
+                    select(KnowledgeItem).where(KnowledgeItem.id == revision.item_id)
+                )
+                if item is None or item.is_deleted or item.archived_at is not None:
                     job.retry_requested = False
                     job.last_error_code = "retry_precondition_failed"
                     job.updated_at = now

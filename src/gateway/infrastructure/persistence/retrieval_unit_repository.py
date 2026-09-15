@@ -32,6 +32,30 @@ LEFT JOIN document_revisions dr
  AND dr.space_id = drc.space_id
 """
 
+_LIVE_SOURCE = """
+AND NOT EXISTS (
+  SELECT 1 FROM knowledge_items ki
+  WHERE ki.id = kr.item_id AND ki.is_deleted
+)
+AND NOT EXISTS (
+  SELECT 1 FROM documents d
+  WHERE d.id = drc.document_id AND d.space_id = ru.space_id AND d.archived_at IS NOT NULL
+)
+"""
+
+_LIVE_INNER = """
+AND NOT EXISTS (
+  SELECT 1 FROM knowledge_revisions kr_live
+  JOIN knowledge_items ki ON ki.id = kr_live.item_id
+  WHERE kr_live.id = ru.knowledge_revision_id AND ki.is_deleted
+)
+AND NOT EXISTS (
+  SELECT 1 FROM document_revision_chunks drc_live
+  JOIN documents d ON d.id = drc_live.document_id AND d.space_id = ru.space_id
+  WHERE drc_live.id = ru.document_revision_chunk_id AND d.archived_at IS NOT NULL
+)
+"""
+
 
 _CANDIDATE_COLUMNS = """
 ru.id AS unit_id,
@@ -65,7 +89,7 @@ _VECTOR_SEARCH_SQL = (
     "JOIN members m ON m.id = sm.member_id AND m.status = 'active' "
     "JOIN workspaces w ON w.id = sm.space_id AND w.archived_at IS NULL "
     "WHERE sm.space_id = ru.space_id AND sm.member_id = :member_id"
-    ") ORDER BY ru.embedding <=> CAST(:query_vector AS halfvec) "
+    ")" + _LIVE_INNER + " ORDER BY ru.embedding <=> CAST(:query_vector AS halfvec) "
     "LIMIT :candidate_limit"
     "), ranked AS ("
     "SELECT "
@@ -120,6 +144,7 @@ class PostgresRetrievalUnitRepository:
             + "WHERE ru.active "
             "AND ru.embedding_generation_id = :generation_id "
             "AND ru.space_id = ANY(CAST(:space_ids AS text[]))"
+            + _LIVE_SOURCE
         )
         async with principal_session(self._session_factory, principal) as session:
             value = await session.scalar(
@@ -162,7 +187,8 @@ class PostgresRetrievalUnitRepository:
             "WHERE ru.active "
             "AND ru.embedding_generation_id = :generation_id "
             "AND ru.space_id = ANY(CAST(:space_ids AS text[])) "
-            "AND (ru.tsv @@ q.value "
+            + _LIVE_SOURCE
+            + "AND (ru.tsv @@ q.value "
             "OR ru.title % :query OR ru.content % :query "
             "OR ru.title ILIKE ('%' || :query || '%') "
             "OR ru.content ILIKE ('%' || :query || '%'))"

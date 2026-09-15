@@ -9,7 +9,13 @@ from src.gateway.domain.entities import KnowledgeItem as DomainKnowledgeItem, Kn
 from src.gateway.domain.identity import Principal, PrincipalKind, SystemRole
 from src.gateway.infrastructure.database import principal_session
 from src.gateway.infrastructure.persistence.identity_models import MemberModel, SpaceMembershipModel
-from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGenerationModel, RetrievalUnitModel
+from src.gateway.infrastructure.persistence.ingestion_models import (
+    DocumentModel,
+    DocumentRevisionChunkModel,
+    DocumentRevisionModel,
+    EmbeddingGenerationModel,
+    RetrievalUnitModel,
+)
 from src.gateway.infrastructure.persistence.models import EMBED_DIM, KnowledgeItem, KnowledgeRevision, Workspace
 from src.gateway.infrastructure.persistence.knowledge_repository import KnowledgeRepository
 from src.gateway.infrastructure.persistence.principal_context import bind_principal, reset_principal
@@ -271,3 +277,228 @@ async def test_multilingual_retrieval_is_authorized_bounded_and_vector_exactness
         assert projections[1].active is True
         assert projections[1].language == "th"
         assert {item.canonical_id for item in projected} == {projected_item_id}
+
+
+async def test_deleted_items_and_archived_documents_are_excluded_from_search() -> None:
+    member_id = uuid4()
+    generation_id = uuid4()
+    live_item_id = uuid4()
+    live_revision_id = uuid4()
+    deleted_item_id = uuid4()
+    deleted_revision_id = uuid4()
+    archived_document_id = uuid4()
+    archived_revision_id = uuid4()
+    archived_chunk_id = uuid4()
+    unembedded_item_id = uuid4()
+    unembedded_revision_id = uuid4()
+    unembedded_unit_id = uuid4()
+    now = datetime.now(timezone.utc)
+    query_vector = [1.0] + [0.0] * (EMBED_DIM - 1)
+    marker = "exclusionmarker"
+
+    async with isolated_postgres_database() as (engine, factory):
+        async with factory.begin() as session:
+            session.add(
+                MemberModel(
+                    id=member_id,
+                    username="exclusion-user",
+                    username_normalized="exclusion-user",
+                    display_name="Exclusion User",
+                    status="active",
+                    system_role="member",
+                    force_password_change=False,
+                )
+            )
+            session.add(Workspace(id="exclusion", name="Exclusion", created_by_member_id=member_id))
+            await session.flush()
+            session.add(SpaceMembershipModel(space_id="exclusion", member_id=member_id, role="owner"))
+            session.add(
+                EmbeddingGenerationModel(
+                    id=generation_id,
+                    purpose="retrieval",
+                    model_id="deterministic-test",
+                    dimensions=EMBED_DIM,
+                    status="active",
+                    activated_at=now,
+                )
+            )
+            for item_id, revision_id, deleted in (
+                (live_item_id, live_revision_id, False),
+                (deleted_item_id, deleted_revision_id, True),
+            ):
+                session.add(
+                    KnowledgeItem(
+                        id=item_id,
+                        workspace_id="exclusion",
+                        title=f"live source {marker}",
+                        content=f"content carrying {marker} token",
+                        current_revision_id=None,
+                        tags=[],
+                        is_global=False,
+                        is_deleted=deleted,
+                    )
+                )
+                await session.flush()
+                session.add(
+                    KnowledgeRevision(
+                        id=revision_id,
+                        item_id=item_id,
+                        space_id="exclusion",
+                        version=1,
+                        title=f"live source {marker}",
+                        content_hash=revision_id.hex.ljust(64, "0")[:64],
+                        content=f"content carrying {marker} token",
+                        tags=[],
+                        embedding=query_vector,
+                        author="test",
+                        author_member_id=member_id,
+                    )
+                )
+                await session.flush()
+                item = await session.get(KnowledgeItem, item_id)
+                assert item is not None
+                item.current_revision_id = revision_id
+                await session.flush()
+                session.add(
+                    RetrievalUnitModel(
+                        space_id="exclusion",
+                        source_type="knowledge_revision",
+                        knowledge_revision_id=revision_id,
+                        embedding_generation_id=generation_id,
+                        title=f"live source {marker}",
+                        content=f"content carrying {marker} token",
+                        language="en",
+                        source_metadata={},
+                        embedding=query_vector,
+                        active=True,
+                    )
+                )
+            session.add(
+                DocumentModel(
+                    id=archived_document_id,
+                    space_id="exclusion",
+                    display_name="archived",
+                    current_revision_id=None,
+                    created_by_member_id=member_id,
+                    archived_at=now,
+                )
+            )
+            session.add(
+                DocumentRevisionModel(
+                    id=archived_revision_id,
+                    document_id=archived_document_id,
+                    space_id="exclusion",
+                    version=1,
+                    original_filename="archived.txt",
+                    mime_type="text/plain",
+                    size_bytes=10,
+                    checksum_sha256="c" * 64,
+                    storage_key="test/archived.txt",
+                    status="active",
+                    ready_at=now,
+                    activated_at=now,
+                    created_by_member_id=member_id,
+                )
+            )
+            await session.flush()
+            archived_document = await session.get(DocumentModel, archived_document_id)
+            assert archived_document is not None
+            archived_document.current_revision_id = archived_revision_id
+            await session.flush()
+            session.add(
+                DocumentRevisionChunkModel(
+                    id=archived_chunk_id,
+                    document_revision_id=archived_revision_id,
+                    document_id=archived_document_id,
+                    space_id="exclusion",
+                    chunk_index=0,
+                    content=f"archived document carrying {marker} token",
+                    content_hash="d" * 64,
+                    language="en",
+                )
+            )
+            await session.flush()
+            session.add(
+                RetrievalUnitModel(
+                    space_id="exclusion",
+                    source_type="document_chunk",
+                    document_revision_chunk_id=archived_chunk_id,
+                    embedding_generation_id=generation_id,
+                    title="archived",
+                    content=f"archived document carrying {marker} token",
+                    language="en",
+                    source_metadata={},
+                    embedding=query_vector,
+                    active=True,
+                )
+            )
+            await session.flush()
+            session.add(
+                KnowledgeItem(
+                    id=unembedded_item_id,
+                    workspace_id="exclusion",
+                    title="pending embed",
+                    content="awaiting embedding backfill",
+                    current_revision_id=None,
+                    tags=[],
+                    is_global=False,
+                    is_deleted=False,
+                )
+            )
+            await session.flush()
+            session.add(
+                KnowledgeRevision(
+                    id=unembedded_revision_id,
+                    item_id=unembedded_item_id,
+                    space_id="exclusion",
+                    version=1,
+                    title="pending embed",
+                    content_hash=unembedded_revision_id.hex.ljust(64, "0")[:64],
+                    content="awaiting embedding backfill",
+                    tags=[],
+                    embedding=None,
+                    author="test",
+                    author_member_id=member_id,
+                )
+            )
+            await session.flush()
+            unembedded_item = await session.get(KnowledgeItem, unembedded_item_id)
+            assert unembedded_item is not None
+            unembedded_item.current_revision_id = unembedded_revision_id
+            await session.flush()
+            session.add(
+                RetrievalUnitModel(
+                    id=unembedded_unit_id,
+                    space_id="exclusion",
+                    source_type="knowledge_revision",
+                    knowledge_revision_id=unembedded_revision_id,
+                    embedding_generation_id=generation_id,
+                    title="pending embed",
+                    content="awaiting embedding backfill",
+                    language="en",
+                    source_metadata={},
+                    embedding=None,
+                    active=True,
+                )
+            )
+
+        principal = Principal(
+            subject_id=str(member_id),
+            kind=PrincipalKind.API_KEY,
+            system_role=SystemRole.MEMBER,
+            scopes=frozenset({"knowledge:read", "knowledge:write"}),
+        )
+        repository = PostgresRetrievalUnitRepository(factory)
+        lexical = await repository.lexical_search(
+            principal, ["exclusion"], marker, generation_id, 20, 0.01
+        )
+        vector = await repository.vector_search(
+            principal, ["exclusion"], query_vector, generation_id, 20, 0.9, True, 100
+        )
+        coverage = await repository.generation_coverage(
+            principal, ["exclusion"], generation_id
+        )
+
+        assert {item.canonical_id for item in lexical} == {live_item_id}
+        assert {item.canonical_id for item in vector} == {live_item_id}
+        assert coverage == 2.0 / 4.0

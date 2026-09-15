@@ -810,3 +810,81 @@ def test_mcp_unexpected_errors_stay_sanitized():
         _raise_mcp_error(RuntimeError("conn postgresql://secret:hunter2 exploded"))
     assert "internal_error" in str(captured.value)
     assert "hunter2" not in str(captured.value)
+
+
+# ==============================================================================
+
+
+class _FakeScalars:
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+async def test_enrichment_retry_refuses_deleted_item():
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+
+    from src.gateway.application.services.ingestion_job_service import IngestionJobService
+    from src.gateway.domain.exceptions import ItemNotFoundException
+    from src.gateway.infrastructure.persistence.ingestion_models import IngestionJobModel
+
+    revision_id, item_id = uuid4(), uuid4()
+    job = IngestionJobModel(
+        id=uuid4(),
+        job_type="knowledge_enrichment",
+        knowledge_revision_id=revision_id,
+        state="failed",
+    )
+    revision = type("Revision", (), {"id": revision_id, "item_id": item_id})()
+    deleted_item = type("Item", (), {"id": item_id, "is_deleted": True, "archived_at": None})()
+
+    async def fake_scalar(statement, *args, **kwargs):
+        compiled = str(statement)
+        if "knowledge_revisions" in compiled:
+            return revision
+        return deleted_item
+
+    session = AsyncMock()
+    session.scalar = fake_scalar
+    with __import__("pytest").raises(ItemNotFoundException):
+        await IngestionJobService(session)._request_enrichment_retry(job)
+
+
+async def test_enrichment_retry_activation_marks_deleted_item_precondition_failed():
+    from datetime import datetime, timezone
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+
+    from src.gateway.application.services.ingestion_job_service import IngestionJobService
+    from src.gateway.infrastructure.persistence.ingestion_models import IngestionJobModel
+
+    revision_id, item_id = uuid4(), uuid4()
+    job = IngestionJobModel(
+        id=uuid4(),
+        job_type="knowledge_enrichment",
+        knowledge_revision_id=revision_id,
+        state="failed",
+        retry_requested=True,
+        cancellation_requested=False,
+    )
+    revision = type("Revision", (), {"id": revision_id, "item_id": item_id})()
+    archived_item = type(
+        "Item",
+        (),
+        {"id": item_id, "is_deleted": False, "archived_at": datetime.now(timezone.utc)},
+    )()
+
+    async def fake_scalar(statement, *args, **kwargs):
+        if "knowledge_revisions" in str(statement):
+            return revision
+        return archived_item
+
+    session = AsyncMock()
+    session.scalar = fake_scalar
+    session.scalars = AsyncMock(return_value=_FakeScalars([job]))
+    await IngestionJobService(session)._activate_retry_requests(datetime.now(timezone.utc))
+    assert job.retry_requested is False
+    assert job.last_error_code == "retry_precondition_failed"
