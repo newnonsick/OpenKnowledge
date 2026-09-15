@@ -157,9 +157,9 @@ async def require_mcp_scope(principal: Principal, scope: str) -> Principal:
     return principal
 
 
-def mcp_quota_guard(principal: Principal, space_id: str | None) -> QuotaGuard:
+def mcp_quota_guard(principal: Principal) -> QuotaGuard:
     service = quota_service_from_settings(get_settings().gateway)
-    return QuotaGuard(service=service, principal=principal, space_id=space_id)
+    return QuotaGuard(service=service, principal=principal)
 
 
 def quota_error_details(exc: QuotaExceededException) -> dict[str, object]:

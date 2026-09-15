@@ -731,6 +731,36 @@ async def test_mcp_quota_exceeded_maps_to_tool_error(mcp_provisioned) -> None:
         mcp_auth_module.quota_service_from_settings = real_factory
 
 
+async def test_mcp_quota_not_bypassed_by_rotating_space(mcp_provisioned) -> None:
+    from src.gateway.application.services.quota_service import QuotaPolicy, QuotaService
+    from src.gateway.mcp import auth as mcp_auth_module
+
+    app, _, raw_key, _ = mcp_provisioned
+    strict = QuotaService(
+        QuotaPolicy(requests_per_minute=1, concurrent_requests=4, tokens_per_minute=60000, storage_bytes=1073741824, burst_requests=1)
+    )
+    real_factory = mcp_auth_module.quota_service_from_settings
+    mcp_auth_module.quota_service_from_settings = lambda gateway_settings: strict
+    try:
+        async with app.state.mcp_session_manager.run():
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                await _initialize(client)
+                results = []
+                for index in range(4):
+                    result = await _call_tool(
+                        client,
+                        10 + index,
+                        "knowledge.search",
+                        {"query": "x", "active_space_id": f"rotated-{index}"},
+                        api_key=raw_key,
+                    )
+                    results.append(result["isError"])
+                assert any(results) is True
+    finally:
+        mcp_auth_module.quota_service_from_settings = real_factory
+
+
 async def test_mcp_internal_errors_are_sanitized(mcp_provisioned) -> None:
     from src.gateway.mcp import server as mcp_server_module
 

@@ -91,14 +91,14 @@ class MCPToolRuntime:
             idempotency_key=key,
         )
 
-    def _guard(self, principal: Principal, space_id: str | None) -> QuotaGuard:
-        return mcp_quota_guard(principal, space_id)
+    def _guard(self, principal: Principal) -> QuotaGuard:
+        return mcp_quota_guard(principal)
 
     async def knowledge_search(self, args: MCPSearchArguments, headers: Mapping[str, str]) -> dict[str, Any]:
         principal = await require_mcp_scope(await self._principal(headers), "knowledge:read")
         require_profile_route(principal, "knowledge.search")
         policy = await self._policy(principal)
-        async with self._guard(principal, args.active_space_id or (args.space_ids[0] if args.space_ids else None)):
+        async with self._guard(principal):
             return await RetrievalQueries().search(
                 self._context(principal, policy, headers),
                 SearchKnowledgeQuery(
@@ -116,7 +116,7 @@ class MCPToolRuntime:
         require_profile_route(principal, "knowledge.read")
         reference = self._fetch_reference(args)
         factory = self._factory()
-        async with self._guard(principal, reference.space_id or None):
+        async with self._guard(principal):
             async with factory() as session:
                 resolved = await resolve_fetch_space(session, reference)
                 ctx = self._context(principal, None, headers)
@@ -129,7 +129,7 @@ class MCPToolRuntime:
         require_profile_route(principal, "knowledge.create")
         policy = await self._policy(principal)
         factory = self._factory()
-        async with self._guard(principal, args.space_id):
+        async with self._guard(principal):
             async with factory() as session:
                 outcome = await KnowledgeCommands(session).create(
                     self._context(principal, policy, headers, idempotency_key=args.idempotency_key),
@@ -152,7 +152,7 @@ class MCPToolRuntime:
         policy = await self._policy(principal)
         item_id = parse_uuid(args.item_id, field_name="item_id")
         factory = self._factory()
-        async with self._guard(principal, None):
+        async with self._guard(principal):
             async with factory() as session:
                 item = await KnowledgeCommands(session).get(self._context(principal, None, headers), item_id)
                 space_id = item.workspace_id
@@ -181,7 +181,7 @@ class MCPToolRuntime:
         policy = await self._policy(principal)
         item_id = parse_uuid(args.item_id, field_name="item_id")
         factory = self._factory()
-        async with self._guard(principal, None):
+        async with self._guard(principal):
             async with factory() as session:
                 outcome = await KnowledgeCommands(session).delete(
                     self._context(principal, policy, headers, idempotency_key=args.idempotency_key),
@@ -194,7 +194,7 @@ class MCPToolRuntime:
         principal = await require_mcp_scope(await self._principal(headers), "knowledge:read")
         require_profile_route(principal, "knowledge.search")
         policy = await self._policy(principal)
-        async with self._guard(principal, args.active_space_id or (args.space_ids[0] if args.space_ids else None)):
+        async with self._guard(principal):
             package = await ContextAssembler().assemble(
                 self._context(principal, policy, headers),
                 AssembleContextQuery(
@@ -215,7 +215,7 @@ class MCPToolRuntime:
         require_profile_route(principal, "knowledge.read")
         reference = parse_citation_uri(args.citation_uri)
         factory = self._factory()
-        async with self._guard(principal, reference.space_id):
+        async with self._guard(principal):
             async with factory() as session:
                 payload = await EvidenceService(session).resolve(self._context(principal, None, headers), args.citation_uri)
                 await session.commit()
@@ -228,12 +228,12 @@ class MCPToolRuntime:
         ctx = self._context(principal, None, headers)
         if args.job_id is not None:
             job_id = parse_uuid(args.job_id, field_name="job_id")
-            async with self._guard(principal, None):
+            async with self._guard(principal):
                 async with factory() as session:
                     payload = await IngestionUseCases(session).get_job(ctx, GetIngestionJobQuery(job_id=job_id))
                     await session.commit()
             return {"job": payload}
-        async with self._guard(principal, args.space_id):
+        async with self._guard(principal):
             async with factory() as session:
                 jobs, metadata = await IngestionUseCases(session).list_jobs(
                     ctx,
@@ -253,7 +253,7 @@ class MCPToolRuntime:
         policy = await self._policy(principal)
         job_id = parse_uuid(args.job_id, field_name="job_id")
         factory = self._factory()
-        async with self._guard(principal, None):
+        async with self._guard(principal):
             async with factory() as session:
                 outcome = await IngestionUseCases(session).mutate_job(
                     self._context(principal, policy, headers, idempotency_key=args.idempotency_key),
