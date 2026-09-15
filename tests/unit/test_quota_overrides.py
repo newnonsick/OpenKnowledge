@@ -111,3 +111,18 @@ async def test_override_enforced_by_persistent_window(factory) -> None:
     with pytest.raises(QuotaExceededException):
         await service.check_persistent_window(session, key, space_id="space-a", now=now)
     await session.close()
+
+
+async def test_policy_override_cannot_exceed_server_policy(factory) -> None:
+    service = QuotaService(QuotaPolicy(requests_per_minute=120, burst_requests=20))
+    session = factory()
+    key = _principal(str(uuid4()))
+    with pytest.raises(ValueError):
+        await service.set_policy_override(session, key, requests_per_minute=121)
+    with pytest.raises(ValueError):
+        await service.set_policy_override(session, key, burst_requests=21)
+    with pytest.raises(ValueError):
+        await service.set_policy_override(session, key, window_seconds=61)
+    await service.set_policy_override(session, key, requests_per_minute=120)
+    assert (await service.effective_policy(session, key)).requests_per_minute == 120
+    await session.close()

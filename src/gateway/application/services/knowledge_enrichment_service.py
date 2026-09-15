@@ -90,6 +90,8 @@ async def enrich_claim(session: AsyncSession, claim: JobClaim, embedding_client)
     revision = await session.get(KnowledgeRevision, job.knowledge_revision_id)
     if item is None or revision is None or revision.item_id != item.id:
         raise ItemNotFoundException()
+    if item.is_deleted or item.archived_at is not None:
+        raise ItemNotFoundException()
     generation = await session.scalar(
         select(EmbeddingGenerationModel).where(
             EmbeddingGenerationModel.purpose == "retrieval",
@@ -112,6 +114,13 @@ async def enrich_claim(session: AsyncSession, claim: JobClaim, embedding_client)
         embedding = embeddings[0] if embeddings else None
     if embedding is not None and len(embedding) != generation.dimensions:
         embedding = None
+    locked = await session.scalar(
+        select(KnowledgeItem)
+        .where(KnowledgeItem.id == item.id)
+        .with_for_update()
+    )
+    if locked is None or locked.is_deleted or locked.archived_at is not None:
+        raise ItemNotFoundException()
     revision.embedding = embedding
     await session.execute(
         RetrievalUnitModel.__table__.update()

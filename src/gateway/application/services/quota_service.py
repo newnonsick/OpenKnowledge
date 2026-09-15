@@ -298,6 +298,19 @@ class QuotaService:
         ):
             if value is not None and value <= 0:
                 raise ValueError(f"Quota override {label} must be positive")
+        for label, value, ceiling in (
+            ("requests_per_minute", requests_per_minute, self._policy.requests_per_minute),
+            ("tokens_per_minute", tokens_per_minute, self._policy.tokens_per_minute),
+            ("storage_bytes", storage_bytes, self._policy.storage_bytes),
+            ("concurrent_requests", concurrent_requests, self._policy.concurrent_requests),
+            ("burst_requests", burst_requests, self._policy.burst_requests),
+        ):
+            if value is not None and value > ceiling:
+                raise ValueError(f"Quota override {label} must not exceed {ceiling}")
+        if window_seconds is not None and window_seconds > self._policy.window.total_seconds():
+            raise ValueError(
+                f"Quota override window_seconds must not exceed {int(self._policy.window.total_seconds())}"
+            )
         if burst_requests is not None and burst_requests < 0:
             raise ValueError("Quota override burst_requests must not be negative")
         scope_space = space_id or "*"

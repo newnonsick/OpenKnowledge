@@ -12,6 +12,7 @@ from src.gateway.application.use_cases.context import UseCaseContext, actor_id
 from src.gateway.domain.authorization import Action
 from src.gateway.domain.entities import KnowledgeRevision as DomainKnowledgeRevision
 from src.gateway.domain.exceptions import AuthorizationException, ValidationException
+from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGenerationModel, RetrievalUnitModel
 from src.gateway.infrastructure.persistence.models import KnowledgeItem as KnowledgeItemModel
 from src.gateway.infrastructure.persistence.models import KnowledgeRevision as KnowledgeRevisionModel
 
@@ -273,6 +274,33 @@ class KnowledgeExportService:
             record.current_revision_id = UUID(str(current["id"]))
             record.revision = current["version"]
             await self._session.flush()
+            generation = await self._session.scalar(
+                select(EmbeddingGenerationModel).where(
+                    EmbeddingGenerationModel.purpose == "retrieval",
+                    EmbeddingGenerationModel.status == "active",
+                )
+            )
+            if generation is not None:
+                self._session.add(
+                    RetrievalUnitModel(
+                        space_id=space_id,
+                        source_type="knowledge_revision",
+                        knowledge_revision_id=UUID(str(current["id"])),
+                        embedding_generation_id=generation.id,
+                        title=current.get("title") or record.title,
+                        content=current["content"],
+                        language=None,
+                        source_metadata={
+                            "knowledge_item_id": str(item_id),
+                            "knowledge_revision_id": str(current["id"]),
+                            "version": current["version"],
+                            "tags": list(current.get("tags") or []),
+                        },
+                        embedding=None,
+                        active=True,
+                    )
+                )
+                await self._session.flush()
             created += 1
         return {"space_id": space_id, "created": created, "skipped": skipped}
 
