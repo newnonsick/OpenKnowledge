@@ -33,26 +33,35 @@ LEFT JOIN document_revisions dr
 """
 
 _LIVE_SOURCE = """
-AND NOT EXISTS (
-  SELECT 1 FROM knowledge_items ki
-  WHERE ki.id = kr.item_id AND (ki.is_deleted OR ki.archived_at IS NOT NULL)
+AND (
+  ru.source_type <> 'knowledge_revision' OR EXISTS (
+    SELECT 1 FROM knowledge_items ki
+    WHERE ki.id = kr.item_id AND NOT ki.is_deleted AND ki.archived_at IS NULL
+  )
 )
-AND NOT EXISTS (
-  SELECT 1 FROM documents d
-  WHERE d.id = drc.document_id AND d.space_id = ru.space_id AND d.archived_at IS NOT NULL
+AND (
+  ru.source_type <> 'document_chunk' OR EXISTS (
+    SELECT 1 FROM documents d
+    WHERE d.id = drc.document_id AND d.space_id = ru.space_id AND d.archived_at IS NULL
+  )
 )
 """
 
 _LIVE_INNER = """
-AND NOT EXISTS (
-  SELECT 1 FROM knowledge_revisions kr_live
-  JOIN knowledge_items ki ON ki.id = kr_live.item_id
-  WHERE kr_live.id = ru.knowledge_revision_id AND (ki.is_deleted OR ki.archived_at IS NOT NULL)
+AND (
+  ru.source_type <> 'knowledge_revision' OR EXISTS (
+    SELECT 1 FROM knowledge_revisions kr_live
+    JOIN knowledge_items ki ON ki.id = kr_live.item_id
+    WHERE kr_live.id = ru.knowledge_revision_id
+    AND NOT ki.is_deleted AND ki.archived_at IS NULL
+  )
 )
-AND NOT EXISTS (
-  SELECT 1 FROM document_revision_chunks drc_live
-  JOIN documents d ON d.id = drc_live.document_id AND d.space_id = ru.space_id
-  WHERE drc_live.id = ru.document_revision_chunk_id AND d.archived_at IS NOT NULL
+AND (
+  ru.source_type <> 'document_chunk' OR EXISTS (
+    SELECT 1 FROM document_revision_chunks drc_live
+    JOIN documents d ON d.id = drc_live.document_id AND d.space_id = ru.space_id
+    WHERE drc_live.id = ru.document_revision_chunk_id AND d.archived_at IS NULL
+  )
 )
 """
 
