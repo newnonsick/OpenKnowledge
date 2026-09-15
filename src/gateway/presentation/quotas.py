@@ -75,8 +75,12 @@ class QuotaMiddleware:
             await self.app(scope, replay, send)
             return
         try:
-            await service.acquire(principal, space_id=space_id)
-            await _check_persistent_window(service, principal, space_id)
+            await service.acquire(principal)
+            try:
+                await _check_persistent_window(service, principal, space_id)
+            except QuotaExceededException:
+                await service.release(principal)
+                raise
         except QuotaExceededException as exc:
             retry_after = int(exc.details.get("retry_after_seconds", 1))
             try:
@@ -101,7 +105,7 @@ class QuotaMiddleware:
         try:
             await self.app(scope, replay, send)
         finally:
-            await service.release(principal, space_id=space_id)
+            await service.release(principal)
 
     @staticmethod
     def _outer_principal(scope):

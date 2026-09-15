@@ -89,3 +89,62 @@ async def test_quota_middleware_isolates_credentials() -> None:
             assert other.status_code == 200
     finally:
         reset_runtime_settings(token)
+
+
+async def test_quota_middleware_ignores_unauthorized_space_for_burst() -> None:
+    active = quota_limited_settings()
+    token = set_runtime_settings(active)
+    app = build_quota_app(active)
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://gateway.test",
+        ) as client:
+            statuses = []
+            for index in range(4):
+                response = await client.get(
+                    f"/quota-probe?space_id=invented-{index}",
+                    headers={"X-Test-Credential": "rotating-credential"},
+                )
+                statuses.append(response.status_code)
+            assert 429 in statuses
+    finally:
+        reset_runtime_settings(token)
+
+
+async def test_quota_middleware_releases_slot_on_persistent_rejection(monkeypatch) -> None:
+    from src.gateway.domain.exceptions import QuotaExceededException
+    from src.gateway.presentation import quotas as quotas_module
+
+    active = Settings(
+        gateway={
+            "environment": "test",
+            "quota_requests_per_minute": 100,
+            "quota_burst_requests": 100,
+            "quota_concurrent_requests": 1,
+        }
+    )
+    token = set_runtime_settings(active)
+    state = {"reject": True}
+
+    async def _reject_once(_service, _principal, _space_id):
+        if state["reject"]:
+            raise QuotaExceededException(60, quota="requests", limit=100)
+        return None
+
+    monkeypatch.setattr(quotas_module, "_check_persistent_window", _reject_once)
+    app = build_quota_app(active)
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://gateway.test",
+        ) as client:
+            headers = {"X-Test-Credential": "leak-credential"}
+            first = await client.get("/quota-probe", headers=headers)
+            assert first.status_code == 429
+            assert first.json()["error"]["code"] == "quota_exceeded"
+            state["reject"] = False
+            second = await client.get("/quota-probe", headers=headers)
+            assert second.status_code == 200
+    finally:
+        reset_runtime_settings(token)
