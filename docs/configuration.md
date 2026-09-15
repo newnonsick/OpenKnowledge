@@ -124,10 +124,13 @@ Any OpenAI-compatible embeddings endpoint.
 
 ## Credential and space budgets
 
+Burst and concurrency guards apply per credential; sustained per-minute budgets are
+tracked per credential and space.
+
 | Variable | Default | Description |
 |---|---|---|
-| `QUOTA_REQUESTS_PER_MINUTE` | `120` | Requests allowed per minute per credential and space. |
-| `QUOTA_CONCURRENT_REQUESTS` | `8` | Concurrent in-flight requests allowed per credential and space. |
+| `QUOTA_REQUESTS_PER_MINUTE` | `120` | Sustained requests allowed per minute per credential and space; burst guard per credential. |
+| `QUOTA_CONCURRENT_REQUESTS` | `8` | Concurrent in-flight requests allowed per credential. |
 | `QUOTA_TOKENS_PER_MINUTE` | `60000` | Chat completion tokens allowed per minute per credential and space. |
 | `QUOTA_STORAGE_BYTES` | `1073741824` | Stored upload bytes allowed per credential and space. |
 | `QUOTA_BURST_REQUESTS` | `20` | Burst requests absorbed before per-credential rate limiting engages. |

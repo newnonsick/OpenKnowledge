@@ -92,15 +92,16 @@ Denied operations have no self-approval path: pending AI actions can only be con
 
 ## Credential and space budgets
 
-Per-credential, per-space budgets keep one agent from starving others:
+Burst and concurrency guards apply per credential; sustained per-minute request,
+token, and storage budgets are tracked per credential and space:
 
 | Budget | Default | Meaning |
 |---|---|---|
-| `QUOTA_REQUESTS_PER_MINUTE` | `120` | Requests per minute per credential and space |
-| `QUOTA_CONCURRENT_REQUESTS` | `8` | Concurrent in-flight requests per credential and space |
+| `QUOTA_REQUESTS_PER_MINUTE` | `120` | Sustained requests per minute per credential and space (persistent budget); burst guard per credential |
+| `QUOTA_CONCURRENT_REQUESTS` | `8` | Concurrent in-flight requests per credential |
 | `QUOTA_TOKENS_PER_MINUTE` | `60000` | Chat completion tokens per minute per credential and space |
 | `QUOTA_STORAGE_BYTES` | `1073741824` | Stored upload bytes per credential and space |
-| `QUOTA_BURST_REQUESTS` | `20` | Burst requests absorbed before rate limiting engages |
+| `QUOTA_BURST_REQUESTS` | `20` | Burst requests absorbed before per-credential rate limiting engages |
 
 Exceeded budgets return `429 quota_exceeded` with a `Retry-After` header and a `retry_after_seconds` detail. Current usage is visible at `GET /api/v1/quotas/usage?space_id=...`. Token usage is recorded for non-streaming chat completions, storage usage for source uploads, and per-minute request counters persist per API key for operator visibility. Budgets are configured through the environment (see [configuration.md](configuration.md)).
 
