@@ -28,6 +28,8 @@ class JSONParser(BaseParser):
             content = content[3:]
 
         text_content = content.decode("utf-8", errors="replace")
+        if "\x00" in text_content:
+            raise ValidationException("Text documents cannot contain null bytes.")
 
         try:
             data = json.loads(text_content)

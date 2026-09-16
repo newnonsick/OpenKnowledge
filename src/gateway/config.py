@@ -9,7 +9,7 @@ import json
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
-from pydantic import AliasChoices, Field, ValidationError, field_validator
+from pydantic import AliasChoices, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 def _env_aware_config() -> SettingsConfigDict:
@@ -643,6 +643,14 @@ class GatewaySettings(BaseSettings):
         ),
         description="Age in days after which untouched knowledge is reported as stale",
     )
+    git_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        validation_alias=AliasChoices(
+            "GIT_TIMEOUT_SECONDS",
+            "git_timeout_seconds",
+        ),
+    )
     default_workspace_id: str = Field(
         default="global",
         validation_alias=AliasChoices("DEFAULT_WORKSPACE_ID", "default_workspace_id"),
@@ -878,6 +886,12 @@ class GatewaySettings(BaseSettings):
         for value in values:
             ip_network(value, strict=False)
         return values
+
+    @model_validator(mode="after")
+    def validate_upload_fits_body_limit(self) -> "GatewaySettings":
+        if self.max_upload_bytes > self.max_request_body_bytes:
+            raise ValueError("MAX_UPLOAD_BYTES must not exceed MAX_REQUEST_BODY_BYTES")
+        return self
 
     @property
     def gateway_api_keys(self) -> List[str]:

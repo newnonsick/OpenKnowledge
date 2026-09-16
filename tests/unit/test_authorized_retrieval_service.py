@@ -6,7 +6,7 @@ import pytest
 
 from src.gateway.application.services.authorized_retrieval_service import AuthorizedRetrievalService
 from src.gateway.application.services.runtime_settings_service import RetrievalRuntimeSettings
-from src.gateway.domain.exceptions import EmbeddingException
+from src.gateway.domain.exceptions import EmbeddingException, ValidationException
 from src.gateway.domain.identity import Principal, PrincipalKind, SystemRole
 from src.gateway.domain.retrieval import RetrievalCandidate
 
@@ -190,8 +190,10 @@ async def test_invalid_inputs_and_required_semantic_configuration_are_rejected()
     repository = FakeRepository()
     service = AuthorizedRetrievalService(repository, None, scope_resolver=scope_resolver)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValidationException):
         await service.search(principal(), "", limit=3)
+    with pytest.raises(ValidationException):
+        await service.search(principal(), "   ", limit=3)
     with pytest.raises(ValueError):
         await service.search(principal(), "query", lexical_weight=-1.0)
     with pytest.raises(ValueError):

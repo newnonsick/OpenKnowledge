@@ -2831,6 +2831,7 @@ def _connector_service() -> GitConnectorService:
         get_session_factory(),
         build_versioned_object_storage(),
         max_upload_bytes=gateway.max_upload_bytes,
+        git_timeout_seconds=gateway.git_timeout_seconds,
     )
 
 

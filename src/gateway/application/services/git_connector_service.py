@@ -46,6 +46,27 @@ from src.gateway.infrastructure.persistence.principal_context import bind_princi
 _CONNECTOR_JSON_EXTENSIONS = frozenset({".json", ".jsonl", ".ndjson", ".geojson"})
 _CONNECTOR_SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS | CODE_EXTENSIONS | _CONNECTOR_JSON_EXTENSIONS | frozenset({".pdf"})
 
+_CONNECTOR_SECRET_BASENAMES = frozenset(
+    {
+        ".env",
+        ".pem",
+        ".key",
+        ".p12",
+        ".pfx",
+        "id_rsa",
+        "id_ed25519",
+        ".npmrc",
+        ".pypirc",
+    }
+)
+
+
+def _is_connector_secret_path(path: str) -> bool:
+    name = PurePosixPath(path).name.lower()
+    if name in _CONNECTOR_SECRET_BASENAMES:
+        return True
+    return name.startswith(".env.")
+
 _CONNECTOR_MIME_TYPES = {
     ".json": "application/json",
     ".jsonl": "application/x-ndjson",
@@ -368,6 +389,8 @@ class GitConnectorService:
         if change.change_type == "deleted":
             await self._archive_connector_document(principal, connector_id, space_id, change.path)
             return "archived"
+        if _is_connector_secret_path(change.path):
+            return f"skipped:secret-file:{change.path}"
         if suffix not in _CONNECTOR_SUPPORTED_EXTENSIONS:
             return f"skipped:unsupported-extension:{change.path}"
         try:

@@ -171,6 +171,8 @@ class BoundedDocumentParser:
         if suffix in _JSON_EXTENSIONS or normalized_mime in _JSON_MIME_TYPES:
             if suffix not in _JSON_EXTENSIONS or normalized_mime not in _JSON_MIME_TYPES:
                 raise ValidationException("JSON extension and MIME type do not match.")
+            if b"\x00" in content:
+                raise ValidationException("Text documents cannot contain null bytes.")
             return normalized_mime
         if not normalized_mime.startswith("text/") and normalized_mime not in {
             "application/javascript",

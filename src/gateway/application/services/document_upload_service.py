@@ -512,6 +512,8 @@ class DocumentUploadService:
             raise ValidationException("A valid display name is required.")
         if not original_filename.strip() or len(original_filename) > 500:
             raise ValidationException("A valid original filename is required.")
+        if any(ord(char) < 32 for char in display_name + original_filename + mime_type + idempotency_key):
+            raise ValidationException("Names must not contain control characters.")
         if not mime_type.strip() or len(mime_type) > 255:
             raise ValidationException("A valid MIME type is required.")
         if not idempotency_key.strip() or len(idempotency_key) > 255:

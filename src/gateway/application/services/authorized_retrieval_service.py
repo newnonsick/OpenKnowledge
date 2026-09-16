@@ -13,7 +13,7 @@ from src.gateway.application.ports.retrieval import RetrievalUnitRepository
 from src.gateway.application.services.authorization_service import AuthorizationService
 from src.gateway.application.services.reranker import rerank_hits
 from src.gateway.application.services.runtime_settings_service import RetrievalRuntimeSettings
-from src.gateway.domain.exceptions import AuthorizationException, EmbeddingException
+from src.gateway.domain.exceptions import AuthorizationException, EmbeddingException, ValidationException
 from src.gateway.domain.identity import Principal
 from src.gateway.domain.retrieval import RetrievalCandidate, RetrievalExplanation, RetrievalHealth, RetrievalHit, RetrievalResponse, SemanticPolicy
 from src.gateway.infrastructure.database import get_session_factory, principal_session
@@ -459,8 +459,8 @@ class AuthorizedRetrievalService:
             or ("*" not in principal.scopes and "knowledge:read" not in principal.scopes)
         ):
             raise AuthorizationException()
-        if not query or len(query) > 4096:
-            raise ValueError("Query is required")
+        if not query or not query.strip() or len(query) > 4096:
+            raise ValidationException("Query must not be blank")
         if semantic_policy not in {"prefer", "required", "disabled"}:
             raise ValueError("Invalid semantic policy")
         values = (lexical_weight, vector_weight, minimum_lexical_score, minimum_vector_similarity, active_space_boost)
