@@ -38,6 +38,14 @@ def test_connector_secret_paths_are_skipped() -> None:
         "prod.env",
         "production.env",
         "my.env",
+        "service-account.json",
+        "client_secret.json",
+        "google-credentials.json",
+        "gcp-key.json",
+        "firebase-adminsdk-abc12.json",
+        "prod.env.txt",
+        "secrets.yaml.txt",
+        "server_cert.pem",
     ]
     for path in skipped:
         assert _is_connector_secret_path(path) is True, path

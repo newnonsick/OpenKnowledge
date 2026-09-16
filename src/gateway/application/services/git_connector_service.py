@@ -67,12 +67,19 @@ _CONNECTOR_SECRET_BASENAMES = frozenset(
         "credentials.toml",
         "credentials.ini",
         "token.json",
+        "service-account.json",
+        "client_secret.json",
+        "client-secrets.json",
+        "google-credentials.json",
+        "gcp-key.json",
     }
 )
 
 _CONNECTOR_SECRET_SUFFIXES = frozenset({".pem", ".key", ".p12", ".pfx", ".jks", ".kdbx"})
 
 _CONNECTOR_SECRET_STEMS = frozenset({"id_rsa", "id_ed25519", "id_dsa", "id_ecdsa"})
+
+_CONNECTOR_SECRET_STEM_PREFIXES = ("firebase-adminsdk",)
 
 _CONNECTOR_SECRET_SAMPLE_BASENAMES = frozenset(
     {
@@ -93,10 +100,14 @@ def _is_connector_secret_path(path: str) -> bool:
     suffixes = PurePosixPath(name).suffixes
     if suffixes == [".pub"]:
         return False
-    if suffixes and suffixes[-1] == ".env":
+    if ".env" in suffixes:
         return True
     stem = PurePosixPath(name).stem
     if stem in _CONNECTOR_SECRET_STEMS:
+        return True
+    if stem.startswith(_CONNECTOR_SECRET_STEM_PREFIXES):
+        return True
+    if suffixes and PurePosixPath(stem).name in _CONNECTOR_SECRET_BASENAMES:
         return True
     if any(suffix in _CONNECTOR_SECRET_SUFFIXES for suffix in suffixes):
         return True
