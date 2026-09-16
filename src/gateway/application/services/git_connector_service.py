@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import re
 from pathlib import Path, PurePosixPath
 from uuid import UUID, uuid4
 
@@ -87,6 +88,8 @@ _CONNECTOR_SECRET_STEM_SUBSTRINGS = (
     "service_account",
     "client-secret",
     "client_secret",
+    "client-secrets",
+    "client_secrets",
     "google-credentials",
     "google_credentials",
     "gcp-key",
@@ -119,8 +122,11 @@ def _is_connector_secret_path(path: str) -> bool:
         return True
     if stem.startswith(_CONNECTOR_SECRET_STEM_PREFIXES):
         return True
-    if any(substring in stem for substring in _CONNECTOR_SECRET_STEM_SUBSTRINGS):
-        return True
+    normalized_stem = re.sub(r"[-_.]+", "-", stem)
+    for substring in _CONNECTOR_SECRET_STEM_SUBSTRINGS:
+        normalized = re.sub(r"[-_.]+", "-", substring)
+        if re.search(r"(?:^|-)" + re.escape(normalized) + r"(?:-|$)", normalized_stem):
+            return True
     if suffixes and PurePosixPath(stem).name in _CONNECTOR_SECRET_BASENAMES:
         return True
     if any(suffix in _CONNECTOR_SECRET_SUFFIXES for suffix in suffixes):

@@ -53,6 +53,7 @@ def test_connector_secret_paths_are_skipped() -> None:
         "gcp_key.json",
         "myapp-firebase-adminsdk-fbsvc-3abc12de.json",
         "client_secret_123456-abcdef.apps.googleusercontent.com.json",
+        "client_secrets.json",
     ]
     for path in skipped:
         assert _is_connector_secret_path(path) is True, path
@@ -74,6 +75,10 @@ def test_connector_benign_paths_are_kept() -> None:
         ".env.sample",
         ".env.example",
         ".env.template",
+        "service-accounting.csv",
+        "service_accounting.csv",
+        "gcp-keyboard-shortcuts.md",
+        "client-secretary-notes.txt",
     ]
     for path in kept:
         assert _is_connector_secret_path(path) is False, path

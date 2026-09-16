@@ -463,7 +463,7 @@ class AuthorizedRetrievalService:
             raise ValidationException("Query must not be blank")
         if len(query) > 4096:
             raise ValidationException("Query exceeds the maximum length")
-        if any(ord(char) < 32 or char == "\x7f" for char in query):
+        if any((ord(char) < 32 and char not in "\t\n\r") or char in "\x00\x7f" for char in query):
             raise ValidationException("Query must not contain control characters")
         if semantic_policy not in {"prefer", "required", "disabled"}:
             raise ValueError("Invalid semantic policy")

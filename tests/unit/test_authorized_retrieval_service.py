@@ -200,6 +200,8 @@ async def test_invalid_inputs_and_required_semantic_configuration_are_rejected()
         await service.search(principal(), "query\x00text", limit=3)
     with pytest.raises(ValidationException, match="control characters"):
         await service.search(principal(), "query\x01text", limit=3)
+    response = await service.search(principal(), "line one\nline two\twith tab", limit=3)
+    assert response.query == "line one\nline two\twith tab"
     with pytest.raises(ValidationException, match="must not be blank"):
         await service.search(principal(), None, limit=3)
     with pytest.raises(ValueError):
