@@ -371,7 +371,16 @@ class WebhookDeliveryService:
         )
         timestamp = webhook_timestamp(now)
         secret_service = _webhook_secret_service()
-        secret = _reveal_subscription_secret(subscription)
+        try:
+            secret = _reveal_subscription_secret(subscription)
+        except ValueError:
+            delivery.state = "failed"
+            delivery.last_error_code = "decrypt_failed"
+            delivery.lease_owner = None
+            delivery.lease_expires_at = None
+            delivery.claim_token = None
+            await self._session.flush()
+            return False
         if not secret:
             delivery.state = "failed"
             delivery.last_error_code = "secret_unavailable"

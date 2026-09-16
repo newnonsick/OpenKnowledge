@@ -356,3 +356,35 @@ async def test_deliver_rejects_rebound_internal_target(factory, monkeypatch) -> 
     assert stored.state == "failed"
     assert stored.last_error_code == "internal_target"
     await session.close()
+
+
+async def test_deliver_marks_decrypt_failure_terminal(factory, monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    import src.gateway.application.services.webhook_delivery_service as delivery_module
+    from src.gateway.application.security.tokens import SecretValue
+    from src.gateway.application.security.webhook_secrets import WebhookSecretService
+
+    good = WebhookSecretService(SecretValue(Fernet.generate_key().decode("ascii")))
+    bad = WebhookSecretService(SecretValue(Fernet.generate_key().decode("ascii")))
+    monkeypatch.setattr(delivery_module, "_webhook_secret_service", lambda: good)
+    session, member_id = await _seed_member(factory)
+    subscription = await WebhookSubscriptionService(session).register(
+        _principal(member_id), space_id="space-a", url="https://example.com/hook",
+        secret="s", request_id="r-encfail",
+    )
+    subscription.secret_ciphertext = bad.encrypt_secret(SecretValue("s"))
+    subscription.secret_key_version = 1
+    subscription.secret = ""
+    service = WebhookDeliveryService(session, client=httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={}))))
+    await service.enqueue(
+        subscription_id=subscription.id, event_type="ingestion.succeeded",
+        deduplication_key="evt-encfail", payload={"ok": True},
+    )
+    claim = await service.claim_next("worker-1")
+    assert claim is not None
+    assert await service.deliver(claim) is False
+    stored = await session.get(WebhookDeliveryModel, claim.delivery_id)
+    assert stored.state == "failed"
+    assert stored.last_error_code == "decrypt_failed"
+    await session.close()
