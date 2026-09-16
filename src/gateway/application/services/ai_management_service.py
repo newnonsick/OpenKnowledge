@@ -32,6 +32,20 @@ class PendingAIAction:
     expires_at: datetime
 
 
+_MUTATION_AI_TOOLS = frozenset(
+    {
+        "knowledge.create.v1",
+        "knowledge.update.v1",
+        "spaces.archive.v1",
+        "spaces.members.set.v1",
+        "knowledge.archive.v1",
+        "ingestion_jobs.cancel.v1",
+        "ingestion_jobs.retry.v1",
+        "settings.propose.v1",
+    }
+)
+
+
 class AIManagementService:
     def __init__(self, session: AsyncSession, *, confirmation_lifetime: timedelta = timedelta(minutes=10)) -> None:
         self._session = session
@@ -190,6 +204,7 @@ class AIManagementService:
         *,
         request_id: str,
         now: datetime | None = None,
+        mutation_tools_enabled: bool = True,
     ) -> PendingAIActionModel:
         if actor.kind is PrincipalKind.SESSION:
             pass
@@ -219,6 +234,8 @@ class AIManagementService:
         if action.state != "pending" or current_time >= action.expires_at:
             increment_metric("gateway_tool_events_total", event="confirmation", outcome="expired")
             raise ResourceConflictException("The pending AI action is unavailable.")
+        if action.tool_name in _MUTATION_AI_TOOLS and not mutation_tools_enabled:
+            raise AuthorizationException()
         expected_hash = IdempotencyService.request_hash(
             {"tool_name": action.tool_name, "arguments": action.normalized_command}
         )

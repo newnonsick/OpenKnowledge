@@ -489,3 +489,94 @@ async def test_api_key_owned_action_confirms_from_harness() -> None:
                     assert space is not None and space.archived_at is not None
         finally:
             set_session_factory(None)
+
+
+async def test_ai_action_confirm_rejects_expired_foreign_and_policy_disabled() -> None:
+    from datetime import timedelta
+
+    import pytest
+
+    from src.gateway.application.services.ai_management_service import AIManagementService
+    from src.gateway.domain.exceptions import AuthorizationException, ResourceConflictException
+
+    member_id = uuid4()
+    other_member_id = uuid4()
+    async with isolated_postgres_database() as (_, factory):
+        async with factory.begin() as session:
+            session.add_all(
+                [
+                    MemberModel(
+                        id=member_id,
+                        username="confirm-owner",
+                        username_normalized="confirm-owner",
+                        display_name="Owner",
+                        status=MemberStatus.ACTIVE.value,
+                        system_role=SystemRole.MEMBER.value,
+                        force_password_change=False,
+                    ),
+                    MemberModel(
+                        id=other_member_id,
+                        username="confirm-other",
+                        username_normalized="confirm-other",
+                        display_name="Other",
+                        status=MemberStatus.ACTIVE.value,
+                        system_role=SystemRole.MEMBER.value,
+                        force_password_change=False,
+                    ),
+                ]
+            )
+            session.add(Workspace(id="confirm-space", name="Confirm", created_by_member_id=member_id))
+            await session.flush()
+            session.add(
+                SpaceMembershipModel(
+                    id=uuid4(),
+                    space_id="confirm-space",
+                    member_id=member_id,
+                    role=SpaceRole.OWNER.value,
+                )
+            )
+
+        def principal(uid, kind=PrincipalKind.SESSION):
+            return Principal(
+                subject_id=str(uid),
+                kind=kind,
+                system_role=SystemRole.MEMBER,
+                scopes=frozenset({"*"}),
+                credential_id=str(uuid4()),
+            )
+
+        async with factory() as session:
+            service = AIManagementService(session)
+            pending = await service.propose(
+                principal(member_id),
+                tool_name="spaces.archive.v1",
+                command={"space_id": "confirm-space", "expected_revision": 1},
+                request_id="confirm-probe",
+            )
+            with pytest.raises(AuthorizationException):
+                await service.confirm_and_execute(
+                    principal(other_member_id),
+                    pending.action_id,
+                    request_id="confirm-probe-foreign",
+                )
+            with pytest.raises(AuthorizationException):
+                await service.confirm_and_execute(
+                    principal(member_id),
+                    pending.action_id,
+                    request_id="confirm-probe-disabled",
+                    mutation_tools_enabled=False,
+                )
+            with pytest.raises(ResourceConflictException):
+                await service.confirm_and_execute(
+                    principal(member_id),
+                    pending.action_id,
+                    request_id="confirm-probe-expired",
+                    now=pending.expires_at + timedelta(seconds=1),
+                )
+            executed = await service.confirm_and_execute(
+                principal(member_id),
+                pending.action_id,
+                request_id="confirm-probe-ok",
+            )
+            assert executed.state == "executed"
+            await session.commit()

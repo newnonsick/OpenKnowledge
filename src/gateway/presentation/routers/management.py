@@ -1156,6 +1156,7 @@ async def execute_ai_tool(
                 principal,
                 pending.action_id,
                 request_id=get_request_id(request),
+                mutation_tools_enabled=(await _active_policy(principal)).mutation_tools_enabled,
             )
             await IdempotencyService(session).complete(
                 reservation.record_id,
@@ -1207,6 +1208,7 @@ async def confirm_ai_action(
             principal,
             action_id,
             request_id=get_request_id(request),
+            mutation_tools_enabled=(await _active_policy(principal)).mutation_tools_enabled,
         )
         await IdempotencyService(session).complete(
             reservation.record_id,
