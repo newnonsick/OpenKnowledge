@@ -74,14 +74,27 @@ _CONNECTOR_SECRET_SUFFIXES = frozenset({".pem", ".key", ".p12", ".pfx", ".jks", 
 
 _CONNECTOR_SECRET_STEMS = frozenset({"id_rsa", "id_ed25519", "id_dsa", "id_ecdsa"})
 
+_CONNECTOR_SECRET_SAMPLE_BASENAMES = frozenset(
+    {
+        ".env.sample",
+        ".env.example",
+        ".env.template",
+        ".env.test",
+    }
+)
+
 
 def _is_connector_secret_path(path: str) -> bool:
     name = PurePosixPath(path).name.lower()
+    if name in _CONNECTOR_SECRET_SAMPLE_BASENAMES:
+        return False
     if name in _CONNECTOR_SECRET_BASENAMES:
         return True
     suffixes = PurePosixPath(name).suffixes
     if suffixes == [".pub"]:
         return False
+    if suffixes and suffixes[-1] == ".env":
+        return True
     stem = PurePosixPath(name).stem
     if stem in _CONNECTOR_SECRET_STEMS:
         return True

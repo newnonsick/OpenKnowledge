@@ -35,6 +35,9 @@ def test_connector_secret_paths_are_skipped() -> None:
         "credentials.yaml",
         "id_rsa.txt",
         "key.pem.txt",
+        "prod.env",
+        "production.env",
+        "my.env",
     ]
     for path in skipped:
         assert _is_connector_secret_path(path) is True, path
@@ -53,6 +56,9 @@ def test_connector_benign_paths_are_kept() -> None:
         "tokenizer.py",
         "credentialism.md",
         "id_rsa.pub",
+        ".env.sample",
+        ".env.example",
+        ".env.template",
     ]
     for path in kept:
         assert _is_connector_secret_path(path) is False, path
