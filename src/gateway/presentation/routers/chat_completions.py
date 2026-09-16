@@ -224,6 +224,8 @@ async def create_chat_completion(
             return _handle_streaming_completion(
                 canonical_req=canonical_req,
                 orchestrator=orchestrator,
+                principal=getattr(http_request.state, "principal", None),
+                workspace_id=canonical_req.workspace_id or get_settings().gateway.default_workspace_id,
             )
 
         canonical_resp: CanonicalChatResponse = await orchestrator.orchestrate_chat(
@@ -273,6 +275,8 @@ async def create_chat_completion(
 def _handle_streaming_completion(
     canonical_req: CanonicalChatRequest,
     orchestrator: IChatOrchestrator,
+    principal: Principal | None = None,
+    workspace_id: str | None = None,
 ) -> StreamingResponse:
 
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
@@ -281,6 +285,7 @@ def _handle_streaming_completion(
 
     async def sse_generator() -> AsyncIterator[str]:
 
+        streamed_tokens = 0
         initial_chunk = {
             "id": completion_id,
             "object": "chat.completion.chunk",
@@ -351,6 +356,7 @@ def _handle_streaming_completion(
                         "completion_tokens": chunk.usage.completion_tokens,
                         "total_tokens": chunk.usage.total_tokens,
                     }
+                    streamed_tokens = chunk.usage.total_tokens
                 yield f"data: {json.dumps(chunk_payload)}\n\n"
 
         except GatewayException as exc:
@@ -380,6 +386,13 @@ def _handle_streaming_completion(
                 }
             }
             yield f"data: {json.dumps(err_chunk)}\n\n"
+
+        if streamed_tokens > 0:
+            await record_token_usage(
+                principal,
+                space_id=workspace_id or get_settings().gateway.default_workspace_id,
+                tokens=streamed_tokens,
+            )
 
         yield "data: [DONE]\n\n"
 

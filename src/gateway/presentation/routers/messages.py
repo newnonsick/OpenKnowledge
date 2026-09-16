@@ -221,6 +221,8 @@ async def create_message(
             return _handle_anthropic_streaming(
                 canonical_req=canonical_req,
                 orchestrator=orchestrator,
+                principal=getattr(http_request.state, "principal", None),
+                workspace_id=canonical_req.workspace_id or get_settings().gateway.default_workspace_id,
             )
 
         canonical_resp: CanonicalChatResponse = await orchestrator.orchestrate_chat(
@@ -270,6 +272,8 @@ async def create_message(
 def _handle_anthropic_streaming(
     canonical_req: CanonicalChatRequest,
     orchestrator: IChatOrchestrator,
+    principal: Principal | None = None,
+    workspace_id: str | None = None,
 ) -> StreamingResponse:
 
     message_id = f"msg_{uuid.uuid4().hex[:12]}"
@@ -479,6 +483,14 @@ def _handle_anthropic_streaming(
             },
         }
         yield sse("message_delta", message_delta_payload)
+
+        streamed_tokens = (real_input_tokens or 0) + (real_output_tokens if real_output_tokens is not None else output_tokens)
+        if streamed_tokens > 0:
+            await record_token_usage(
+                principal,
+                space_id=workspace_id or get_settings().gateway.default_workspace_id,
+                tokens=streamed_tokens,
+            )
 
         yield sse("message_stop", {"type": "message_stop"})
 

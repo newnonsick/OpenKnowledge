@@ -299,6 +299,8 @@ async def create_response(
             return _handle_streaming_response(
                 canonical_req=canonical_req,
                 orchestrator=orchestrator,
+                principal=getattr(http_request.state, "principal", None),
+                workspace_id=canonical_req.workspace_id or get_settings().gateway.default_workspace_id,
             )
 
         canonical_resp: CanonicalChatResponse = await orchestrator.orchestrate_chat(
@@ -352,12 +354,15 @@ async def create_response(
 def _handle_streaming_response(
     canonical_req: CanonicalChatRequest,
     orchestrator: IChatOrchestrator,
+    principal: Principal | None = None,
+    workspace_id: str | None = None,
 ) -> StreamingResponse:
     response_id = f"resp_{uuid.uuid4().hex[:12]}"
     created_ts = int(time.time())
     model_name = canonical_req.model
 
     async def sse_generator() -> AsyncIterator[str]:
+        streamed_tokens = 0
         created_event = {
             "type": "response.created",
             "response": {
@@ -408,6 +413,7 @@ def _handle_streaming_response(
                             "total_tokens": chunk.usage.total_tokens,
                         },
                     }
+                    streamed_tokens = chunk.usage.total_tokens
                     yield f"data: {json.dumps(usage_event)}\n\n"
 
         except GatewayException as exc:
@@ -450,6 +456,14 @@ def _handle_streaming_response(
             },
         }
         yield f"data: {json.dumps(completed_event)}\n\n"
+
+        if streamed_tokens > 0:
+            await record_token_usage(
+                principal,
+                space_id=workspace_id or get_settings().gateway.default_workspace_id,
+                tokens=streamed_tokens,
+            )
+
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
