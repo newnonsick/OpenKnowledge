@@ -454,6 +454,22 @@ class GatewaySettings(BaseSettings):
             "active_mfa_encryption_key_version",
         ),
     )
+    webhook_encryption_keys: dict[int, str] = Field(
+        default_factory=dict,
+        repr=False,
+        validation_alias=AliasChoices(
+            "WEBHOOK_ENCRYPTION_KEYS",
+            "webhook_encryption_keys",
+        ),
+    )
+    active_webhook_encryption_key_version: int = Field(
+        default=1,
+        ge=1,
+        validation_alias=AliasChoices(
+            "ACTIVE_WEBHOOK_ENCRYPTION_KEY_VERSION",
+            "active_webhook_encryption_key_version",
+        ),
+    )
 
     @property
     def csrf_allowed_origins(self) -> set[str]:

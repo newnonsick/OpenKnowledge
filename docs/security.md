@@ -157,6 +157,17 @@ When deploying without the bundled edge, the operator must provide equivalent TL
 - Database credentials are split per role (runtime, worker, admin) and injected by Compose.
 - Backup bundles are encrypted with age; the age identity is expected to be kept off-host.
 - Rotation procedures for peppers, MFA keys, and database credentials are in [operations.md](operations.md).
+- Webhook subscription secrets are encrypted at rest with Fernet (`WEBHOOK_ENCRYPTION_KEYS`,
+  `ACTIVE_WEBHOOK_ENCRYPTION_KEY_VERSION`); subscription payloads never include the secret.
+
+## Webhook delivery verification
+
+- Deliveries POST canonical JSON with headers `x-openknowledge-signature: t={unix_ts},v1={hex}`
+  where `hex = HMAC-SHA256(secret, "{ts}.{body}")`, plus `x-openknowledge-delivery` (delivery id).
+- Consumers must recompute the HMAC with constant-time comparison, reject timestamps outside
+  a ±5 minute skew window, and deduplicate on `delivery_id` (at-least-once redelivery reuses it).
+- Subscription URLs must be public https; loopback/private/reserved targets are rejected at
+  registration and re-checked at delivery time (DNS-rebinding to internal targets fails closed).
 
 ## Audit trail
 

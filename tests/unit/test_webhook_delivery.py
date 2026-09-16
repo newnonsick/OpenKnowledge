@@ -266,3 +266,93 @@ def test_webhook_dns_names_resolving_internal_are_rejected():
     with __import__("pytest").raises(ValidationException):
         asyncio.run(run())
     assert real_getaddrinfo is socket.getaddrinfo
+
+
+async def test_register_encrypts_secret_when_keys_configured(factory, monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    import src.gateway.application.services.webhook_delivery_service as delivery_module
+    from src.gateway.application.security.tokens import SecretValue
+    from src.gateway.application.security.webhook_secrets import WebhookSecretService
+
+    service = WebhookSecretService(SecretValue(Fernet.generate_key().decode("ascii")))
+    monkeypatch.setattr(delivery_module, "_webhook_secret_service", lambda: service)
+    session, member_id = await _seed_member(factory)
+    subscription = await WebhookSubscriptionService(session).register(
+        _principal(member_id), space_id="space-a", url="https://example.com/hook",
+        secret="hooksecret", request_id="r-enc",
+    )
+    assert subscription.secret == ""
+    assert subscription.secret_ciphertext
+    assert subscription.secret_key_version == 1
+    assert service.decrypt_secret(bytes(subscription.secret_ciphertext)).reveal() == "hooksecret"
+    await session.close()
+
+
+async def test_deliver_migrates_legacy_plaintext_secret(factory, monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    import src.gateway.application.services.webhook_delivery_service as delivery_module
+    from src.gateway.application.security.tokens import SecretValue
+    from src.gateway.application.security.webhook_secrets import WebhookSecretService
+
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["signature"] = request.headers["x-openknowledge-signature"]
+        seen["body"] = request.content
+        return httpx.Response(200, json={"ok": True})
+
+    service = WebhookSecretService(SecretValue(Fernet.generate_key().decode("ascii")))
+    monkeypatch.setattr(delivery_module, "_webhook_secret_service", lambda: service)
+    async def _public(hostname): return ["93.184.216.34"]
+    monkeypatch.setattr(delivery_module, "_resolve_host_addresses", _public)
+    session, member_id = await _seed_member(factory)
+    subscription = await WebhookSubscriptionService(session).register(
+        _principal(member_id), space_id="space-a", url="https://example.com/hook",
+        secret="legacysecret", request_id="r-leg",
+    )
+    # simulate a pre-encryption row
+    subscription.secret_ciphertext = None
+    subscription.secret_key_version = None
+    subscription.secret = "legacysecret"
+    delivery_service = WebhookDeliveryService(session, client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    await delivery_service.enqueue(
+        subscription_id=subscription.id, event_type="ingestion.succeeded",
+        deduplication_key="evt-leg", payload={"ok": True},
+    )
+    claim = await delivery_service.claim_next("worker-1")
+    assert claim is not None
+    assert await delivery_service.deliver(claim) is True
+    signature = seen["signature"]
+    timestamp = signature.split("t=")[1].split(",")[0]
+    digest = signature.split("v1=")[1]
+    assert verify_webhook_signature(digest, seen["body"], secret="legacysecret", timestamp=timestamp) is True
+    refreshed = await session.get(WebhookSubscriptionModel, subscription.id)
+    assert refreshed.secret == ""
+    assert refreshed.secret_ciphertext
+    await session.close()
+
+
+async def test_deliver_rejects_rebound_internal_target(factory, monkeypatch) -> None:
+    import src.gateway.application.services.webhook_delivery_service as delivery_module
+
+    session, member_id = await _seed_member(factory)
+    subscription = await WebhookSubscriptionService(session).register(
+        _principal(member_id), space_id="space-a", url="https://example.com/hook",
+        secret="s", request_id="r-rebind",
+    )
+    async def _loopback(hostname): return ["127.0.0.1"]
+    monkeypatch.setattr(delivery_module, "_resolve_host_addresses", _loopback)
+    service = WebhookDeliveryService(session, client=httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={}))))
+    await service.enqueue(
+        subscription_id=subscription.id, event_type="ingestion.succeeded",
+        deduplication_key="evt-rebind", payload={"ok": True},
+    )
+    claim = await service.claim_next("worker-1")
+    assert claim is not None
+    assert await service.deliver(claim) is False
+    stored = await session.get(WebhookDeliveryModel, claim.delivery_id)
+    assert stored.state == "failed"
+    assert stored.last_error_code == "internal_target"
+    await session.close()

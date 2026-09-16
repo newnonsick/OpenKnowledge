@@ -14,11 +14,14 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.gateway.application.security.tokens import SecretValue
+from src.gateway.application.security.webhook_secrets import WebhookSecretService
 from src.gateway.application.services.webhook_service import (
     serialize_canonical,
     sign_webhook_payload,
     webhook_timestamp,
 )
+from src.gateway.config import get_settings
 from src.gateway.domain.exceptions import AuthorizationException, ValidationException
 from src.gateway.domain.authorization import Action
 from src.gateway.domain.identity import Principal, SpaceRole
@@ -69,16 +72,7 @@ def _validate_webhook_url(url: str) -> str:
 
 
 async def _resolve_webhook_host(hostname: str) -> None:
-    try:
-        resolved = await asyncio.get_running_loop().getaddrinfo(
-            hostname, 443, type=socket.SOCK_STREAM
-        )
-    except (OSError, UnicodeError) as exc:
-        raise ValidationException("Webhook URL host could not be resolved.") from exc
-    for family, _, _, _, sockaddr in resolved:
-        address = sockaddr[0]
-        if family == socket.AF_INET6:
-            address = address.strip("[]")
+    for address in await _resolve_host_addresses(hostname):
         try:
             parsed = ipaddress.ip_address(address)
         except ValueError:
@@ -94,11 +88,48 @@ async def _resolve_webhook_host(hostname: str) -> None:
             raise ValidationException("Webhook URL must not target internal addresses.")
 
 
+async def _resolve_host_addresses(hostname: str) -> list[str]:
+    try:
+        resolved = await asyncio.get_running_loop().getaddrinfo(
+            hostname, 443, type=socket.SOCK_STREAM
+        )
+    except (OSError, UnicodeError) as exc:
+        raise ValidationException("Webhook URL host could not be resolved.") from exc
+    addresses = []
+    for family, _, _, _, sockaddr in resolved:
+        address = sockaddr[0]
+        if family == socket.AF_INET6:
+            address = address.strip("[]")
+        addresses.append(address)
+    return addresses
+
+
 @dataclass(frozen=True, slots=True)
 class DeliveryClaim:
     delivery_id: UUID
     subscription_id: UUID
     claim_token: UUID
+
+
+def _webhook_secret_service() -> WebhookSecretService | None:
+    gateway = get_settings().gateway
+    if not gateway.webhook_encryption_keys:
+        return None
+    return WebhookSecretService(
+        {version: SecretValue(value) for version, value in gateway.webhook_encryption_keys.items()},
+        active_key_version=gateway.active_webhook_encryption_key_version,
+    )
+
+
+def _reveal_subscription_secret(subscription: WebhookSubscriptionModel) -> str:
+    if subscription.secret_ciphertext:
+        service = _webhook_secret_service()
+        if service is not None:
+            return service.decrypt_secret(
+                bytes(subscription.secret_ciphertext),
+                key_version=subscription.secret_key_version or service.active_key_version,
+            ).reveal()
+    return subscription.secret
 
 
 class WebhookSubscriptionService:
@@ -138,6 +169,11 @@ class WebhookSubscriptionService:
             event_filter=list(event_filter),
             created_by_member_id=member_id,
         )
+        service = _webhook_secret_service()
+        if service is not None:
+            model.secret_ciphertext = service.encrypt_secret(SecretValue(secret))
+            model.secret_key_version = service.active_key_version
+            model.secret = ""
         self._session.add(model)
         await self._session.flush()
         return model
@@ -295,6 +331,36 @@ class WebhookDeliveryService:
             delivery.claim_token = None
             await self._session.flush()
             return False
+        try:
+            addresses = await _resolve_host_addresses(urlparse(subscription.url).hostname or "")
+        except ValidationException:
+            addresses = None
+        if addresses is not None:
+            internal = False
+            for address in addresses:
+                try:
+                    parsed = ipaddress.ip_address(address)
+                except ValueError:
+                    internal = True
+                    break
+                if (
+                    parsed.is_loopback
+                    or parsed.is_unspecified
+                    or parsed.is_link_local
+                    or parsed.is_private
+                    or parsed.is_reserved
+                    or parsed.is_multicast
+                ):
+                    internal = True
+                    break
+            if internal:
+                delivery.state = "failed"
+                delivery.last_error_code = "internal_target"
+                delivery.lease_owner = None
+                delivery.lease_expires_at = None
+                delivery.claim_token = None
+                await self._session.flush()
+                return False
         body = serialize_canonical(
             {
                 "delivery_id": str(delivery.id),
@@ -304,7 +370,21 @@ class WebhookDeliveryService:
             }
         )
         timestamp = webhook_timestamp(now)
-        signature = sign_webhook_payload(body, secret=subscription.secret, timestamp=timestamp)
+        secret_service = _webhook_secret_service()
+        secret = _reveal_subscription_secret(subscription)
+        if not secret:
+            delivery.state = "failed"
+            delivery.last_error_code = "secret_unavailable"
+            delivery.lease_owner = None
+            delivery.lease_expires_at = None
+            delivery.claim_token = None
+            await self._session.flush()
+            return False
+        if not subscription.secret_ciphertext and secret_service is not None:
+            subscription.secret_ciphertext = secret_service.encrypt_secret(SecretValue(secret))
+            subscription.secret_key_version = secret_service.active_key_version
+            subscription.secret = ""
+        signature = sign_webhook_payload(body, secret=secret, timestamp=timestamp)
         try:
             if self._client is None:
                 async with httpx.AsyncClient(timeout=DELIVERY_TIMEOUT_SECONDS) as client:
