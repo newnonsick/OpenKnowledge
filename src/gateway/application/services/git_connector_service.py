@@ -51,19 +51,41 @@ _CONNECTOR_SECRET_BASENAMES = frozenset(
         ".env",
         "id_rsa",
         "id_ed25519",
+        "id_dsa",
+        "id_ecdsa",
         ".npmrc",
         ".pypirc",
+        ".git-credentials",
+        "secrets.yaml",
+        "secrets.yml",
+        "secrets.json",
+        "secrets.toml",
+        "secrets.ini",
+        "credentials.yaml",
+        "credentials.yml",
+        "credentials.json",
+        "credentials.toml",
+        "credentials.ini",
+        "token.json",
     }
 )
 
-_CONNECTOR_SECRET_SUFFIXES = frozenset({".pem", ".key", ".p12", ".pfx"})
+_CONNECTOR_SECRET_SUFFIXES = frozenset({".pem", ".key", ".p12", ".pfx", ".jks", ".kdbx"})
+
+_CONNECTOR_SECRET_STEMS = frozenset({"id_rsa", "id_ed25519", "id_dsa", "id_ecdsa"})
 
 
 def _is_connector_secret_path(path: str) -> bool:
     name = PurePosixPath(path).name.lower()
     if name in _CONNECTOR_SECRET_BASENAMES:
         return True
-    if PurePosixPath(name).suffix in _CONNECTOR_SECRET_SUFFIXES:
+    suffixes = PurePosixPath(name).suffixes
+    if suffixes == [".pub"]:
+        return False
+    stem = PurePosixPath(name).stem
+    if stem in _CONNECTOR_SECRET_STEMS:
+        return True
+    if any(suffix in _CONNECTOR_SECRET_SUFFIXES for suffix in suffixes):
         return True
     return name.startswith(".env.")
 

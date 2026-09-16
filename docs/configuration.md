@@ -147,6 +147,7 @@ tracked per credential and space.
 | `INGESTION_CHUNK_SIZE` | `2000` | Chunk size in characters. |
 | `INGESTION_CHUNK_OVERLAP` | `200` | Overlap between consecutive chunks. |
 | `INGESTION_MAX_CHUNKS` | `10000` | Maximum chunks per document; ingestion fails beyond this. |
+| `GIT_TIMEOUT_SECONDS` | `30.0` | Timeout for a single git subprocess call during connector sync. |
 
 ## Worker
 

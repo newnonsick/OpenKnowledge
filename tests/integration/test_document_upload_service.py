@@ -271,3 +271,24 @@ async def test_idempotent_replay_after_terminal_state_returns_live_state(tmp_pat
             job_state=second.job_state,
             duplicate_candidate_revision_id=None,
         )
+
+
+async def test_upload_rejects_control_characters_in_names(tmp_path) -> None:
+    from src.gateway.domain.exceptions import ValidationException
+
+    async with TestEnvironment(storage_dir=tmp_path) as env:
+        storage = LocalVersionedObjectStorage(tmp_path)
+        service = DocumentUploadService(env.session_factory, storage, max_upload_bytes=1024)
+        principal = _principal()
+
+        for display_name in ("bad\x00name", "bad\x01name", "bad\x7fname"):
+            with pytest.raises(ValidationException):
+                await service.upload_new(
+                    principal=principal,
+                    space_id="test_ws",
+                    display_name=display_name,
+                    original_filename="ok.txt",
+                    mime_type="text/plain",
+                    chunks=_chunks(b"payload"),
+                    idempotency_key="ctrl-key",
+                )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from src.gateway.application.parsers.base import BaseParser
+from src.gateway.domain.exceptions import ValidationException
 
 CODE_EXTENSIONS = {
     ".py",
@@ -99,5 +100,8 @@ class CodeParser(BaseParser):
 
         if content.startswith(b"\xef\xbb\xbf"):
             content = content[3:]
+
+        if b"\x00" in content:
+            raise ValidationException("Text documents cannot contain null bytes.")
 
         return content.decode("utf-8", errors="replace")

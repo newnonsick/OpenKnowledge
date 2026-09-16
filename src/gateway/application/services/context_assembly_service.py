@@ -197,9 +197,13 @@ class ContextAssembler:
             if normalized in seen_texts:
                 omitted += 1
                 continue
-            if total_chars + len(snippet) > query.max_total_chars and snippets:
-                omitted += 1
-                continue
+            if total_chars + len(snippet) > query.max_total_chars:
+                if snippets:
+                    omitted += 1
+                    continue
+                snippet = snippet[: query.max_total_chars].rstrip()
+                truncated = True
+                status = STATUS_OVERSIZED
             snippet_tokens = estimate_tokens(snippet)
             if token_budget is not None and total_tokens + snippet_tokens > token_budget:
                 if snippets:

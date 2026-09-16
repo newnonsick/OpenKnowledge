@@ -190,10 +190,18 @@ async def test_invalid_inputs_and_required_semantic_configuration_are_rejected()
     repository = FakeRepository()
     service = AuthorizedRetrievalService(repository, None, scope_resolver=scope_resolver)
 
-    with pytest.raises(ValidationException):
+    with pytest.raises(ValidationException, match="must not be blank"):
         await service.search(principal(), "", limit=3)
-    with pytest.raises(ValidationException):
+    with pytest.raises(ValidationException, match="must not be blank"):
         await service.search(principal(), "   ", limit=3)
+    with pytest.raises(ValidationException, match="maximum length"):
+        await service.search(principal(), "x" * 4097, limit=3)
+    with pytest.raises(ValidationException, match="control characters"):
+        await service.search(principal(), "query\x00text", limit=3)
+    with pytest.raises(ValidationException, match="control characters"):
+        await service.search(principal(), "query\x01text", limit=3)
+    with pytest.raises(ValidationException, match="must not be blank"):
+        await service.search(principal(), None, limit=3)
     with pytest.raises(ValueError):
         await service.search(principal(), "query", lexical_weight=-1.0)
     with pytest.raises(ValueError):

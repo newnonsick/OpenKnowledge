@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from src.gateway.domain.exceptions import AuthorizationException
+from src.gateway.domain.exceptions import AuthorizationException, EmbeddingException
 from src.gateway.domain.identity import Principal
 from src.gateway.domain.retrieval import RetrievalCandidate
 from src.gateway.infrastructure.database import get_session_factory, principal_session
@@ -311,7 +311,7 @@ class PostgresRetrievalUnitRepository:
     ) -> dict[str, object]:
         vector = [float(value) for value in query_vector]
         if len(vector) != EMBED_DIM or any(not math.isfinite(value) for value in vector):
-            raise ValueError(f"Query embedding must contain {EMBED_DIM} finite values")
+            raise EmbeddingException("Query embedding must contain finite values of the active dimension")
         return {
             "member_id": member_id,
             "space_ids": list(space_ids),

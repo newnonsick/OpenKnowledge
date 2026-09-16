@@ -70,7 +70,7 @@ class AuthorizedRetrievalService:
         rerank_tag_boost: float | None = None,
         rerank_recency_boost: float | None = None,
     ) -> RetrievalResponse:
-        normalized_query = query.strip()
+        normalized_query = query.strip() if isinstance(query, str) else ""
         normalized_tags = self._normalize_tags(tags)
         defaults = (
             await self._runtime_settings_provider(principal)
@@ -459,8 +459,12 @@ class AuthorizedRetrievalService:
             or ("*" not in principal.scopes and "knowledge:read" not in principal.scopes)
         ):
             raise AuthorizationException()
-        if not query or not query.strip() or len(query) > 4096:
+        if not isinstance(query, str) or not query.strip():
             raise ValidationException("Query must not be blank")
+        if len(query) > 4096:
+            raise ValidationException("Query exceeds the maximum length")
+        if any(ord(char) < 32 or char == "\x7f" for char in query):
+            raise ValidationException("Query must not contain control characters")
         if semantic_policy not in {"prefer", "required", "disabled"}:
             raise ValueError("Invalid semantic policy")
         values = (lexical_weight, vector_weight, minimum_lexical_score, minimum_vector_similarity, active_space_boost)
