@@ -603,6 +603,34 @@ async def test_management_resources_enforce_membership_and_one_time_secret_bound
                 assert settings_rollback.status_code == 200
                 assert settings_rollback.json()["revision"] == 3
                 assert settings_rollback.json()["values"]["retrieval"]["limit"] == 15
+                short_reason_draft = await admin_client.post(
+                    "/api/v1/settings/drafts",
+                    headers={
+                        "Origin": "https://gateway.test",
+                        "X-CSRF-Token": admin_session.csrf_token.reveal(),
+                        "Idempotency-Key": "settings-draft-short-reason",
+                    },
+                    json={
+                        "base_revision": 3,
+                        "reason": "abc",
+                        "values": {"retrieval": {"limit": 15}},
+                    },
+                )
+                assert short_reason_draft.status_code == 422
+                out_of_range_draft = await admin_client.post(
+                    "/api/v1/settings/drafts",
+                    headers={
+                        "Origin": "https://gateway.test",
+                        "X-CSRF-Token": admin_session.csrf_token.reveal(),
+                        "Idempotency-Key": "settings-draft-bad-limit",
+                    },
+                    json={
+                        "base_revision": 3,
+                        "reason": "Reject out of range retrieval limit",
+                        "values": {"retrieval": {"limit": 101}},
+                    },
+                )
+                assert out_of_range_draft.status_code == 422
 
         finally:
             set_session_factory(None)
