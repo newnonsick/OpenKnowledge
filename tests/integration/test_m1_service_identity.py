@@ -56,7 +56,7 @@ async def _seed_owner(factory, member_id, spaces=("space-a", "space-b")):
         website_session = await SessionService(session).issue(
             member_principal(member_id), now=now, step_up_at=now
         )
-        return website_session
+        return website_session.family_id
     return None
 
 
@@ -65,7 +65,7 @@ async def test_service_key_lifecycle_grant_subset_and_revocation() -> None:
     member_id = uuid4()
     codec = APIKeyCodec(SecretValue("test-deployment-pepper"))
     async with isolated_postgres_database() as (_, factory):
-        await _seed_owner(factory, member_id)
+        family_id = await _seed_owner(factory, member_id)
         async with factory.begin() as session:
             created = await APIKeyService(session, codec).create_service_key(
                 member_principal(member_id),
@@ -76,6 +76,7 @@ async def test_service_key_lifecycle_grant_subset_and_revocation() -> None:
                     permission_profile=PermissionProfile.PROJECT_CONTRIBUTOR,
                 ),
                 request_id="svc-create",
+                family_id=family_id,
                 now=now,
             )
             raw_key = created.secret.reveal()
@@ -110,7 +111,7 @@ async def test_service_key_rejects_outside_grants_expiry_and_self_issue() -> Non
     member_id = uuid4()
     codec = APIKeyCodec(SecretValue("test-deployment-pepper"))
     async with isolated_postgres_database() as (_, factory):
-        await _seed_owner(factory, member_id)
+        family_id = await _seed_owner(factory, member_id)
         async with factory.begin() as session:
             service = APIKeyService(session, codec)
             with pytest.raises(ValueError, match="Unknown space in grants"):
@@ -123,6 +124,7 @@ async def test_service_key_rejects_outside_grants_expiry_and_self_issue() -> Non
                         permission_profile=PermissionProfile.READER,
                     ),
                     request_id="svc-bad-grant",
+                    family_id=family_id,
                     now=now,
                 )
             with pytest.raises(ValueError, match="human admin"):
@@ -135,6 +137,7 @@ async def test_service_key_rejects_outside_grants_expiry_and_self_issue() -> Non
                         permission_profile=PermissionProfile.HUMAN_ADMIN,
                     ),
                     request_id="svc-admin",
+                    family_id=family_id,
                     now=now,
                 )
             created = await service.create_service_key(
@@ -147,6 +150,7 @@ async def test_service_key_rejects_outside_grants_expiry_and_self_issue() -> Non
                     expires_at=now + timedelta(minutes=5),
                 ),
                 request_id="svc-expiring",
+                family_id=family_id,
                 now=now,
             )
             raw_key = created.secret.reveal()
@@ -164,6 +168,7 @@ async def test_service_key_rejects_outside_grants_expiry_and_self_issue() -> Non
                     permission_profile=PermissionProfile.PROJECT_CONTRIBUTOR,
                 ),
                 request_id="svc-parent",
+                family_id=family_id,
                 now=now,
             )
             parent = await service.resolve(created.secret.reveal(), now=now)
@@ -178,5 +183,6 @@ async def test_service_key_rejects_outside_grants_expiry_and_self_issue() -> Non
                         permission_profile=PermissionProfile.READER,
                     ),
                     request_id="svc-child",
+                    family_id=family_id,
                     now=now,
                 )

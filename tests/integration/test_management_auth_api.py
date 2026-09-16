@@ -214,12 +214,25 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                 assert provisioning_uri.startswith("otpauth://totp/OpenKnowledge:admin?")
                 assert secret in provisioning_uri
 
+                import asyncio as _asyncio
+                import time as _time
+
+                _last_totp_step = {"step": int(_time.time()) // 30}
+
+                async def _fresh_totp_code():
+                    while True:
+                        step = int(_time.time()) // 30
+                        if step != _last_totp_step["step"]:
+                            _last_totp_step["step"] = step
+                            return pyotp.TOTP(secret).at(step * 30)
+                        await _asyncio.sleep(1)
+
                 confirmation = await client.post(
                     "/api/v1/auth/mfa/totp/confirm",
                     headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
                     json={
                         "factor_id": factor_id,
-                        "code": pyotp.TOTP(secret).now(),
+                        "code": await _fresh_totp_code(),
                     },
                 )
                 assert confirmation.status_code == 200
@@ -235,6 +248,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                     stored_keys = list(await verification_session.scalars(select(PersonalAPIKeyModel)))
                     assert len(stored_keys) == 1
                     assert initial_key["secret"] not in stored_keys[0].key_digest
+                    assert stored_keys[0].status == "active"
 
                 csrf = client.cookies.get("openknowledge-csrf")
                 stolen_session_enrollment = await client.post(
@@ -258,7 +272,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                     json={
                         "username": "admin",
                         "password": "Permanent-Password-934!",
-                        "totp_code": pyotp.TOTP(secret).now(),
+                        "totp_code": await _fresh_totp_code(),
                     },
                 )
                 assert authenticated_login.status_code == 200
@@ -305,7 +319,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                     headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
                     json={
                         "password": "Permanent-Password-934!",
-                        "totp_code": pyotp.TOTP(secret).now(),
+                        "totp_code": await _fresh_totp_code(),
                     },
                 )
                 assert stepped_up.status_code == 200
@@ -329,7 +343,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                     headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
                     json={
                         "current_password": "Permanent-Password-934!",
-                        "current_totp_code": pyotp.TOTP(secret).now(),
+                        "current_totp_code": await _fresh_totp_code(),
                         "password": "Marble-Comet-735!",
                         "confirmation": "Marble-Comet-735!",
                     },
@@ -361,8 +375,8 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                         )
                     )
                     assert len(stored_keys) == 1
-                    assert stored_keys[0].status == "active"
-                    assert stored_keys[0].revoked_at is None
+                    assert stored_keys[0].status == "revoked"
+                    assert stored_keys[0].revoked_at is not None
 
             recovery_transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(
@@ -419,7 +433,7 @@ async def test_first_login_mfa_cookie_session_and_refresh_flow() -> None:
                     json={
                         "username": "admin",
                         "password": "Marble-Comet-735!",
-                        "totp_code": pyotp.TOTP(secret).now(),
+                        "totp_code": await _fresh_totp_code(),
                     },
                 )
                 assert reset_login.status_code == 200
