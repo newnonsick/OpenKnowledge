@@ -172,6 +172,23 @@ async def test_assemble_marks_oversized_when_single_hit_exceeds_token_budget() -
     assert package.abstained is False
 
 
+async def test_assemble_truncates_first_hit_exceeding_char_budget() -> None:
+    hits = [_candidate(0, "blue valve closes clockwise " * 20)]
+    assembler = ContextAssembler(service_factory=lambda: _service(hits))
+    ctx = UseCaseContext(principal=_principal(), policy=EffectiveRuntimePolicy.default())
+
+    package = await assembler.assemble(
+        ctx,
+        AssembleContextQuery(query="valve", max_snippet_chars=600, max_total_chars=500),
+    )
+
+    assert len(package.snippets) == 1
+    assert package.status == "oversized"
+    assert package.total_chars <= 500
+    assert package.snippets[0].truncated is True
+    assert package.abstained is False
+
+
 async def test_assemble_suppresses_near_duplicate_texts() -> None:
     hits = [
         _candidate(0, "blue valve closes clockwise"),
