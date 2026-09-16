@@ -49,10 +49,6 @@ _CONNECTOR_SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS | CODE_EXTENSIONS | _CONNECTOR
 _CONNECTOR_SECRET_BASENAMES = frozenset(
     {
         ".env",
-        ".pem",
-        ".key",
-        ".p12",
-        ".pfx",
         "id_rsa",
         "id_ed25519",
         ".npmrc",
@@ -60,10 +56,14 @@ _CONNECTOR_SECRET_BASENAMES = frozenset(
     }
 )
 
+_CONNECTOR_SECRET_SUFFIXES = frozenset({".pem", ".key", ".p12", ".pfx"})
+
 
 def _is_connector_secret_path(path: str) -> bool:
     name = PurePosixPath(path).name.lower()
     if name in _CONNECTOR_SECRET_BASENAMES:
+        return True
+    if PurePosixPath(name).suffix in _CONNECTOR_SECRET_SUFFIXES:
         return True
     return name.startswith(".env.")
 
