@@ -472,20 +472,16 @@ class TestAdversarialFileIngestion:
         assert "Title with BOM" in chunks[0].content
 
     async def test_binary_garbage_and_null_bytes_in_code_files(self, ingestion_env):
-        """Verify binary garbage and null bytes in source code are gracefully handled."""
+        """Verify null bytes in source code are rejected with a clean ValidationException."""
         service, repo, _ = ingestion_env
         corrupt_code = b"def calculate():\n    \x00\x01\x02x = 42\n    return x\xff\xfe\n"
-        doc = await service.ingest_file(
-            workspace_id="ws_corrupt",
-            filename="corrupt_script.py",
-            content=corrupt_code,
-            mime_type="text/x-python",
-        )
-        assert doc.total_chunks >= 1
-        chunks = await repo.get_chunks_by_document(doc.id)
-        assert len(chunks) >= 1
-        assert "def calculate():" in chunks[0].content
-        assert "return x" in chunks[0].content
+        with pytest.raises(ValidationException, match="null bytes"):
+            await service.ingest_file(
+                workspace_id="ws_corrupt",
+                filename="corrupt_script.py",
+                content=corrupt_code,
+                mime_type="text/x-python",
+            )
 
     async def test_malformed_json_raises_validation_exception(self, ingestion_env):
         """Verify truncated / invalid JSON files raise ValidationException during ingestion."""
