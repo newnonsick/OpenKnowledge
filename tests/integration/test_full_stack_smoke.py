@@ -11,10 +11,10 @@ from src.gateway.application.security.passwords import PasswordService
 from src.gateway.application.services.bootstrap_service import BootstrapService
 from src.gateway.application.services.document_ingestion_worker import DocumentIngestionWorker
 from src.gateway.application.services.bounded_document_parser import ParsedDocument
-from src.gateway.config import Settings
+from src.gateway.config import Settings, get_settings
 from src.gateway.infrastructure.database import set_session_factory
 from src.gateway.infrastructure.persistence.ingestion_models import EmbeddingGenerationModel, IngestionJobModel
-from src.gateway.infrastructure.persistence.models import EMBED_DIM
+from src.gateway.infrastructure.persistence.models import EMBED_DIM as _IMPORT_TIME_EMBED_DIM
 from src.gateway.infrastructure.storage.versioned_local_storage import LocalVersionedObjectStorage
 from src.gateway.observability import metrics_registry_context
 from src.gateway.presentation.auth import APIKeyAuthMiddleware
@@ -31,14 +31,23 @@ class _Parser:
         return ParsedDocument(text=content.decode(), parser_version="smoke-test-v1")
 
 
+def _smoke_embedding_dimension() -> int:
+    return get_settings().embedding.dimension
+
+
 class _EmbeddingClient:
-    dimension = EMBED_DIM
+    dimension = _IMPORT_TIME_EMBED_DIM
+
+    def _size(self) -> int:
+        return _smoke_embedding_dimension()
 
     async def embed_texts(self, texts):
-        return [[1.0] + [0.0] * (EMBED_DIM - 1) for _ in texts]
+        size = self._size()
+        return [[1.0] + [0.0] * (size - 1) for _ in texts]
 
     async def embed_query(self, query):
-        return [1.0] + [0.0] * (EMBED_DIM - 1)
+        size = self._size()
+        return [1.0] + [0.0] * (size - 1)
 
 
 async def test_full_stack_smoke_login_rotate_upload_ingest_search_revoke(tmp_path) -> None:
@@ -72,7 +81,7 @@ async def test_full_stack_smoke_login_rotate_upload_ingest_search_revoke(tmp_pat
                     id=uuid4(),
                     purpose="retrieval",
                     model_id="smoke-test-generation",
-                    dimensions=EMBED_DIM,
+                    dimensions=_smoke_embedding_dimension(),
                     status="active",
                 )
             )
