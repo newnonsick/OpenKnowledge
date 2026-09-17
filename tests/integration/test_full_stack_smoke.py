@@ -162,11 +162,24 @@ async def test_full_stack_smoke_login_rotate_upload_ingest_search_revoke(tmp_pat
                     secret = enrollment.json()["secret"]
                     factor_id = enrollment.json()["factor_id"]
 
+                    import asyncio as _asyncio
+                    import time as _time
+
+                    _last_totp_step = {"step": int(_time.time()) // 30}
+
+                    async def _next_window_totp_code():
+                        while True:
+                            step = int(_time.time()) // 30
+                            if step != _last_totp_step["step"]:
+                                _last_totp_step["step"] = step
+                                return pyotp.TOTP(secret).at(step * 30)
+                            await _asyncio.sleep(1)
+
                     csrf = client.cookies.get("openknowledge-csrf")
                     confirmation = await client.post(
                         "/api/v1/auth/mfa/totp/confirm",
                         headers={"Origin": "https://gateway.test", "X-CSRF-Token": csrf},
-                        json={"factor_id": factor_id, "code": pyotp.TOTP(secret).now()},
+                        json={"factor_id": factor_id, "code": await _next_window_totp_code()},
                     )
                     assert confirmation.status_code == 200
                     api_secret = confirmation.json()["initial_api_key"]["secret"]
@@ -230,7 +243,7 @@ async def test_full_stack_smoke_login_rotate_upload_ingest_search_revoke(tmp_pat
                         json={
                             "username": "admin",
                             "password": "Permanent-Password-934!",
-                            "totp_code": pyotp.TOTP(secret).now(),
+                            "totp_code": await _next_window_totp_code(),
                         },
                     )
                     assert session_login.status_code == 200
